@@ -1,7 +1,7 @@
 use crate::browser_auth::BrowserAuthenticator;
 use crate::config::Config;
 use crate::storage::SessionData;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use colored::Colorize;
 use serde::Deserialize;
 
@@ -148,7 +148,7 @@ fn display_usage_limit(
             };
 
             // Format absolute time
-            let absolute_time = reset_time.format("%b %d, %I:%M %p");
+            let absolute_time = reset_time.with_timezone(&Local).format("%b %d, %I:%M %p");
 
             println!(
                 "  Resets in: {} (at {})",
