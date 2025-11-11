@@ -24,6 +24,16 @@ pub struct ThresholdsConfig {
 pub struct NotificationsConfig {
     pub sound: bool,
     pub persistent: bool,
+    #[serde(default = "default_true")]
+    pub notify_threshold_crossings: bool,
+    #[serde(default = "default_true")]
+    pub notify_predicted_overage: bool,
+    #[serde(default = "default_true")]
+    pub notify_resets: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +58,9 @@ impl Default for Config {
             notifications: NotificationsConfig {
                 sound: true,
                 persistent: false,
+                notify_threshold_crossings: true,
+                notify_predicted_overage: true,
+                notify_resets: true,
             },
             auth: AuthConfig {
                 session_file: config_dir.join("session.json"),

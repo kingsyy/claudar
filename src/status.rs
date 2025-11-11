@@ -17,7 +17,7 @@ struct UsageLimit {
     resets_at: String,
 }
 
-pub fn run_status() -> anyhow::Result<()> {
+pub fn run_status(verbose: bool) -> anyhow::Result<()> {
     println!("\nClaude.ai Usage Status");
     println!("{}", "━".repeat(50));
     println!();
@@ -30,13 +30,13 @@ pub fn run_status() -> anyhow::Result<()> {
     let cookie_pairs = session_to_cookie_pairs(&session);
 
     // Launch headless Chrome
-    let browser = BrowserAuthenticator::new_headless()?;
+    let browser = BrowserAuthenticator::new_headless(verbose)?;
 
     // Inject stored cookies
-    browser.inject_cookies(cookie_pairs)?;
+    browser.inject_cookies(cookie_pairs, verbose)?;
 
     // Fetch usage data
-    let usage_json = browser.fetch_usage_api(&session.org_id)?;
+    let usage_json = browser.fetch_usage_api(&session.org_id, verbose)?;
 
     // Parse the response
     let usage: UsageResponse = serde_json::from_value(usage_json)
@@ -44,22 +44,24 @@ pub fn run_status() -> anyhow::Result<()> {
 
     println!();
 
-    // Display 5-hour limit
+    // Display 5-hour limit (5 hours = 300 minutes)
     display_usage_limit(
         "5-Hour Limit",
         usage.five_hour.utilization,
         &usage.five_hour.resets_at,
         &config.thresholds.five_hour,
+        300, // 5 hours in minutes
     )?;
 
     println!();
 
-    // Display 7-day limit
+    // Display 7-day limit (7 days = 10080 minutes)
     display_usage_limit(
         "7-Day Limit",
         usage.seven_day.utilization,
         &usage.seven_day.resets_at,
         &config.thresholds.seven_day,
+        10080, // 7 days in minutes
     )?;
 
     println!();
@@ -74,6 +76,7 @@ fn display_usage_limit(
     utilization: f64,
     resets_at: &str,
     thresholds: &[u8],
+    period_minutes: i64,
 ) -> anyhow::Result<()> {
     // Convert utilization to percentage
     // API may return either normalized (0.0-1.0) or percentage (0-100) values
@@ -115,6 +118,12 @@ fn display_usage_limit(
     let now = Utc::now();
     let duration = reset_time.signed_duration_since(now);
 
+    // Calculate time elapsed in the period
+    let period_start = reset_time - chrono::Duration::minutes(period_minutes);
+    let elapsed_duration = now.signed_duration_since(period_start);
+    let elapsed_minutes = elapsed_duration.num_minutes();
+    let time_percentage = (elapsed_minutes as f64 / period_minutes as f64 * 100.0).min(100.0).max(0.0);
+
     // Format relative time
     let relative_time = if duration.num_weeks() > 0 {
         let weeks = duration.num_weeks();
@@ -143,6 +152,31 @@ fn display_usage_limit(
         relative_time.bright_black(),
         absolute_time.to_string().bright_black()
     );
+
+    // Display time elapsed vs usage comparison
+    let pace_indicator = if time_percentage > 0.0 {
+        let expected_usage = time_percentage; // If perfectly paced, usage should match time elapsed
+        let pace_diff = percentage - expected_usage;
+
+        if pace_diff > 10.0 {
+            format!("⚡ {} ahead of pace", "FAST".yellow().bold())
+        } else if pace_diff < -10.0 {
+            format!("🐌 {} behind pace", "SLOW".green().bold())
+        } else {
+            format!("✓ {} pace", "ON".bright_black())
+        }
+    } else {
+        String::new()
+    };
+
+    if !pace_indicator.is_empty() {
+        println!(
+            "  Time elapsed: {:.1}% │ Usage: {:.1}% │ {}",
+            time_percentage,
+            percentage,
+            pace_indicator
+        );
+    }
 
     Ok(())
 }

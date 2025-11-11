@@ -50,8 +50,10 @@ impl BrowserAuthenticator {
 
     /// Create a new BrowserAuthenticator with a headless Chrome instance
     /// This launches Chrome programmatically without a visible window
-    pub fn new_headless() -> anyhow::Result<Self> {
-        println!("  → Launching headless Chrome...");
+    pub fn new_headless(verbose: bool) -> anyhow::Result<Self> {
+        if verbose {
+            println!("  → Launching headless Chrome...");
+        }
 
         // Use more realistic browser settings to avoid Cloudflare detection
         let launch_options = LaunchOptions::default_builder()
@@ -70,15 +72,19 @@ impl BrowserAuthenticator {
         let browser = Browser::new(launch_options)
             .map_err(|e| anyhow::anyhow!("Failed to launch headless Chrome: {}\n\nPlease ensure Chrome is installed on your system.", e))?;
 
-        println!("  ✓ Headless Chrome launched successfully");
+        if verbose {
+            println!("  ✓ Headless Chrome launched successfully");
+        }
 
         Ok(Self { browser })
     }
 
     /// Inject cookies into the browser session
     /// This allows us to use stored session cookies without re-authenticating
-    pub fn inject_cookies(&self, cookies: Vec<(String, String)>) -> anyhow::Result<()> {
-        println!("  → Injecting {} stored cookies...", cookies.len());
+    pub fn inject_cookies(&self, cookies: Vec<(String, String)>, verbose: bool) -> anyhow::Result<()> {
+        if verbose {
+            println!("  → Injecting {} stored cookies...", cookies.len());
+        }
 
         // Get or create a tab
         let tab = self.browser.new_tab()?;
@@ -132,18 +138,22 @@ impl BrowserAuthenticator {
             false,
         );
 
-        println!("  ✓ Cookies injected successfully");
+        if verbose {
+            println!("  ✓ Cookies injected successfully");
+        }
 
         Ok(())
     }
 
     /// Fetch usage data from the Claude.ai API
     /// Returns the parsed JSON response with 5-hour and 7-day usage data
-    pub fn fetch_usage_api(&self, org_id: &str) -> anyhow::Result<serde_json::Value> {
+    pub fn fetch_usage_api(&self, org_id: &str, verbose: bool) -> anyhow::Result<serde_json::Value> {
         let url = format!("https://claude.ai/api/organizations/{}/usage", org_id);
-        println!("  → Fetching usage data from API...");
+        if verbose {
+            println!("  → Fetching usage data from API...");
+        }
 
-        self.fetch_json(&url)
+        self.fetch_json(&url, verbose)
     }
 
     /// Fetch the WebSocket debugger URL from Chrome's debugging endpoint
@@ -354,7 +364,7 @@ impl BrowserAuthenticator {
     }
 
     /// Make a request via the browser by navigating to the URL and reading the JSON response
-    pub fn fetch_json(&self, url: &str) -> anyhow::Result<serde_json::Value> {
+    pub fn fetch_json(&self, url: &str, verbose: bool) -> anyhow::Result<serde_json::Value> {
         // Get or create a tab
         let tabs = self.browser.get_tabs().lock().unwrap();
         let tab = tabs.first()
@@ -379,10 +389,12 @@ impl BrowserAuthenticator {
         if let Some(value) = result.value {
             if let Some(json_str) = value.as_str() {
                 // Debug: Print the raw response if it's short
-                if json_str.len() < 500 {
-                    tracing::debug!("API Response: {}", json_str);
-                } else {
-                    tracing::debug!("API Response length: {} bytes", json_str.len());
+                if verbose {
+                    if json_str.len() < 500 {
+                        tracing::debug!("API Response: {}", json_str);
+                    } else {
+                        tracing::debug!("API Response length: {} bytes", json_str.len());
+                    }
                 }
 
                 let parsed: serde_json::Value = serde_json::from_str(json_str)

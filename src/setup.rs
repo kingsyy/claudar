@@ -2,9 +2,12 @@ use crate::browser_auth::BrowserAuthenticator;
 use crate::config::Config;
 use crate::storage::SessionData;
 
-pub fn run_setup() -> anyhow::Result<()> {
+pub fn run_setup(verbose: bool) -> anyhow::Result<()> {
     println!("\n=== Claude Code Usage Monitor - Setup Wizard ===\n");
     println!("This wizard will help you log in to Claude.ai and extract your session credentials.\n");
+
+    // Store verbose for later use
+    let _verbose = verbose;
 
     // Step 0: Show Chrome launch instructions
     println!("Step 1: Start Chrome with Remote Debugging");
@@ -62,7 +65,7 @@ pub fn run_setup() -> anyhow::Result<()> {
 
     // Step 4: Test API connection using the browser (before closing it)
     println!("\nStep 4: Testing API connection...");
-    test_api_connection_via_browser(&authenticator, &session_data)?;
+    test_api_connection_via_browser(&authenticator, &session_data, verbose)?;
     println!("  ✓ API connection successful!");
 
     // Now we can safely close the browser
@@ -131,16 +134,19 @@ fn build_session_data(org_id: String, cookies: Vec<(String, String)>) -> anyhow:
 fn test_api_connection_via_browser(
     authenticator: &BrowserAuthenticator,
     session_data: &SessionData,
+    verbose: bool,
 ) -> anyhow::Result<()> {
     let url = format!(
         "https://claude.ai/api/organizations/{}/usage",
         session_data.org_id
     );
 
-    println!("  → Making API request via browser: {}", url);
+    if verbose {
+        println!("  → Making API request via browser: {}", url);
+    }
 
     // Make the API request using the browser's fetch API
-    let result = authenticator.fetch_json(&url)?;
+    let result = authenticator.fetch_json(&url, verbose)?;
 
     // Verify the response has the expected structure
     if result.get("five_hour").is_some() || result.get("seven_day").is_some() {
