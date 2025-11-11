@@ -16,7 +16,8 @@ struct UsageResponse {
 #[derive(Debug, Deserialize)]
 struct UsageLimit {
     utilization: f64,
-    resets_at: String,
+    #[serde(default)]
+    resets_at: Option<String>,
 }
 
 pub fn run_monitor(foreground: bool) -> anyhow::Result<()> {
@@ -127,14 +128,25 @@ fn process_limit(
     };
 
     // Parse reset time
-    let reset_time = DateTime::parse_from_rfc3339(&limit.resets_at)
-        .or_else(|_| DateTime::parse_from_rfc3339(&format!("{}Z", &limit.resets_at)))?;
-    let reset_time_utc: DateTime<Utc> = reset_time.into();
+    let (reset_time_utc, resets_in) = match &limit.resets_at {
+        Some(resets_at_str) => {
+            let reset_time = DateTime::parse_from_rfc3339(resets_at_str)
+                .or_else(|_| DateTime::parse_from_rfc3339(&format!("{}Z", resets_at_str)))?;
+            let reset_time_utc: DateTime<Utc> = reset_time.into();
 
-    // Calculate time until reset
-    let now = Utc::now();
-    let duration_until_reset = reset_time_utc.signed_duration_since(now);
-    let resets_in = format_duration(duration_until_reset);
+            // Calculate time until reset
+            let now = Utc::now();
+            let duration_until_reset = reset_time_utc.signed_duration_since(now);
+            let resets_in_str = format_duration(duration_until_reset);
+
+            (Some(reset_time_utc), resets_in_str)
+        }
+        None => {
+            // API returned null for reset time - skip reset-related notifications
+            tracing::warn!("{} limit has null reset time, skipping reset checks", limit_type.as_str());
+            (None, "Unknown".to_string())
+        }
+    };
 
     if verbose {
         println!(
@@ -145,20 +157,22 @@ fn process_limit(
         );
     }
 
-    // Check if a reset occurred
-    let reset_occurred = state.check_and_handle_reset(limit_type, reset_time_utc);
+    // Check if a reset occurred (only if we have a valid reset time)
+    if let Some(reset_time) = reset_time_utc {
+        let reset_occurred = state.check_and_handle_reset(limit_type, reset_time);
 
-    if reset_occurred {
-        tracing::info!("{} limit has reset", limit_type.as_str());
-        if verbose {
-            println!("  ✨ {} limit has been reset!", limit_type.as_str());
-        }
+        if reset_occurred {
+            tracing::info!("{} limit has reset", limit_type.as_str());
+            if verbose {
+                println!("  ✨ {} limit has been reset!", limit_type.as_str());
+            }
 
-        // Send reset notification if not already sent
-        if !state.is_reset_notified(limit_type) {
-            notify_reset(&config.notifications, limit_type)?;
-            state.mark_reset_notified(limit_type);
-            tracing::info!("Sent reset notification for {} limit", limit_type.as_str());
+            // Send reset notification if not already sent
+            if !state.is_reset_notified(limit_type) {
+                notify_reset(&config.notifications, limit_type)?;
+                state.mark_reset_notified(limit_type);
+                tracing::info!("Sent reset notification for {} limit", limit_type.as_str());
+            }
         }
     }
 
@@ -198,40 +212,44 @@ fn process_limit(
     }
 
     // Check for predicted overage (only for 5-hour limit, and only if we're past 50%)
+    // Also requires valid reset time for prediction
     if limit_type == LimitType::FiveHour && percentage >= 50.0 {
-        let period_start = reset_time_utc - chrono::Duration::minutes(period_minutes);
-        let elapsed_duration = now.signed_duration_since(period_start);
-        let elapsed_minutes = elapsed_duration.num_minutes().max(1); // Avoid division by zero
-        let time_percentage = (elapsed_minutes as f64 / period_minutes as f64 * 100.0)
-            .min(100.0)
-            .max(0.0);
+        if let Some(reset_time) = reset_time_utc {
+            let now = Utc::now();
+            let period_start = reset_time - chrono::Duration::minutes(period_minutes);
+            let elapsed_duration = now.signed_duration_since(period_start);
+            let elapsed_minutes = elapsed_duration.num_minutes().max(1); // Avoid division by zero
+            let time_percentage = (elapsed_minutes as f64 / period_minutes as f64 * 100.0)
+                .min(100.0)
+                .max(0.0);
 
-        // Only predict if we have some meaningful time elapsed
-        if time_percentage > 10.0 {
-            let usage_rate = percentage / time_percentage; // usage per 1% of time
-            let predicted_percentage = usage_rate * 100.0;
+            // Only predict if we have some meaningful time elapsed
+            if time_percentage > 10.0 {
+                let usage_rate = percentage / time_percentage; // usage per 1% of time
+                let predicted_percentage = usage_rate * 100.0;
 
-            // Warn if predicted to exceed 100% and we haven't warned recently
-            if predicted_percentage > 100.0 && state.should_warn_overage(limit_type) {
-                notify_predicted_overage(
-                    &config.notifications,
-                    limit_type,
-                    percentage,
-                    predicted_percentage,
-                    &resets_in,
-                )?;
-                state.mark_overage_warned(limit_type);
-                tracing::info!(
-                    "Sent overage prediction for {} limit: predicted {:.0}%",
-                    limit_type.as_str(),
-                    predicted_percentage
-                );
-
-                if verbose {
-                    println!(
-                        "  ⚡ Sent overage warning: predicted {:.0}% usage",
+                // Warn if predicted to exceed 100% and we haven't warned recently
+                if predicted_percentage > 100.0 && state.should_warn_overage(limit_type) {
+                    notify_predicted_overage(
+                        &config.notifications,
+                        limit_type,
+                        percentage,
+                        predicted_percentage,
+                        &resets_in,
+                    )?;
+                    state.mark_overage_warned(limit_type);
+                    tracing::info!(
+                        "Sent overage prediction for {} limit: predicted {:.0}%",
+                        limit_type.as_str(),
                         predicted_percentage
                     );
+
+                    if verbose {
+                        println!(
+                            "  ⚡ Sent overage warning: predicted {:.0}% usage",
+                            predicted_percentage
+                        );
+                    }
                 }
             }
         }

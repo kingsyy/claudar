@@ -14,7 +14,8 @@ struct UsageResponse {
 #[derive(Debug, Deserialize)]
 struct UsageLimit {
     utilization: f64,
-    resets_at: String,
+    #[serde(default)]
+    resets_at: Option<String>,
 }
 
 pub fn run_status(verbose: bool) -> anyhow::Result<()> {
@@ -48,7 +49,7 @@ pub fn run_status(verbose: bool) -> anyhow::Result<()> {
     display_usage_limit(
         "5-Hour Limit",
         usage.five_hour.utilization,
-        &usage.five_hour.resets_at,
+        usage.five_hour.resets_at.as_deref(),
         &config.thresholds.five_hour,
         300, // 5 hours in minutes
     )?;
@@ -59,7 +60,7 @@ pub fn run_status(verbose: bool) -> anyhow::Result<()> {
     display_usage_limit(
         "7-Day Limit",
         usage.seven_day.utilization,
-        &usage.seven_day.resets_at,
+        usage.seven_day.resets_at.as_deref(),
         &config.thresholds.seven_day,
         10080, // 7 days in minutes
     )?;
@@ -74,7 +75,7 @@ pub fn run_status(verbose: bool) -> anyhow::Result<()> {
 fn display_usage_limit(
     name: &str,
     utilization: f64,
-    resets_at: &str,
+    resets_at: Option<&str>,
     thresholds: &[u8],
     period_minutes: i64,
 ) -> anyhow::Result<()> {
@@ -107,75 +108,86 @@ fn display_usage_limit(
         status.color(color)
     );
 
-    // Parse and format reset time
-    let reset_time = DateTime::parse_from_rfc3339(resets_at)
-        .or_else(|_| {
-            // Try ISO 8601 format without timezone
-            DateTime::parse_from_rfc3339(&format!("{}Z", resets_at))
-        })
-        .map_err(|e| anyhow::anyhow!("Failed to parse reset time: {}", e))?;
+    // Parse and format reset time (handle null gracefully)
+    match resets_at {
+        Some(resets_at_str) => {
+            let reset_time = DateTime::parse_from_rfc3339(resets_at_str)
+                .or_else(|_| {
+                    // Try ISO 8601 format without timezone
+                    DateTime::parse_from_rfc3339(&format!("{}Z", resets_at_str))
+                })
+                .map_err(|e| anyhow::anyhow!("Failed to parse reset time: {}", e))?;
 
-    let now = Utc::now();
-    let duration = reset_time.signed_duration_since(now);
+            let now = Utc::now();
+            let duration = reset_time.signed_duration_since(now);
 
-    // Calculate time elapsed in the period
-    let period_start = reset_time - chrono::Duration::minutes(period_minutes);
-    let elapsed_duration = now.signed_duration_since(period_start);
-    let elapsed_minutes = elapsed_duration.num_minutes();
-    let time_percentage = (elapsed_minutes as f64 / period_minutes as f64 * 100.0).min(100.0).max(0.0);
+            // Calculate time elapsed in the period
+            let period_start = reset_time - chrono::Duration::minutes(period_minutes);
+            let elapsed_duration = now.signed_duration_since(period_start);
+            let elapsed_minutes = elapsed_duration.num_minutes();
+            let time_percentage = (elapsed_minutes as f64 / period_minutes as f64 * 100.0).min(100.0).max(0.0);
 
-    // Format relative time
-    let relative_time = if duration.num_weeks() > 0 {
-        let weeks = duration.num_weeks();
-        let days = duration.num_days() % 7;
-        format!("{}w {}d", weeks, days)
-    } else if duration.num_days() > 0 {
-        let days = duration.num_days();
-        let hours = duration.num_hours() % 24;
-        format!("{}d {}h", days, hours)
-    } else if duration.num_hours() > 0 {
-        let hours = duration.num_hours();
-        let minutes = duration.num_minutes() % 60;
-        format!("{}h {}m", hours, minutes)
-    } else if duration.num_minutes() > 0 {
-        let minutes = duration.num_minutes();
-        format!("{}m", minutes)
-    } else {
-        "< 1m".to_string()
-    };
+            // Format relative time
+            let relative_time = if duration.num_weeks() > 0 {
+                let weeks = duration.num_weeks();
+                let days = duration.num_days() % 7;
+                format!("{}w {}d", weeks, days)
+            } else if duration.num_days() > 0 {
+                let days = duration.num_days();
+                let hours = duration.num_hours() % 24;
+                format!("{}d {}h", days, hours)
+            } else if duration.num_hours() > 0 {
+                let hours = duration.num_hours();
+                let minutes = duration.num_minutes() % 60;
+                format!("{}h {}m", hours, minutes)
+            } else if duration.num_minutes() > 0 {
+                let minutes = duration.num_minutes();
+                format!("{}m", minutes)
+            } else {
+                "< 1m".to_string()
+            };
 
-    // Format absolute time
-    let absolute_time = reset_time.format("%b %d, %I:%M %p");
+            // Format absolute time
+            let absolute_time = reset_time.format("%b %d, %I:%M %p");
 
-    println!(
-        "  Resets in: {} (at {})",
-        relative_time.bright_black(),
-        absolute_time.to_string().bright_black()
-    );
+            println!(
+                "  Resets in: {} (at {})",
+                relative_time.bright_black(),
+                absolute_time.to_string().bright_black()
+            );
 
-    // Display time elapsed vs usage comparison
-    let pace_indicator = if time_percentage > 0.0 {
-        let expected_usage = time_percentage; // If perfectly paced, usage should match time elapsed
-        let pace_diff = percentage - expected_usage;
+            // Display time elapsed vs usage comparison
+            let pace_indicator = if time_percentage > 0.0 {
+                let expected_usage = time_percentage; // If perfectly paced, usage should match time elapsed
+                let pace_diff = percentage - expected_usage;
 
-        if pace_diff > 10.0 {
-            format!("⚡ {} ahead of pace", "FAST".yellow().bold())
-        } else if pace_diff < -10.0 {
-            format!("🐌 {} behind pace", "SLOW".green().bold())
-        } else {
-            format!("✓ {} pace", "ON".bright_black())
+                if pace_diff > 10.0 {
+                    format!("⚡ {} ahead of pace", "FAST".yellow().bold())
+                } else if pace_diff < -10.0 {
+                    format!("🐌 {} behind pace", "SLOW".green().bold())
+                } else {
+                    format!("✓ {} pace", "ON".bright_black())
+                }
+            } else {
+                String::new()
+            };
+
+            if !pace_indicator.is_empty() {
+                println!(
+                    "  Time elapsed: {:.1}% │ Usage: {:.1}% │ {}",
+                    time_percentage,
+                    percentage,
+                    pace_indicator
+                );
+            }
         }
-    } else {
-        String::new()
-    };
-
-    if !pace_indicator.is_empty() {
-        println!(
-            "  Time elapsed: {:.1}% │ Usage: {:.1}% │ {}",
-            time_percentage,
-            percentage,
-            pace_indicator
-        );
+        None => {
+            // API returned null for reset time - show fallback message
+            println!(
+                "  Resets in: {} (API did not provide reset time)",
+                "Unknown".bright_black()
+            );
+        }
     }
 
     Ok(())

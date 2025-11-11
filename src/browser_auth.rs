@@ -1,3 +1,4 @@
+use crate::retry::{retry_with_backoff, RetryConfig};
 use dialoguer::Input;
 use headless_chrome::protocol::cdp::Network;
 use headless_chrome::{Browser, LaunchOptions};
@@ -147,13 +148,20 @@ impl BrowserAuthenticator {
 
     /// Fetch usage data from the Claude.ai API
     /// Returns the parsed JSON response with 5-hour and 7-day usage data
+    /// Uses retry logic with exponential backoff to handle transient API errors
     pub fn fetch_usage_api(&self, org_id: &str, verbose: bool) -> anyhow::Result<serde_json::Value> {
         let url = format!("https://claude.ai/api/organizations/{}/usage", org_id);
         if verbose {
             println!("  → Fetching usage data from API...");
         }
 
-        self.fetch_json(&url, verbose)
+        // Wrap fetch_json with retry logic
+        let config = RetryConfig::default(); // 3 retries, 2s base delay
+        retry_with_backoff(
+            || self.fetch_json(&url, verbose),
+            &config,
+            verbose,
+        )
     }
 
     /// Fetch the WebSocket debugger URL from Chrome's debugging endpoint
@@ -388,12 +396,15 @@ impl BrowserAuthenticator {
         // Parse the JSON string
         if let Some(value) = result.value {
             if let Some(json_str) = value.as_str() {
-                // Debug: Print the raw response if it's short
+                // Debug: Print the raw response for debugging
                 if verbose {
-                    if json_str.len() < 500 {
+                    if json_str.len() < 1000 {
                         tracing::debug!("API Response: {}", json_str);
+                        println!("  → Raw API response: {}", json_str);
                     } else {
-                        tracing::debug!("API Response length: {} bytes", json_str.len());
+                        tracing::debug!("API Response length: {} bytes (truncated)", json_str.len());
+                        println!("  → Raw API response: {} bytes (showing first 500 chars)", json_str.len());
+                        println!("  → {}", &json_str[..500.min(json_str.len())]);
                     }
                 }
 
@@ -405,12 +416,23 @@ impl BrowserAuthenticator {
                         } else {
                             json_str.to_string()
                         };
+                        tracing::error!(
+                            "Failed to parse JSON response: {}\nFull response: {}",
+                            e,
+                            json_str
+                        );
                         anyhow::anyhow!(
                             "Failed to parse JSON response: {}\nResponse preview: {}",
                             e,
                             preview
                         )
                     })?;
+
+                // Log the parsed structure for debugging
+                if verbose {
+                    tracing::debug!("Parsed JSON structure: {:#?}", parsed);
+                }
+
                 return Ok(parsed);
             }
         }

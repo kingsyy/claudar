@@ -4,6 +4,7 @@ mod config;
 mod config_cmd;
 mod monitor;
 mod notifications;
+mod retry;
 mod service;
 mod setup;
 mod state;
