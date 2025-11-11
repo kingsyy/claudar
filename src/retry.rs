@@ -24,19 +24,11 @@ impl Default for RetryConfig {
 
 impl RetryConfig {
     /// Create a new retry config with custom max retries
+    #[cfg(test)]
     pub fn with_max_retries(max_retries: u32) -> Self {
         Self {
             max_retries,
             ..Default::default()
-        }
-    }
-
-    /// Create a new retry config with shorter delays (for fast retries)
-    pub fn fast() -> Self {
-        Self {
-            max_retries: 3,
-            base_delay_ms: 1000, // 1 second
-            max_delay_ms: 5000,  // 5 seconds
         }
     }
 }
