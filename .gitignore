@@ -1,0 +1,22 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Config and session files (user-specific)
+# Note: These will be created in ~/.config/claude-notify/
+# but adding here in case anyone tests locally
+config.toml
+session.json
+*.enc
