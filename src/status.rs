@@ -3,6 +3,7 @@ use crate::config::Config;
 use crate::storage::SessionData;
 use chrono::{DateTime, Local, Utc};
 use colored::Colorize;
+use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -23,6 +24,18 @@ pub fn run_status(verbose: bool) -> anyhow::Result<()> {
     println!("{}", "━".repeat(50));
     println!();
 
+    // Create loading spinner
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+            .template("{spinner:.cyan} {msg}")
+            .unwrap()
+    );
+
+    spinner.set_message("Loading configuration...");
+    spinner.enable_steady_tick(std::time::Duration::from_millis(80));
+
     // Load configuration and session data
     let config = Config::load()?;
     let session = SessionData::load(&config.auth.session_file)?;
@@ -30,11 +43,17 @@ pub fn run_status(verbose: bool) -> anyhow::Result<()> {
     // Convert session data to cookie pairs for injection
     let cookie_pairs = session_to_cookie_pairs(&session);
 
+    spinner.set_message("Launching browser...");
+
     // Launch headless Chrome
     let browser = BrowserAuthenticator::new_headless(verbose)?;
 
+    spinner.set_message("Authenticating...");
+
     // Inject stored cookies
     browser.inject_cookies(cookie_pairs, verbose)?;
+
+    spinner.set_message("Fetching usage data...");
 
     // Fetch usage data
     let usage_json = browser.fetch_usage_api(&session.org_id, verbose)?;
@@ -43,6 +62,7 @@ pub fn run_status(verbose: bool) -> anyhow::Result<()> {
     let usage: UsageResponse = serde_json::from_value(usage_json)
         .map_err(|e| anyhow::anyhow!("Failed to parse usage data: {}", e))?;
 
+    spinner.finish_and_clear();
     println!();
 
     // Display 5-hour limit (5 hours = 300 minutes)
@@ -156,28 +176,34 @@ fn display_usage_limit(
                 absolute_time.to_string().bright_black()
             );
 
-            // Display time elapsed vs usage comparison
-            let pace_indicator = if time_percentage > 0.0 {
+            // Display time elapsed vs usage comparison with overlapping bar
+            if time_percentage > 0.0 {
                 let expected_usage = time_percentage; // If perfectly paced, usage should match time elapsed
                 let pace_diff = percentage - expected_usage;
 
-                if pace_diff > 10.0 {
-                    format!("⚡ {} ahead of pace", "FAST".yellow().bold())
-                } else if pace_diff < -10.0 {
-                    format!("🐌 {} behind pace", "SLOW".green().bold())
-                } else {
-                    format!("✓ {} pace", "ON".bright_black())
-                }
-            } else {
-                String::new()
-            };
+                // Create the overlapping bar
+                let overlap_bar = create_overlapping_bar(time_percentage, percentage);
 
-            if !pace_indicator.is_empty() {
+                // Determine pace status and color
+                let (pace_emoji, pace_text, pace_color) = if pace_diff > 10.0 {
+                    ("⚡", format!("{:.1}% over pace", pace_diff), colored::Color::Yellow)
+                } else if pace_diff < -10.0 {
+                    ("🐌", format!("{:.1}% under pace", pace_diff.abs()), colored::Color::Green)
+                } else {
+                    ("✓", "On pace".to_string(), colored::Color::BrightBlack)
+                };
+
+                // Display the visualization
                 println!(
-                    "  Time elapsed: {:.1}% │ Usage: {:.1}% │ {}",
+                    "  {} ⏱ {:.1}% │ 💬 {:.1}%",
+                    overlap_bar.bright_white(),
                     time_percentage,
-                    percentage,
-                    pace_indicator
+                    percentage
+                );
+                println!(
+                    "  {} {}",
+                    pace_emoji,
+                    pace_text.color(pace_color)
                 );
             }
         }
@@ -204,6 +230,35 @@ fn create_progress_bar(utilization: f64) -> String {
         "█".repeat(filled),
         "░".repeat(empty)
     )
+}
+
+fn create_overlapping_bar(time_percentage: f64, usage_percentage: f64) -> String {
+    let bar_width = 20;
+    let time_pos = ((time_percentage / 100.0) * bar_width as f64).round() as usize;
+    let usage_pos = ((usage_percentage / 100.0) * bar_width as f64).round() as usize;
+    let time_pos = time_pos.min(bar_width);
+    let usage_pos = usage_pos.min(bar_width);
+
+    let mut bar = String::from("[");
+
+    for i in 0..bar_width {
+        if i < usage_pos.min(time_pos) {
+            // Both time and usage have passed this point
+            bar.push('█');
+        } else if i < time_pos {
+            // Only time has passed, usage hasn't reached here yet (under pace)
+            bar.push('░');
+        } else if i < usage_pos {
+            // Usage has passed but time hasn't (over pace) - show with different char
+            bar.push('▓');
+        } else {
+            // Neither has reached here yet
+            bar.push('░');
+        }
+    }
+
+    bar.push(']');
+    bar
 }
 
 fn get_color_and_status(percentage: f64, thresholds: &[u8]) -> (colored::Color, &'static str, &'static str) {

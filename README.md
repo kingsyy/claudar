@@ -11,6 +11,23 @@ A lightweight Rust daemon that monitors Claude Code usage and sends native macOS
 - **Background Service**: Install as launchd (macOS) or systemd (Linux) service for automatic monitoring
 - **Minimal Footprint**: Low memory and CPU usage
 
+## Quick Start
+
+```bash
+# 1. Build the project
+cargo build --release
+
+# 2. Run the setup wizard
+cargo run --release -- setup
+
+# 3. Check your current usage
+cargo run --release -- status
+
+# 4. Install as background service (optional)
+cargo run --release -- setup-service
+cargo run --release -- start
+```
+
 ## Prerequisites
 
 - Rust 1.70+ (install from [rustup.rs](https://rustup.rs))
@@ -91,6 +108,43 @@ claude-notify uninstall-service
 
 **Note**: After installing as a service, it will automatically start monitoring in the background. On macOS, logs are written to `/tmp/claude-notify.log` and `/tmp/claude-notify.error.log`.
 
+### Manage Configuration
+
+You can view and modify configuration settings using the built-in config commands:
+
+```bash
+# List all configuration values
+claude-notify config list
+
+# Get a specific configuration value
+claude-notify config get general.poll_interval_seconds
+claude-notify config get thresholds.five_hour
+claude-notify config get notifications.sound
+
+# Set a configuration value
+claude-notify config set general.poll_interval_seconds 600      # Poll every 10 minutes
+claude-notify config set thresholds.five_hour 50,75,90,95       # Custom thresholds
+claude-notify config set thresholds.seven_day 60,80,95          # Custom 7-day thresholds
+claude-notify config set notifications.sound false              # Disable sounds
+claude-notify config set notifications.notify_resets true       # Enable reset notifications
+```
+
+**Available configuration keys:**
+- `general.poll_interval_seconds` - How often to check usage (minimum: 60 seconds)
+- `thresholds.five_hour` - Percentage thresholds for 5-hour limit (comma-separated, 0-100)
+- `thresholds.seven_day` - Percentage thresholds for 7-day limit (comma-separated, 0-100)
+- `notifications.sound` - Enable/disable notification sounds (true/false)
+- `notifications.persistent` - Keep notifications on screen (true/false)
+- `notifications.notify_threshold_crossings` - Alert when crossing thresholds (true/false)
+- `notifications.notify_predicted_overage` - Warn if predicted to exceed limit (true/false)
+- `notifications.notify_resets` - Notify when usage limits reset (true/false)
+
+**Note**: After changing configuration, restart the service if running in the background:
+```bash
+claude-notify stop
+claude-notify start
+```
+
 ## Configuration
 
 Configuration is stored at: `~/.config/claude-notify/config.toml`
@@ -164,8 +218,9 @@ The monitor maintains state to avoid duplicate notifications and automatically c
 - Foreground monitoring mode
 - Background service installation (launchd/systemd)
 - Smart notification state tracking (no spam)
+- CLI configuration management (list/get/set commands)
 
-**Phase 2: Polish** 📋 Planned
+**Phase 2: Polish** 📋 In Progress
 - Auto cookie refresh
 - GUI configuration tool
 - Advanced usage analytics

@@ -47,6 +47,10 @@ This document tracks the implementation status of the Claude Code usage monitori
   - `claude-notify uninstall-service` - Remove service
 - Smart notification state tracking to prevent spam
 - Monitor state persistence at `~/.config/claude-notify/monitor_state.json`
+- CLI configuration management commands:
+  - `claude-notify config list` - List all configuration values
+  - `claude-notify config get <key>` - Get specific configuration value
+  - `claude-notify config set <key> <value>` - Set configuration value with validation
 
 **Files:**
 - `src/monitor.rs` - Core monitoring daemon with polling loop
@@ -56,6 +60,7 @@ This document tracks the implementation status of the Claude Code usage monitori
 - `src/status.rs` - Status display with progress bars
 - `src/cli.rs` - Command-line interface
 - `src/config.rs` - Configuration management
+- `src/config_cmd.rs` - Configuration CLI commands (list/get/set)
 
 **Configuration:**
 All settings stored in `~/.config/claude-notify/config.toml`:
@@ -83,13 +88,17 @@ notify_resets = true                 # NEW
 - Configurable timeout and persistence
 - Sufficient features for our use case (title, body, urgency)
 
-### Phase 2: Polish 📋 PLANNED
+### Phase 2: Polish 📋 IN PROGRESS
+
+**Completed:**
+- ✅ CLI configuration management (list/get/set commands with validation)
+- ✅ Comprehensive help text with examples for all config commands
 
 **Not Yet Implemented:**
 - Encrypted session storage using system keychain
 - Auto cookie refresh mechanism
 - Cookie expiration warnings
-- GUI configuration tool
+- GUI configuration tool (CLI version complete)
 - Historical usage analytics
 - Status bar/menubar icon
 - Webhook integrations (Slack/Discord)
@@ -104,6 +113,7 @@ src/
 ├── browser_auth.rs      # Headless Chrome automation
 ├── cli.rs               # CLI argument definitions
 ├── config.rs            # Configuration management
+├── config_cmd.rs        # Configuration CLI commands (list/get/set)
 ├── monitor.rs           # Core monitoring daemon
 ├── notifications.rs     # Native notification wrapper
 ├── service.rs           # Service installation (launchd/systemd)
@@ -175,6 +185,25 @@ claude-notify stop
 
 # Uninstall service
 claude-notify uninstall-service
+```
+
+### Manage Configuration
+```bash
+# List all configuration values
+claude-notify config list
+
+# Get specific values
+claude-notify config get general.poll_interval_seconds
+claude-notify config get thresholds.five_hour
+
+# Set values
+claude-notify config set general.poll_interval_seconds 600
+claude-notify config set thresholds.five_hour 50,75,90,95
+claude-notify config set notifications.sound false
+
+# Restart service after config changes
+claude-notify stop
+claude-notify start
 ```
 
 ## Implementation Notes
@@ -255,6 +284,9 @@ claude-notify uninstall-service
 - [x] Status command displays correctly
 - [x] Foreground monitoring mode works
 - [x] macOS service installation works
+- [x] Config list command works
+- [x] Config get command works
+- [x] Config set command with validation works
 - [ ] Linux systemd service installation (untested)
 - [ ] Windows service installation (not implemented)
 - [ ] Cookie expiration warnings (not implemented)
@@ -276,6 +308,13 @@ claude-notify uninstall-service
 - Add option to clear credentials on uninstall
 
 ## Changelog
+
+### 2025-11-12 - Phase 2 In Progress
+- Implemented CLI configuration management (config list/get/set commands)
+- Added comprehensive help text with examples for all config commands
+- Updated README with Quick Start section and config command documentation
+- Improved README structure for better usability
+- Updated documentation to reflect current implementation state
 
 ### 2025-11-11 - Phase 1 Complete
 - Implemented core monitoring daemon
