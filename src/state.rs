@@ -22,6 +22,10 @@ pub struct LimitState {
 
     /// Whether we've notified about the most recent reset
     pub notified_reset: bool,
+
+    /// Whether we've notified about the upcoming reset (minutes before)
+    #[serde(default)]
+    pub notified_upcoming_reset: bool,
 }
 
 impl Default for MonitorState {
@@ -40,6 +44,7 @@ impl Default for LimitState {
             notified_thresholds: HashSet::new(),
             last_overage_warning: None,
             notified_reset: false,
+            notified_upcoming_reset: false,
         }
     }
 }
@@ -105,6 +110,7 @@ impl MonitorState {
             state.notified_thresholds.clear();
             state.last_overage_warning = None;
             state.notified_reset = false;
+            state.notified_upcoming_reset = false;
             return true;
         }
 
@@ -170,6 +176,24 @@ impl MonitorState {
             LimitType::SevenDay => &self.seven_day,
         };
         state.notified_reset
+    }
+
+    /// Mark that an upcoming reset notification was sent
+    pub fn mark_upcoming_reset_notified(&mut self, limit_type: LimitType) {
+        let state = match limit_type {
+            LimitType::FiveHour => &mut self.five_hour,
+            LimitType::SevenDay => &mut self.seven_day,
+        };
+        state.notified_upcoming_reset = true;
+    }
+
+    /// Check if upcoming reset notification has been sent
+    pub fn is_upcoming_reset_notified(&self, limit_type: LimitType) -> bool {
+        let state = match limit_type {
+            LimitType::FiveHour => &self.five_hour,
+            LimitType::SevenDay => &self.seven_day,
+        };
+        state.notified_upcoming_reset
     }
 }
 

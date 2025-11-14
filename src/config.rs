@@ -30,6 +30,12 @@ pub struct NotificationsConfig {
     pub notify_predicted_overage: bool,
     #[serde(default = "default_true")]
     pub notify_resets: bool,
+    /// Minutes before 5-hour limit reset to send notification (None = disabled)
+    #[serde(default)]
+    pub minutes_before_five_hour_reset: Option<u64>,
+    /// Minutes before 7-day limit reset to send notification (None = disabled)
+    #[serde(default)]
+    pub minutes_before_seven_day_reset: Option<u64>,
 }
 
 fn default_true() -> bool {
@@ -61,6 +67,8 @@ impl Default for Config {
                 notify_threshold_crossings: true,
                 notify_predicted_overage: true,
                 notify_resets: true,
+                minutes_before_five_hour_reset: None,
+                minutes_before_seven_day_reset: None,
             },
             auth: AuthConfig {
                 session_file: config_dir.join("session.json"),

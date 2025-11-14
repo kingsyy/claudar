@@ -10,6 +10,7 @@ mod setup;
 mod state;
 mod status;
 mod storage;
+mod usage;
 
 use clap::Parser;
 use cli::{Cli, Commands, ConfigAction};
@@ -43,6 +44,9 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Run => {
             monitor::run_monitor(true)?; // true = foreground mode
+        }
+        Commands::Usage => {
+            usage::run_usage(cli.verbose)?;
         }
         Commands::Status => {
             status::run_status(cli.verbose)?;

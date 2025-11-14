@@ -1,6 +1,8 @@
 use crate::browser_auth::BrowserAuthenticator;
 use crate::config::Config;
-use crate::notifications::{format_duration, notify_predicted_overage, notify_reset, notify_threshold};
+use crate::notifications::{
+    format_duration, notify_predicted_overage, notify_reset, notify_threshold, notify_upcoming_reset,
+};
 use crate::state::{LimitType, MonitorState};
 use crate::storage::SessionData;
 use chrono::{DateTime, Utc};
@@ -172,6 +174,46 @@ fn process_limit(
                 notify_reset(&config.notifications, limit_type)?;
                 state.mark_reset_notified(limit_type);
                 tracing::info!("Sent reset notification for {} limit", limit_type.as_str());
+            }
+        }
+
+        // Check for upcoming reset notification
+        let minutes_before_reset = match limit_type {
+            LimitType::FiveHour => config.notifications.minutes_before_five_hour_reset,
+            LimitType::SevenDay => config.notifications.minutes_before_seven_day_reset,
+        };
+
+        if let Some(notification_minutes) = minutes_before_reset {
+            let now = Utc::now();
+            let time_until_reset = reset_time.signed_duration_since(now);
+            let minutes_until_reset = time_until_reset.num_minutes();
+
+            // Check if we're within the notification window and haven't notified yet
+            if minutes_until_reset > 0
+                && minutes_until_reset <= notification_minutes as i64
+                && !state.is_upcoming_reset_notified(limit_type)
+            {
+                let remaining_capacity = 100.0 - percentage;
+                notify_upcoming_reset(
+                    &config.notifications,
+                    limit_type,
+                    percentage,
+                    remaining_capacity,
+                    &resets_in,
+                )?;
+                state.mark_upcoming_reset_notified(limit_type);
+                tracing::info!(
+                    "Sent upcoming reset notification for {} limit ({} minutes before reset)",
+                    limit_type.as_str(),
+                    minutes_until_reset
+                );
+
+                if verbose {
+                    println!(
+                        "  ⏰ Sent upcoming reset notification ({} minutes until reset)",
+                        minutes_until_reset
+                    );
+                }
             }
         }
     }

@@ -19,6 +19,14 @@ pub fn handle_config_list() -> Result<()> {
     println!("  notify_threshold_crossings = {}", config.notifications.notify_threshold_crossings);
     println!("  notify_predicted_overage = {}", config.notifications.notify_predicted_overage);
     println!("  notify_resets = {}", config.notifications.notify_resets);
+    println!("  minutes_before_five_hour_reset = {}",
+        config.notifications.minutes_before_five_hour_reset
+            .map(|m| m.to_string())
+            .unwrap_or_else(|| "disabled".to_string()));
+    println!("  minutes_before_seven_day_reset = {}",
+        config.notifications.minutes_before_seven_day_reset
+            .map(|m| m.to_string())
+            .unwrap_or_else(|| "disabled".to_string()));
     println!();
     println!("Config file location: {}", Config::config_path()?.display());
 
@@ -37,6 +45,16 @@ pub fn handle_config_get(key: &str) -> Result<()> {
         "notifications.notify_threshold_crossings" => config.notifications.notify_threshold_crossings.to_string(),
         "notifications.notify_predicted_overage" => config.notifications.notify_predicted_overage.to_string(),
         "notifications.notify_resets" => config.notifications.notify_resets.to_string(),
+        "notifications.minutes_before_five_hour_reset" => {
+            config.notifications.minutes_before_five_hour_reset
+                .map(|m| m.to_string())
+                .unwrap_or_else(|| "disabled".to_string())
+        }
+        "notifications.minutes_before_seven_day_reset" => {
+            config.notifications.minutes_before_seven_day_reset
+                .map(|m| m.to_string())
+                .unwrap_or_else(|| "disabled".to_string())
+        }
         _ => return Err(anyhow!("Unknown config key: {}\n\nAvailable keys:\n  \
             general.poll_interval_seconds\n  \
             thresholds.five_hour\n  \
@@ -45,7 +63,9 @@ pub fn handle_config_get(key: &str) -> Result<()> {
             notifications.persistent\n  \
             notifications.notify_threshold_crossings\n  \
             notifications.notify_predicted_overage\n  \
-            notifications.notify_resets", key)),
+            notifications.notify_resets\n  \
+            notifications.minutes_before_five_hour_reset\n  \
+            notifications.minutes_before_seven_day_reset", key)),
     };
 
     println!("{} = {}", key, value);
@@ -85,6 +105,20 @@ pub fn handle_config_set(key: &str, value: &str) -> Result<()> {
         "notifications.notify_resets" => {
             config.notifications.notify_resets = parse_bool(value)?;
         }
+        "notifications.minutes_before_five_hour_reset" => {
+            let val = parse_optional_minutes(value)?;
+            if let Some(minutes) = val {
+                validate_notification_window(minutes, config.general.poll_interval_seconds)?;
+            }
+            config.notifications.minutes_before_five_hour_reset = val;
+        }
+        "notifications.minutes_before_seven_day_reset" => {
+            let val = parse_optional_minutes(value)?;
+            if let Some(minutes) = val {
+                validate_notification_window(minutes, config.general.poll_interval_seconds)?;
+            }
+            config.notifications.minutes_before_seven_day_reset = val;
+        }
         _ => return Err(anyhow!("Unknown config key: {}\n\nAvailable keys:\n  \
             general.poll_interval_seconds\n  \
             thresholds.five_hour\n  \
@@ -93,7 +127,9 @@ pub fn handle_config_set(key: &str, value: &str) -> Result<()> {
             notifications.persistent\n  \
             notifications.notify_threshold_crossings\n  \
             notifications.notify_predicted_overage\n  \
-            notifications.notify_resets", key)),
+            notifications.notify_resets\n  \
+            notifications.minutes_before_five_hour_reset\n  \
+            notifications.minutes_before_seven_day_reset", key)),
     }
 
     config.save()?;
@@ -139,4 +175,35 @@ fn parse_bool(value: &str) -> Result<bool> {
         "false" | "no" | "0" | "off" => Ok(false),
         _ => Err(anyhow!("Value must be a boolean (true/false, yes/no, 1/0, on/off)")),
     }
+}
+
+fn parse_optional_minutes(value: &str) -> Result<Option<u64>> {
+    match value.to_lowercase().as_str() {
+        "disabled" | "none" | "off" | "0" => Ok(None),
+        _ => {
+            let minutes: u64 = value.parse()
+                .context("Value must be a positive number (minutes) or 'disabled'")?;
+            if minutes == 0 {
+                Ok(None)
+            } else {
+                Ok(Some(minutes))
+            }
+        }
+    }
+}
+
+fn validate_notification_window(notification_minutes: u64, poll_interval_seconds: u64) -> Result<()> {
+    let poll_interval_minutes = poll_interval_seconds / 60;
+
+    if notification_minutes < poll_interval_minutes {
+        println!("\n⚠️  Warning: Notification window ({} minutes) is smaller than poll interval ({} minutes).",
+            notification_minutes, poll_interval_minutes);
+        println!("    You may miss notifications if the reset occurs between polling cycles.");
+        println!("    Consider either:");
+        println!("      - Increasing the notification window to at least {} minutes", poll_interval_minutes);
+        println!("      - Decreasing the poll interval (currently {} seconds)", poll_interval_seconds);
+        println!();
+    }
+
+    Ok(())
 }

@@ -21,7 +21,7 @@ cargo build --release
 cargo run --release -- setup
 
 # 3. Check your current usage
-cargo run --release -- status
+cargo run --release -- usage
 
 # 4. Install as background service (optional)
 cargo run --release -- setup-service
@@ -70,14 +70,26 @@ The setup wizard will:
 
 ## Usage
 
-### Check Current Status
+### Check Current Usage
 
 ```bash
-# View current usage status with progress bars
-claude-notify status
+# View current Claude API usage with progress bars
+claude-notify usage
 
 # View with verbose debug output
-claude-notify status --verbose
+claude-notify usage --verbose
+```
+
+### Check Service Status
+
+```bash
+# View service status, configuration, and session info
+claude-notify status
+
+# Shows:
+# - Service installation and running status
+# - Current configuration (poll interval, thresholds, notifications)
+# - Session information (logged-in organization)
 ```
 
 ### Monitor in Foreground

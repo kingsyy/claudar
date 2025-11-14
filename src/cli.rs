@@ -20,7 +20,10 @@ pub enum Commands {
     /// Run the monitor daemon in foreground mode
     Run,
 
-    /// Check current usage status
+    /// Check current Claude API usage statistics
+    Usage,
+
+    /// Check service status, configuration, and session info
     Status,
 
     /// Manage configuration settings

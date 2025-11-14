@@ -30,12 +30,14 @@ This document tracks the implementation status of the Claude Code usage monitori
 **Implemented:**
 - API polling daemon with configurable interval (default: 15 minutes)
 - Usage data fetching from `https://claude.ai/api/organizations/{org_id}/usage`
-- Smart notification logic with three notification types:
+- Smart notification logic with four notification types:
   - **Threshold crossings**: Alert at 50%, 70%, 90% utilization
   - **Predicted overage**: Warn if usage rate suggests exceeding 100% before reset (5-hour limit only)
   - **Reset notifications**: Alert when limits reset
+  - **Upcoming reset notifications**: Alert X minutes before reset to use remaining capacity
 - Native OS notifications using `notify-rust` 4.11 (cross-platform: macOS/Linux/Windows)
-- Status command with colored progress bars (`claude-notify status`)
+- Usage command with colored progress bars (`claude-notify usage`)
+- Service status command (`claude-notify status`) showing service state, config, and session info
 - Foreground monitoring mode (`claude-notify run`)
 - Background service installation:
   - macOS: launchd plist installation
@@ -56,8 +58,9 @@ This document tracks the implementation status of the Claude Code usage monitori
 - `src/monitor.rs` - Core monitoring daemon with polling loop
 - `src/notifications.rs` - Notification logic using notify-rust
 - `src/state.rs` - Monitor state tracking (notification history)
-- `src/service.rs` - Service installation (launchd/systemd)
-- `src/status.rs` - Status display with progress bars
+- `src/service.rs` - Service installation and status checking (launchd/systemd)
+- `src/usage.rs` - Usage display with progress bars and statistics
+- `src/status.rs` - Service status, configuration, and session info display
 - `src/cli.rs` - Command-line interface
 - `src/config.rs` - Configuration management
 - `src/config_cmd.rs` - Configuration CLI commands (list/get/set)
@@ -76,9 +79,11 @@ seven_day = [50, 70, 90]
 [notifications]
 sound = true
 persistent = false
-notify_threshold_crossings = true    # NEW
-notify_predicted_overage = true      # NEW
-notify_resets = true                 # NEW
+notify_threshold_crossings = true
+notify_predicted_overage = true
+notify_resets = true
+minutes_before_five_hour_reset = 30      # Optional: notify 30 min before 5-hour reset
+minutes_before_seven_day_reset = 60      # Optional: notify 60 min before 7-day reset
 ```
 
 **Notification Library:**
@@ -116,11 +121,13 @@ src/
 ├── config_cmd.rs        # Configuration CLI commands (list/get/set)
 ├── monitor.rs           # Core monitoring daemon
 ├── notifications.rs     # Native notification wrapper
-├── service.rs           # Service installation (launchd/systemd)
+├── retry.rs             # Retry logic for API calls
+├── service.rs           # Service installation and status checking (launchd/systemd)
 ├── setup.rs             # Interactive setup wizard
 ├── state.rs             # Monitor state tracking
-├── status.rs            # Status display command
-└── storage.rs           # Session data persistence
+├── status.rs            # Service status display (installation, config, session)
+├── storage.rs           # Session data persistence
+└── usage.rs             # Usage display with progress bars and statistics
 ```
 
 ### Data Storage
@@ -154,13 +161,24 @@ dialoguer = "0.11"
 claude-notify setup
 ```
 
-### Check Current Status
+### Check Current Usage
 ```bash
-# View current usage with progress bars
-claude-notify status
+# View current Claude API usage with progress bars
+claude-notify usage
 
 # View with debug output
-claude-notify status --verbose
+claude-notify usage --verbose
+```
+
+### Check Service Status
+```bash
+# View service status, configuration, and session info
+claude-notify status
+
+# Shows:
+# - Service installation and running status
+# - Current configuration (poll interval, thresholds, notifications)
+# - Session information (logged-in organization)
 ```
 
 ### Monitor in Foreground
@@ -201,6 +219,13 @@ claude-notify config set general.poll_interval_seconds 600
 claude-notify config set thresholds.five_hour 50,75,90,95
 claude-notify config set notifications.sound false
 
+# Enable upcoming reset notifications
+claude-notify config set notifications.minutes_before_five_hour_reset 30
+claude-notify config set notifications.minutes_before_seven_day_reset 60
+
+# Disable upcoming reset notifications
+claude-notify config set notifications.minutes_before_five_hour_reset disabled
+
 # Restart service after config changes
 claude-notify stop
 claude-notify start
@@ -226,6 +251,15 @@ claude-notify start
    - Sent once when usage limit resets
    - Reset detection based on `resets_at` timestamp change
    - Informs user that fresh capacity is available
+
+4. **Upcoming Reset Notifications**
+   - Configurable per limit type (5-hour and 7-day)
+   - Alerts X minutes before reset occurs
+   - Shows current usage, remaining capacity, and time until reset
+   - Encourages users to utilize remaining capacity for token-intensive tasks
+   - Sent once per reset period
+   - Disabled by default (set via `minutes_before_five_hour_reset` and `minutes_before_seven_day_reset`)
+   - Validation warns if notification window is smaller than poll interval
 
 ### Service Installation
 
@@ -281,7 +315,8 @@ claude-notify start
 - [x] Config file parsing works
 - [x] Session persistence across restarts
 - [x] Notification state tracking (no spam)
-- [x] Status command displays correctly
+- [x] Usage command displays correctly
+- [x] Status command shows service status correctly
 - [x] Foreground monitoring mode works
 - [x] macOS service installation works
 - [x] Config list command works
@@ -309,6 +344,20 @@ claude-notify start
 
 ## Changelog
 
+### 2025-11-13 - Command Restructuring
+- Renamed `status` command → `usage` command (shows Claude API usage statistics)
+- Created new `status` command (shows service status, configuration, and session info)
+- Added service status checking functions to `src/service.rs`:
+  - `is_service_installed()` - Check if service is installed
+  - `is_service_running()` - Check if service is running (via launchctl/systemctl)
+  - `get_service_path()` - Get service file path for display
+- New `status` command displays:
+  - Service installation and running status with color-coded indicators
+  - All configuration values (poll interval, thresholds, notifications)
+  - Session information (organization ID, authentication status)
+  - Helpful hints based on current state
+- Updated all documentation (README.md, CLAUDE.md) to reflect new command structure
+
 ### 2025-11-12 - Phase 2 In Progress
 - Implemented CLI configuration management (config list/get/set commands)
 - Added comprehensive help text with examples for all config commands
@@ -328,7 +377,7 @@ claude-notify start
 - Implemented automated browser authentication
 - Created interactive setup wizard
 - Added session data storage
-- Built status command with progress bars
+- Built usage display with progress bars
 
 ## Contributing
 

@@ -6,6 +6,68 @@ fn get_executable_path() -> anyhow::Result<PathBuf> {
     std::env::current_exe().map_err(|e| anyhow::anyhow!("Failed to get executable path: {}", e))
 }
 
+/// Check if the service is installed
+pub fn is_service_installed() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        get_launchd_plist_path()
+            .map(|path| path.exists())
+            .unwrap_or(false)
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        get_systemd_unit_path()
+            .map(|path| path.exists())
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        false
+    }
+}
+
+/// Check if the service is currently running
+pub fn is_service_running() -> anyhow::Result<bool> {
+    #[cfg(target_os = "macos")]
+    {
+        is_launchd_service_running()
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        is_systemd_service_running()
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        Err(anyhow::anyhow!(
+            "Service status checking is only supported on macOS and Linux"
+        ))
+    }
+}
+
+/// Get the service file path
+pub fn get_service_path() -> anyhow::Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        get_launchd_plist_path()
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        get_systemd_unit_path()
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        Err(anyhow::anyhow!(
+            "Service paths are only available on macOS and Linux"
+        ))
+    }
+}
+
 /// Install the monitor as a system service
 pub fn install_service() -> anyhow::Result<()> {
     #[cfg(target_os = "macos")]
@@ -212,6 +274,20 @@ fn stop_launchd_service() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn is_launchd_service_running() -> anyhow::Result<bool> {
+    let output = Command::new("launchctl")
+        .args(&["list"])
+        .output()?;
+
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.contains("com.claude-notify"))
+}
+
 #[cfg(target_os = "linux")]
 fn get_systemd_unit_path() -> anyhow::Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?;
@@ -333,4 +409,14 @@ fn stop_systemd_service() -> anyhow::Result<()> {
     println!("✓ Service stopped");
 
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn is_systemd_service_running() -> anyhow::Result<bool> {
+    let output = Command::new("systemctl")
+        .args(&["--user", "is-active", "claude-notify"])
+        .output()?;
+
+    // is-active returns 0 (success) if the service is active, non-zero otherwise
+    Ok(output.status.success())
 }

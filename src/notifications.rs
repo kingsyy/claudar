@@ -110,6 +110,40 @@ pub fn notify_reset(
     Ok(())
 }
 
+/// Send an upcoming reset notification (X minutes before reset)
+pub fn notify_upcoming_reset(
+    config: &NotificationsConfig,
+    limit_type: LimitType,
+    current_percentage: f64,
+    remaining_capacity: f64,
+    resets_in: &str,
+) -> anyhow::Result<()> {
+    let timeout = if config.persistent {
+        Timeout::Never
+    } else {
+        Timeout::Milliseconds(10000) // 10 seconds
+    };
+
+    Notification::new()
+        .summary(&format!(
+            "⏰ Claude {} Limit Resetting Soon",
+            limit_type.as_str()
+        ))
+        .body(&format!(
+            "Your {} limit resets in {}.\n\
+             Current usage: {:.0}% | Remaining: {:.0}%\n\
+             Perfect time for token-intensive tasks!",
+            limit_type.as_str(),
+            resets_in,
+            current_percentage,
+            remaining_capacity
+        ))
+        .timeout(timeout)
+        .show()?;
+
+    Ok(())
+}
+
 /// Format duration for human-readable display
 pub fn format_duration(duration: chrono::Duration) -> String {
     if duration.num_weeks() > 0 {
