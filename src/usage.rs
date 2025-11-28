@@ -20,8 +20,12 @@ struct UsageLimit {
 }
 
 pub fn run_usage(verbose: bool) -> anyhow::Result<()> {
+    let now = Local::now();
+    let timestamp = now.format("%H:%M %d/%m/%Y");
+
     println!("\nClaude.ai Usage");
     println!("{}", "━".repeat(50));
+    println!("Fetched at: {}", timestamp.to_string().bright_black());
     println!();
 
     // Create loading spinner

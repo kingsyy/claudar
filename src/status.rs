@@ -8,6 +8,10 @@ pub fn run_status(_verbose: bool) -> anyhow::Result<()> {
     println!("{}", "━".repeat(50));
     println!();
 
+    // Version Info Section
+    display_version_info();
+    println!();
+
     // Service Status Section
     display_service_status()?;
     println!();
@@ -21,6 +25,16 @@ pub fn run_status(_verbose: bool) -> anyhow::Result<()> {
     println!();
 
     Ok(())
+}
+
+fn display_version_info() {
+    let version = env!("CARGO_PKG_VERSION");
+    let commit = env!("GIT_HASH");
+
+    println!("{}", "Version Info".bold().underline());
+    println!();
+    println!("  Version:  {}", version.cyan());
+    println!("  Commit:   {}", commit.bright_black());
 }
 
 fn display_service_status() -> anyhow::Result<()> {

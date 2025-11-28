@@ -262,8 +262,8 @@ fn process_limit(
             let elapsed_duration = now.signed_duration_since(period_start);
             let elapsed_minutes = elapsed_duration.num_minutes().max(1); // Avoid division by zero
             let time_percentage = (elapsed_minutes as f64 / period_minutes as f64 * 100.0)
-                .min(100.0)
-                .max(0.0);
+                .max(0.0)
+                .min(100.0);
 
             // Only predict if we have some meaningful time elapsed
             if time_percentage > 10.0 {
