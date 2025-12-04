@@ -26,6 +26,10 @@ pub struct LimitState {
     /// Whether we've notified about the upcoming reset (minutes before)
     #[serde(default)]
     pub notified_upcoming_reset: bool,
+
+    /// Whether we've notified about unused capacity warning (time + capacity threshold)
+    #[serde(default)]
+    pub notified_capacity_warning: bool,
 }
 
 impl Default for MonitorState {
@@ -45,6 +49,7 @@ impl Default for LimitState {
             last_overage_warning: None,
             notified_reset: false,
             notified_upcoming_reset: false,
+            notified_capacity_warning: false,
         }
     }
 }
@@ -176,6 +181,7 @@ impl MonitorState {
             state.last_overage_warning = None;
             state.notified_reset = false; // Will be set to true by caller after notification
             state.notified_upcoming_reset = false;
+            state.notified_capacity_warning = false;
             tracing::debug!(
                 "Reset detected for {} limit: stored_time={}, current_time={}, new_time={}",
                 limit_type.as_str(),
@@ -266,6 +272,24 @@ impl MonitorState {
             LimitType::SevenDay => &self.seven_day,
         };
         state.notified_upcoming_reset
+    }
+
+    /// Mark that a capacity warning notification was sent
+    pub fn mark_capacity_warning_notified(&mut self, limit_type: LimitType) {
+        let state = match limit_type {
+            LimitType::FiveHour => &mut self.five_hour,
+            LimitType::SevenDay => &mut self.seven_day,
+        };
+        state.notified_capacity_warning = true;
+    }
+
+    /// Check if capacity warning notification has been sent
+    pub fn is_capacity_warning_notified(&self, limit_type: LimitType) -> bool {
+        let state = match limit_type {
+            LimitType::FiveHour => &self.five_hour,
+            LimitType::SevenDay => &self.seven_day,
+        };
+        state.notified_capacity_warning
     }
 }
 

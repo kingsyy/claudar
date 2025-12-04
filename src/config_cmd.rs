@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::time_format;
 use anyhow::{anyhow, Context, Result};
 
 pub fn handle_config_list() -> Result<()> {
@@ -8,6 +9,7 @@ pub fn handle_config_list() -> Result<()> {
     println!();
     println!("[general]");
     println!("  poll_interval_seconds = {}", config.general.poll_interval_seconds);
+    println!("  timezone = {}", config.general.timezone);
     println!();
     println!("[thresholds]");
     println!("  five_hour = {:?}", config.thresholds.five_hour);
@@ -27,6 +29,14 @@ pub fn handle_config_list() -> Result<()> {
         config.notifications.minutes_before_seven_day_reset
             .map(|m| m.to_string())
             .unwrap_or_else(|| "disabled".to_string()));
+    println!("  capacity_warning_five_hour = {}",
+        config.notifications.capacity_warning_five_hour
+            .map(|(min, pct)| format!("{},{}", min, pct))
+            .unwrap_or_else(|| "disabled".to_string()));
+    println!("  capacity_warning_seven_day = {}",
+        config.notifications.capacity_warning_seven_day
+            .map(|(min, pct)| format!("{},{}", min, pct))
+            .unwrap_or_else(|| "disabled".to_string()));
     println!();
     println!("Config file location: {}", Config::config_path()?.display());
 
@@ -38,6 +48,7 @@ pub fn handle_config_get(key: &str) -> Result<()> {
 
     let value = match key {
         "general.poll_interval_seconds" => config.general.poll_interval_seconds.to_string(),
+        "general.timezone" => config.general.timezone.clone(),
         "thresholds.five_hour" => format_vec(&config.thresholds.five_hour),
         "thresholds.seven_day" => format_vec(&config.thresholds.seven_day),
         "notifications.sound" => config.notifications.sound.to_string(),
@@ -55,8 +66,19 @@ pub fn handle_config_get(key: &str) -> Result<()> {
                 .map(|m| m.to_string())
                 .unwrap_or_else(|| "disabled".to_string())
         }
+        "notifications.capacity_warning_five_hour" => {
+            config.notifications.capacity_warning_five_hour
+                .map(|(min, pct)| format!("{},{}", min, pct))
+                .unwrap_or_else(|| "disabled".to_string())
+        }
+        "notifications.capacity_warning_seven_day" => {
+            config.notifications.capacity_warning_seven_day
+                .map(|(min, pct)| format!("{},{}", min, pct))
+                .unwrap_or_else(|| "disabled".to_string())
+        }
         _ => return Err(anyhow!("Unknown config key: {}\n\nAvailable keys:\n  \
             general.poll_interval_seconds\n  \
+            general.timezone\n  \
             thresholds.five_hour\n  \
             thresholds.seven_day\n  \
             notifications.sound\n  \
@@ -65,7 +87,9 @@ pub fn handle_config_get(key: &str) -> Result<()> {
             notifications.notify_predicted_overage\n  \
             notifications.notify_resets\n  \
             notifications.minutes_before_five_hour_reset\n  \
-            notifications.minutes_before_seven_day_reset", key)),
+            notifications.minutes_before_seven_day_reset\n  \
+            notifications.capacity_warning_five_hour\n  \
+            notifications.capacity_warning_seven_day", key)),
     };
 
     println!("{} = {}", key, value);
@@ -83,6 +107,11 @@ pub fn handle_config_set(key: &str, value: &str) -> Result<()> {
                 return Err(anyhow!("Poll interval must be at least 60 seconds"));
             }
             config.general.poll_interval_seconds = val;
+        }
+        "general.timezone" => {
+            // Validate timezone before setting
+            time_format::validate_timezone(value)?;
+            config.general.timezone = value.to_string();
         }
         "thresholds.five_hour" => {
             config.thresholds.five_hour = parse_threshold_list(value)?;
@@ -119,8 +148,23 @@ pub fn handle_config_set(key: &str, value: &str) -> Result<()> {
             }
             config.notifications.minutes_before_seven_day_reset = val;
         }
+        "notifications.capacity_warning_five_hour" => {
+            let val = parse_capacity_warning(value)?;
+            if let Some((minutes, _)) = val {
+                validate_notification_window(minutes, config.general.poll_interval_seconds)?;
+            }
+            config.notifications.capacity_warning_five_hour = val;
+        }
+        "notifications.capacity_warning_seven_day" => {
+            let val = parse_capacity_warning(value)?;
+            if let Some((minutes, _)) = val {
+                validate_notification_window(minutes, config.general.poll_interval_seconds)?;
+            }
+            config.notifications.capacity_warning_seven_day = val;
+        }
         _ => return Err(anyhow!("Unknown config key: {}\n\nAvailable keys:\n  \
             general.poll_interval_seconds\n  \
+            general.timezone\n  \
             thresholds.five_hour\n  \
             thresholds.seven_day\n  \
             notifications.sound\n  \
@@ -129,7 +173,9 @@ pub fn handle_config_set(key: &str, value: &str) -> Result<()> {
             notifications.notify_predicted_overage\n  \
             notifications.notify_resets\n  \
             notifications.minutes_before_five_hour_reset\n  \
-            notifications.minutes_before_seven_day_reset", key)),
+            notifications.minutes_before_seven_day_reset\n  \
+            notifications.capacity_warning_five_hour\n  \
+            notifications.capacity_warning_seven_day", key)),
     }
 
     config.save()?;
@@ -188,6 +234,36 @@ fn parse_optional_minutes(value: &str) -> Result<Option<u64>> {
             } else {
                 Ok(Some(minutes))
             }
+        }
+    }
+}
+
+fn parse_capacity_warning(value: &str) -> Result<Option<(u64, u8)>> {
+    match value.to_lowercase().as_str() {
+        "disabled" | "none" | "off" => Ok(None),
+        _ => {
+            let parts: Vec<&str> = value.split(',').map(|s| s.trim()).collect();
+            if parts.len() != 2 {
+                return Err(anyhow!(
+                    "Value must be in format 'minutes,percentage' (e.g., '30,20') or 'disabled'"
+                ));
+            }
+
+            let minutes: u64 = parts[0]
+                .parse()
+                .context("Minutes must be a positive number")?;
+            let percentage: u8 = parts[1]
+                .parse()
+                .context("Percentage must be a number between 0-100")?;
+
+            if minutes == 0 {
+                return Err(anyhow!("Minutes must be greater than 0"));
+            }
+            if percentage > 100 {
+                return Err(anyhow!("Percentage must be between 0-100"));
+            }
+
+            Ok(Some((minutes, percentage)))
         }
     }
 }

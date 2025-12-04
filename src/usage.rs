@@ -1,6 +1,7 @@
 use crate::browser_auth::BrowserAuthenticator;
 use crate::config::Config;
 use crate::storage::SessionData;
+use crate::time_format;
 use chrono::{DateTime, Local, Utc};
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -20,12 +21,16 @@ struct UsageLimit {
 }
 
 pub fn run_usage(verbose: bool) -> anyhow::Result<()> {
+    // Load configuration first to get timezone setting
+    let config = Config::load()?;
+
     let now = Local::now();
-    let timestamp = now.format("%H:%M %d/%m/%Y");
+    let timestamp = time_format::format_datetime_24h(&now, &config.general.timezone)
+        .unwrap_or_else(|_| now.format("%H:%M %d/%m/%Y").to_string());
 
     println!("\nClaude.ai Usage");
     println!("{}", "━".repeat(50));
-    println!("Fetched at: {}", timestamp.to_string().bright_black());
+    println!("Fetched at: {}", timestamp.bright_black());
     println!();
 
     // Create loading spinner
@@ -40,8 +45,7 @@ pub fn run_usage(verbose: bool) -> anyhow::Result<()> {
     spinner.set_message("Loading configuration...");
     spinner.enable_steady_tick(std::time::Duration::from_millis(80));
 
-    // Load configuration and session data
-    let config = Config::load()?;
+    // Load session data (config already loaded above)
     let session = SessionData::load(&config.auth.session_file)?;
 
     // Convert session data to cookie pairs for injection
@@ -76,6 +80,7 @@ pub fn run_usage(verbose: bool) -> anyhow::Result<()> {
         usage.five_hour.resets_at.as_deref(),
         &config.thresholds.five_hour,
         300, // 5 hours in minutes
+        &config.general.timezone,
     )?;
 
     println!();
@@ -87,6 +92,7 @@ pub fn run_usage(verbose: bool) -> anyhow::Result<()> {
         usage.seven_day.resets_at.as_deref(),
         &config.thresholds.seven_day,
         10080, // 7 days in minutes
+        &config.general.timezone,
     )?;
 
     println!();
@@ -100,14 +106,10 @@ fn display_usage_limit(
     resets_at: Option<&str>,
     thresholds: &[u8],
     period_minutes: i64,
+    timezone: &str,
 ) -> anyhow::Result<()> {
-    // Convert utilization to percentage
-    // API may return either normalized (0.0-1.0) or percentage (0-100) values
-    let percentage = if utilization <= 1.0 {
-        utilization * 100.0
-    } else {
-        utilization
-    };
+    // API returns utilization as percentage already
+    let percentage = utilization;
 
     // Determine color based on thresholds
     let (color, status, emoji) = get_color_and_status(percentage, thresholds);
@@ -169,13 +171,14 @@ fn display_usage_limit(
                 "< 1m".to_string()
             };
 
-            // Format absolute time
-            let absolute_time = reset_time.with_timezone(&Local).format("%b %d, %I:%M %p");
+            // Format absolute time in 24-hour format with configured timezone
+            let absolute_time = time_format::format_reset_time_24h(&reset_time, timezone)
+                .unwrap_or_else(|_| reset_time.with_timezone(&Local).format("%b %d, %H:%M").to_string());
 
             println!(
                 "  Resets in: {} (at {})",
                 relative_time.bright_black(),
-                absolute_time.to_string().bright_black()
+                absolute_time.bright_black()
             );
 
             // Display time elapsed vs usage comparison with overlapping bar

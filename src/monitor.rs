@@ -1,7 +1,9 @@
 use crate::browser_auth::BrowserAuthenticator;
 use crate::config::Config;
+use crate::notification_trait::{NotificationSender, RealNotificationSender};
 use crate::notifications::{
-    format_duration, notify_predicted_overage, notify_reset, notify_threshold, notify_upcoming_reset,
+    format_duration, notify_predicted_overage, notify_reset, notify_threshold,
+    notify_upcoming_reset, notify_unused_capacity,
 };
 use crate::state::{LimitType, MonitorState};
 use crate::storage::SessionData;
@@ -87,23 +89,32 @@ fn check_usage(config: &Config, state: &mut MonitorState, verbose: bool) -> anyh
         println!("  ✓ Fetched usage data");
     }
 
+    // Create notification sender
+    let notification_sender = RealNotificationSender;
+
     // Process 5-hour limit
     process_limit(
+        &notification_sender,
         config,
         state,
         LimitType::FiveHour,
         &usage.five_hour,
         300, // 5 hours in minutes
+        LimitType::SevenDay,
+        &usage.seven_day,
         verbose,
     )?;
 
     // Process 7-day limit
     process_limit(
+        &notification_sender,
         config,
         state,
         LimitType::SevenDay,
         &usage.seven_day,
         10080, // 7 days in minutes
+        LimitType::FiveHour,
+        &usage.five_hour,
         verbose,
     )?;
 
@@ -115,19 +126,18 @@ fn check_usage(config: &Config, state: &mut MonitorState, verbose: bool) -> anyh
 }
 
 fn process_limit(
+    sender: &dyn NotificationSender,
     config: &Config,
     state: &mut MonitorState,
     limit_type: LimitType,
     limit: &UsageLimit,
     period_minutes: i64,
+    other_limit_type: LimitType,
+    other_limit: &UsageLimit,
     verbose: bool,
 ) -> anyhow::Result<()> {
-    // Convert utilization to percentage
-    let percentage = if limit.utilization <= 1.0 {
-        limit.utilization * 100.0
-    } else {
-        limit.utilization
-    };
+    // API returns utilization as percentage already
+    let percentage = limit.utilization;
 
     // Parse reset time
     let (reset_time_utc, resets_in) = match &limit.resets_at {
@@ -171,7 +181,7 @@ fn process_limit(
 
             // Send reset notification if not already sent
             if !state.is_reset_notified(limit_type) {
-                notify_reset(&config.notifications, limit_type)?;
+                notify_reset(sender, &config.notifications, limit_type)?;
                 state.mark_reset_notified(limit_type);
                 tracing::info!("Sent reset notification for {} limit", limit_type.as_str());
             }
@@ -195,6 +205,7 @@ fn process_limit(
             {
                 let remaining_capacity = 100.0 - percentage;
                 notify_upcoming_reset(
+                    sender,
                     &config.notifications,
                     limit_type,
                     percentage,
@@ -216,6 +227,69 @@ fn process_limit(
                 }
             }
         }
+
+        // Check for unused capacity warning (time + capacity threshold)
+        let capacity_warning_config = match limit_type {
+            LimitType::FiveHour => config.notifications.capacity_warning_five_hour,
+            LimitType::SevenDay => config.notifications.capacity_warning_seven_day,
+        };
+
+        if let Some((minutes_threshold, min_capacity_pct)) = capacity_warning_config {
+            let now = Utc::now();
+            let time_until_reset = reset_time.signed_duration_since(now);
+            let minutes_until_reset = time_until_reset.num_minutes();
+            let remaining_capacity = 100.0 - percentage;
+
+            // Check if we're within the time window AND have sufficient remaining capacity
+            if minutes_until_reset > 0
+                && minutes_until_reset <= minutes_threshold as i64
+                && remaining_capacity >= min_capacity_pct as f64
+                && !state.is_capacity_warning_notified(limit_type)
+            {
+                // Parse the other limit's reset time
+                let other_percentage = other_limit.utilization;
+                let other_reset_time = match &other_limit.resets_at {
+                    Some(resets_at_str) => {
+                        let reset_time = DateTime::parse_from_rfc3339(resets_at_str)
+                            .or_else(|_| DateTime::parse_from_rfc3339(&format!("{}Z", resets_at_str)))?;
+                        let reset_time_utc: DateTime<Utc> = reset_time.into();
+                        reset_time_utc
+                    }
+                    None => {
+                        // If other limit has no reset time, use a far future date
+                        Utc::now() + chrono::Duration::days(365)
+                    }
+                };
+
+                notify_unused_capacity(
+                    sender,
+                    &config.notifications,
+                    limit_type,
+                    percentage,
+                    remaining_capacity,
+                    &resets_in,
+                    other_limit_type,
+                    other_percentage,
+                    other_reset_time,
+                    &config.general.timezone,
+                )?;
+                state.mark_capacity_warning_notified(limit_type);
+                tracing::info!(
+                    "Sent unused capacity warning for {} limit ({} minutes until reset, {:.0}% capacity remaining)",
+                    limit_type.as_str(),
+                    minutes_until_reset,
+                    remaining_capacity
+                );
+
+                if verbose {
+                    println!(
+                        "  💡 Sent capacity warning ({} minutes until reset, {:.0}% remaining)",
+                        minutes_until_reset,
+                        remaining_capacity
+                    );
+                }
+            }
+        }
     }
 
     // Get thresholds for this limit type
@@ -233,6 +307,7 @@ fn process_limit(
 
     if let Some(&highest_threshold) = crossed_thresholds.iter().max() {
         notify_threshold(
+            sender,
             &config.notifications,
             limit_type,
             percentage,
@@ -273,6 +348,7 @@ fn process_limit(
                 // Warn if predicted to exceed 100% and we haven't warned recently
                 if predicted_percentage > 100.0 && state.should_warn_overage(limit_type) {
                     notify_predicted_overage(
+                        sender,
                         &config.notifications,
                         limit_type,
                         percentage,

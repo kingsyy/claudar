@@ -12,6 +12,12 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralConfig {
     pub poll_interval_seconds: u64,
+    #[serde(default = "default_timezone")]
+    pub timezone: String,
+}
+
+fn default_timezone() -> String {
+    "local".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +42,14 @@ pub struct NotificationsConfig {
     /// Minutes before 7-day limit reset to send notification (None = disabled)
     #[serde(default)]
     pub minutes_before_seven_day_reset: Option<u64>,
+    /// Warn if N minutes remain with M% capacity left for 5-hour limit (None = disabled)
+    /// Format: (minutes_remaining, min_capacity_percentage)
+    #[serde(default)]
+    pub capacity_warning_five_hour: Option<(u64, u8)>,
+    /// Warn if N minutes remain with M% capacity left for 7-day limit (None = disabled)
+    /// Format: (minutes_remaining, min_capacity_percentage)
+    #[serde(default)]
+    pub capacity_warning_seven_day: Option<(u64, u8)>,
 }
 
 fn default_true() -> bool {
@@ -56,6 +70,7 @@ impl Default for Config {
         Self {
             general: GeneralConfig {
                 poll_interval_seconds: 900, // 15 minutes
+                timezone: "local".to_string(),
             },
             thresholds: ThresholdsConfig {
                 five_hour: vec![50, 70, 90],
@@ -69,6 +84,8 @@ impl Default for Config {
                 notify_resets: true,
                 minutes_before_five_hour_reset: None,
                 minutes_before_seven_day_reset: None,
+                capacity_warning_five_hour: None,
+                capacity_warning_seven_day: None,
             },
             auth: AuthConfig {
                 session_file: config_dir.join("session.json"),

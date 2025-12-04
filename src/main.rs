@@ -3,6 +3,7 @@ mod cli;
 mod config;
 mod config_cmd;
 mod monitor;
+mod notification_trait;
 mod notifications;
 mod retry;
 mod service;
@@ -10,6 +11,7 @@ mod setup;
 mod state;
 mod status;
 mod storage;
+mod time_format;
 mod usage;
 
 use clap::Parser;
