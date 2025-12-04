@@ -67,18 +67,18 @@ pub fn format_datetime_24h(dt: &DateTime<impl TimeZone>, tz_str: &str) -> anyhow
     match tz_lower.as_str() {
         "local" => {
             let local_dt: DateTime<Local> = dt.with_timezone(&Local);
-            Ok(local_dt.format("%H:%M %d/%m/%Y").to_string())
+            Ok(local_dt.format("%b %d, %H:%M").to_string())
         }
         "utc" => {
             let utc_dt: DateTime<Utc> = dt.with_timezone(&Utc);
-            Ok(utc_dt.format("%H:%M %d/%m/%Y").to_string())
+            Ok(utc_dt.format("%b %d, %H:%M").to_string())
         }
         _ => {
             let tz = Tz::from_str(tz_str)
                 .map_err(|_| anyhow::anyhow!("Invalid timezone: '{}'. Use 'local', 'UTC', or a valid IANA timezone name", tz_str))?;
 
             let converted_dt = dt.with_timezone(&tz);
-            Ok(converted_dt.format("%H:%M %d/%m/%Y").to_string())
+            Ok(converted_dt.format("%b %d, %H:%M").to_string())
         }
     }
 }
