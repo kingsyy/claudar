@@ -11,6 +11,24 @@ A lightweight Rust daemon that monitors Claude Code usage and sends native macOS
 - **Background Service**: Install as launchd (macOS) or systemd (Linux) service for automatic monitoring
 - **Minimal Footprint**: Low memory and CPU usage
 
+## Download & Install (Recommended)
+
+1. Open the GitHub Releases page and download the file for your system.
+2. Windows: run `claude-notify-windows.exe`.
+3. macOS: open `claude-notify-macos.dmg`, then run `claude-notify` from the window that opens.
+4. Linux: run `chmod +x claude-notify-linux`, then run `./claude-notify-linux`.
+5. Run the setup wizard:
+
+```bash
+claude-notify setup
+```
+
+If you kept the Linux filename, run:
+
+```bash
+./claude-notify-linux setup
+```
+
 ## Quick Start
 
 ```bash
