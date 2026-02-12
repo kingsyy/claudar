@@ -80,6 +80,8 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          body: |
+            This release adds support for multiple instances of the Claude Code CLI.
           files: |
             dist/**/*.exe
             dist/**/*.dmg
