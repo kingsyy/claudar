@@ -193,6 +193,37 @@ pub fn notify_unused_capacity(
     Ok(())
 }
 
+/// Send a percentage-based usage warning
+pub fn notify_percentage_warning(
+    sender: &dyn NotificationSender,
+    config: &NotificationsConfig,
+    limit_type: LimitType,
+    percentage: f64,
+    warn_at_percentage: u8,
+    resets_in: &str,
+) -> anyhow::Result<()> {
+    let timeout = if config.persistent {
+        Timeout::Never
+    } else {
+        Timeout::Milliseconds(10000) // 10 seconds
+    };
+
+    let summary = format!(
+        "🔔 Claude Usage Warning: {} Limit",
+        limit_type.as_str()
+    );
+    let body = format!(
+        "Usage has reached {:.0}%, exceeding your {}% threshold.\nResets in {}",
+        percentage,
+        warn_at_percentage,
+        resets_in
+    );
+
+    sender.send(&summary, &body, timeout)?;
+
+    Ok(())
+}
+
 /// Format duration for human-readable display
 pub fn format_duration(duration: chrono::Duration) -> String {
     if duration.num_weeks() > 0 {
@@ -231,6 +262,8 @@ mod tests {
             minutes_before_seven_day_reset: None,
             capacity_warning_five_hour: None,
             capacity_warning_seven_day: None,
+            percentage_warning_five_hour: None,
+            percentage_warning_seven_day: None,
         }
     }
 
@@ -493,6 +526,32 @@ mod tests {
 
         let sent = mock.get_sent();
         assert!(sent[0].summary.contains("7-day"));
+    }
+
+    // ========== Percentage Warning Notification Tests ==========
+
+    #[test]
+    fn test_notify_percentage_warning_sends_notification() {
+        let mock = MockNotificationSender::new();
+        let config = default_config();
+
+        notify_percentage_warning(
+            &mock,
+            &config,
+            LimitType::SevenDay,
+            81.0,
+            80,
+            "2d 4h",
+        )
+        .unwrap();
+
+        let sent = mock.get_sent();
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].summary.contains("🔔"));
+        assert!(sent[0].summary.contains("7-day"));
+        assert!(sent[0].body.contains("81%"));
+        assert!(sent[0].body.contains("80% threshold"));
+        assert!(sent[0].body.contains("2d 4h"));
     }
 
     // ========== Duration Formatting Tests ==========

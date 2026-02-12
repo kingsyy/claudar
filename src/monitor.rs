@@ -292,6 +292,38 @@ fn process_limit(
         }
     }
 
+    // Check for percentage-based usage warning
+    let percentage_warning_config = match limit_type {
+        LimitType::FiveHour => config.notifications.percentage_warning_five_hour,
+        LimitType::SevenDay => config.notifications.percentage_warning_seven_day,
+    };
+
+    if let Some(warn_at_percentage) = percentage_warning_config {
+        if percentage >= warn_at_percentage as f64 && !state.is_percentage_warning_notified(limit_type) {
+            crate::notifications::notify_percentage_warning(
+                sender,
+                &config.notifications,
+                limit_type,
+                percentage,
+                warn_at_percentage,
+                &resets_in,
+            )?;
+            state.mark_percentage_warning_notified(limit_type);
+            tracing::info!(
+                "Sent percentage warning for {} limit at {}%",
+                limit_type.as_str(),
+                percentage
+            );
+
+            if verbose {
+                println!(
+                    "  🔔 Sent notification: {:.1}% usage warning (threshold {}%)",
+                    percentage, warn_at_percentage
+                );
+            }
+        }
+    }
+
     // Get thresholds for this limit type
     let thresholds = match limit_type {
         LimitType::FiveHour => &config.thresholds.five_hour,

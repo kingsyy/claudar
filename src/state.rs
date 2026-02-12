@@ -30,6 +30,10 @@ pub struct LimitState {
     /// Whether we've notified about unused capacity warning (time + capacity threshold)
     #[serde(default)]
     pub notified_capacity_warning: bool,
+
+    /// Whether we've notified about usage crossing a percentage threshold
+    #[serde(default)]
+    pub notified_percentage_warning: bool,
 }
 
 impl Default for MonitorState {
@@ -50,6 +54,7 @@ impl Default for LimitState {
             notified_reset: false,
             notified_upcoming_reset: false,
             notified_capacity_warning: false,
+            notified_percentage_warning: false,
         }
     }
 }
@@ -182,6 +187,7 @@ impl MonitorState {
             state.notified_reset = false; // Will be set to true by caller after notification
             state.notified_upcoming_reset = false;
             state.notified_capacity_warning = false;
+            state.notified_percentage_warning = false;
             tracing::debug!(
                 "Reset detected for {} limit: stored_time={}, current_time={}, new_time={}",
                 limit_type.as_str(),
@@ -290,6 +296,24 @@ impl MonitorState {
             LimitType::SevenDay => &self.seven_day,
         };
         state.notified_capacity_warning
+    }
+
+    /// Mark that a percentage warning notification was sent
+    pub fn mark_percentage_warning_notified(&mut self, limit_type: LimitType) {
+        let state = match limit_type {
+            LimitType::FiveHour => &mut self.five_hour,
+            LimitType::SevenDay => &mut self.seven_day,
+        };
+        state.notified_percentage_warning = true;
+    }
+
+    /// Check if percentage warning notification has been sent
+    pub fn is_percentage_warning_notified(&self, limit_type: LimitType) -> bool {
+        let state = match limit_type {
+            LimitType::FiveHour => &self.five_hour,
+            LimitType::SevenDay => &self.seven_day,
+        };
+        state.notified_percentage_warning
     }
 }
 
@@ -413,6 +437,7 @@ mod tests {
         state.five_hour.notified_thresholds.insert(70);
         state.five_hour.last_overage_warning = Some(now - Duration::minutes(30));
         state.five_hour.notified_upcoming_reset = true;
+        state.five_hour.notified_percentage_warning = true;
 
         let next_reset = now + Duration::hours(4);
 
@@ -425,6 +450,7 @@ mod tests {
         assert!(state.five_hour.last_overage_warning.is_none(), "Overage warning should be cleared");
         assert!(!state.five_hour.notified_upcoming_reset, "Upcoming reset flag should be cleared");
         assert!(!state.five_hour.notified_reset, "Reset notification flag should be cleared");
+        assert!(!state.five_hour.notified_percentage_warning, "Percentage warning flag should be cleared");
     }
 
     #[test]
@@ -563,5 +589,22 @@ mod tests {
 
         // Five-hour should be independent
         assert!(!state.is_upcoming_reset_notified(LimitType::FiveHour));
+    }
+
+    #[test]
+    fn test_percentage_warning_notification_tracking() {
+        let mut state = MonitorState::default();
+
+        // Initially not notified
+        assert!(!state.is_percentage_warning_notified(LimitType::FiveHour));
+
+        // Mark as notified
+        state.mark_percentage_warning_notified(LimitType::FiveHour);
+
+        // Should be marked
+        assert!(state.is_percentage_warning_notified(LimitType::FiveHour));
+
+        // Seven-day should be independent
+        assert!(!state.is_percentage_warning_notified(LimitType::SevenDay));
     }
 }

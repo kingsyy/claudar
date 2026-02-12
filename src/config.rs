@@ -50,6 +50,12 @@ pub struct NotificationsConfig {
     /// Format: (minutes_remaining, min_capacity_percentage)
     #[serde(default)]
     pub capacity_warning_seven_day: Option<(u64, u8)>,
+    /// Warn if usage exceeds M% for 5-hour limit (None = disabled)
+    #[serde(default)]
+    pub percentage_warning_five_hour: Option<u8>,
+    /// Warn if usage exceeds M% for 7-day limit (None = disabled)
+    #[serde(default)]
+    pub percentage_warning_seven_day: Option<u8>,
 }
 
 fn default_true() -> bool {
@@ -86,6 +92,8 @@ impl Default for Config {
                 minutes_before_seven_day_reset: None,
                 capacity_warning_five_hour: None,
                 capacity_warning_seven_day: None,
+                percentage_warning_five_hour: None,
+                percentage_warning_seven_day: None,
             },
             auth: AuthConfig {
                 session_file: config_dir.join("session.json"),
