@@ -35,32 +35,26 @@ impl SessionData {
         Ok(())
     }
 
-    /// Build the full cookie string for HTTP requests
-    pub fn cookie_string(&self) -> String {
-        // If we have a full cookie string, use it
-        if let Some(ref full) = self.full_cookie_string {
-            return full.clone();
-        }
-
-        // Otherwise, build from individual cookies
-        let mut cookies = vec![format!("sessionKey={}", self.session_key)];
+    /// Convert session cookies to name-value pairs for browser injection
+    pub fn cookie_pairs(&self) -> Vec<(String, String)> {
+        let mut cookies = vec![("sessionKey".to_string(), self.session_key.clone())];
 
         if let Some(ref cf) = self.cf_clearance {
-            cookies.push(format!("cf_clearance={}", cf));
+            cookies.push(("cf_clearance".to_string(), cf.clone()));
         }
         if let Some(ref org) = self.last_active_org {
-            cookies.push(format!("lastActiveOrg={}", org));
+            cookies.push(("lastActiveOrg".to_string(), org.clone()));
         }
         if let Some(ref device) = self.anthropic_device_id {
-            cookies.push(format!("anthropic-device-id={}", device));
+            cookies.push(("anthropic-device-id".to_string(), device.clone()));
         }
         if let Some(ref bm) = self.cf_bm {
-            cookies.push(format!("__cf_bm={}", bm));
+            cookies.push(("__cf_bm".to_string(), bm.clone()));
         }
         if let Some(ref ssid) = self.ssid {
-            cookies.push(format!("__ssid={}", ssid));
+            cookies.push(("__ssid".to_string(), ssid.clone()));
         }
 
-        cookies.join("; ")
+        cookies
     }
 }

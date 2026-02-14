@@ -190,6 +190,10 @@ impl BrowserAuthenticator {
     pub fn login(&self, _email: &str) -> anyhow::Result<(String, Vec<(String, String)>)> {
         let tab = self.browser.new_tab()?;
 
+        // Clear all browser cookies to ensure clean session isolation between instances
+        println!("  → Clearing browser cookies for clean login...");
+        tab.call_method(Network::ClearBrowserCookies(None))?;
+
         // Navigate to login page
         println!("  → Opening browser window at claude.ai/login...");
         tab.navigate_to("https://claude.ai/login")?;

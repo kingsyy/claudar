@@ -15,7 +15,7 @@ mod time_format;
 mod usage;
 
 use clap::Parser;
-use cli::{Cli, Commands, ConfigAction};
+use cli::{Cli, Commands, ConfigAction, InstancesAction};
 use tracing_subscriber;
 
 fn main() -> anyhow::Result<()> {
@@ -41,14 +41,14 @@ fn main() -> anyhow::Result<()> {
 
     // Route to appropriate command handler
     match cli.command {
-        Commands::Setup => {
-            setup::run_setup(cli.verbose)?;
+        Commands::Setup { instance } => {
+            setup::run_setup(cli.verbose, instance)?;
         }
         Commands::Run => {
             monitor::run_monitor(true)?; // true = foreground mode
         }
-        Commands::Usage => {
-            usage::run_usage(cli.verbose)?;
+        Commands::Usage { instance } => {
+            usage::run_usage(cli.verbose, instance)?;
         }
         Commands::Status => {
             status::run_status(cli.verbose)?;
@@ -63,6 +63,19 @@ fn main() -> anyhow::Result<()> {
                 }
                 ConfigAction::Set { key, value } => {
                     config_cmd::handle_config_set(&key, &value)?;
+                }
+            }
+        }
+        Commands::Instances { action } => {
+            match action {
+                InstancesAction::List => {
+                    config_cmd::handle_instances_list()?;
+                }
+                InstancesAction::Add { name } => {
+                    config_cmd::handle_instances_add(&name)?;
+                }
+                InstancesAction::Remove { name } => {
+                    config_cmd::handle_instances_remove(&name)?;
                 }
             }
         }

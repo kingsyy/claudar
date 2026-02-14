@@ -6,7 +6,13 @@ pub struct Config {
     pub general: GeneralConfig,
     pub thresholds: ThresholdsConfig,
     pub notifications: NotificationsConfig,
-    pub auth: AuthConfig,
+    #[serde(default)]
+    pub instances: Vec<InstanceConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstanceConfig {
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,29 +56,14 @@ pub struct NotificationsConfig {
     /// Format: (minutes_remaining, min_capacity_percentage)
     #[serde(default)]
     pub capacity_warning_seven_day: Option<(u64, u8)>,
-    /// Warn if usage exceeds M% for 5-hour limit (None = disabled)
-    #[serde(default)]
-    pub percentage_warning_five_hour: Option<u8>,
-    /// Warn if usage exceeds M% for 7-day limit (None = disabled)
-    #[serde(default)]
-    pub percentage_warning_seven_day: Option<u8>,
 }
 
 fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuthConfig {
-    pub session_file: PathBuf,
-}
-
 impl Default for Config {
     fn default() -> Self {
-        let config_dir = dirs::config_dir()
-            .expect("Failed to get config directory")
-            .join("claude-notify");
-
         Self {
             general: GeneralConfig {
                 poll_interval_seconds: 900, // 15 minutes
@@ -92,12 +83,8 @@ impl Default for Config {
                 minutes_before_seven_day_reset: None,
                 capacity_warning_five_hour: None,
                 capacity_warning_seven_day: None,
-                percentage_warning_five_hour: None,
-                percentage_warning_seven_day: None,
             },
-            auth: AuthConfig {
-                session_file: config_dir.join("session.json"),
-            },
+            instances: Vec::new(),
         }
     }
 }
@@ -133,5 +120,33 @@ impl Config {
         let content = toml::to_string_pretty(self)?;
         std::fs::write(path, content)?;
         Ok(())
+    }
+
+    /// Returns the configured instances, or a single "default" instance if none configured.
+    pub fn effective_instances(&self) -> Vec<InstanceConfig> {
+        if self.instances.is_empty() {
+            vec![InstanceConfig { name: "default".to_string() }]
+        } else {
+            self.instances.clone()
+        }
+    }
+
+    /// Whether instances are explicitly configured (vs. using implicit "default").
+    pub fn has_instances(&self) -> bool {
+        !self.instances.is_empty()
+    }
+
+    /// Get the session file path for a given instance name.
+    pub fn session_path_for(&self, name: &str) -> anyhow::Result<PathBuf> {
+        let dir = Self::config_dir()?;
+        let sessions_dir = dir.join("sessions");
+        Ok(sessions_dir.join(format!("{}.json", name)))
+    }
+
+    /// Get the state file path for a given instance name.
+    pub fn state_path_for(&self, name: &str) -> anyhow::Result<PathBuf> {
+        let dir = Self::config_dir()?;
+        let state_dir = dir.join("state");
+        Ok(state_dir.join(format!("{}.json", name)))
     }
 }

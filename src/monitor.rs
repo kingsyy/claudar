@@ -34,23 +34,38 @@ pub fn run_monitor(foreground: bool) -> anyhow::Result<()> {
         tracing::info!("Starting claude-notify monitor in background mode");
     }
 
-    // Load configuration and state
+    // Load configuration
     let config = Config::load()?;
-    let mut state = MonitorState::load()?;
+    let instances = config.effective_instances();
+
+    if foreground && instances.len() > 1 {
+        println!("Monitoring {} instances: {}", instances.len(),
+            instances.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "));
+        println!();
+    }
 
     let poll_interval = Duration::from_secs(config.general.poll_interval_seconds);
 
     loop {
-        if let Err(e) = check_usage(&config, &mut state, foreground) {
-            tracing::error!("Error checking usage: {}", e);
-            if foreground {
-                eprintln!("❌ Error: {}", e);
-            }
-        }
+        for instance in &instances {
+            let instance_name = &instance.name;
+            let mut state = MonitorState::load_for(&config, instance_name)?;
 
-        // Save state after each check
-        if let Err(e) = state.save() {
-            tracing::error!("Error saving state: {}", e);
+            if foreground && instances.len() > 1 {
+                println!("── {} ──", instance_name);
+            }
+
+            if let Err(e) = check_usage(&config, &mut state, instance_name, foreground) {
+                tracing::error!("Error checking usage for instance '{}': {}", instance_name, e);
+                if foreground {
+                    eprintln!("❌ Error ({}): {}", instance_name, e);
+                }
+            }
+
+            // Save state after each check
+            if let Err(e) = state.save_for(&config, instance_name) {
+                tracing::error!("Error saving state for instance '{}': {}", instance_name, e);
+            }
         }
 
         if foreground {
@@ -61,17 +76,18 @@ pub fn run_monitor(foreground: bool) -> anyhow::Result<()> {
     }
 }
 
-fn check_usage(config: &Config, state: &mut MonitorState, verbose: bool) -> anyhow::Result<()> {
+fn check_usage(config: &Config, state: &mut MonitorState, instance_name: &str, verbose: bool) -> anyhow::Result<()> {
     if verbose {
         println!("📊 Checking usage...");
     }
-    tracing::debug!("Fetching usage data");
+    tracing::debug!("Fetching usage data for instance '{}'", instance_name);
 
-    // Load session data
-    let session = SessionData::load(&config.auth.session_file)?;
+    // Load session data for this instance
+    let session_path = config.session_path_for(instance_name)?;
+    let session = SessionData::load(&session_path)?;
 
     // Convert session data to cookie pairs
-    let cookie_pairs = session_to_cookie_pairs(&session);
+    let cookie_pairs = session.cookie_pairs();
 
     // Launch headless Chrome
     let browser = BrowserAuthenticator::new_headless(false)?;
@@ -97,6 +113,7 @@ fn check_usage(config: &Config, state: &mut MonitorState, verbose: bool) -> anyh
         &notification_sender,
         config,
         state,
+        instance_name,
         LimitType::FiveHour,
         &usage.five_hour,
         300, // 5 hours in minutes
@@ -110,6 +127,7 @@ fn check_usage(config: &Config, state: &mut MonitorState, verbose: bool) -> anyh
         &notification_sender,
         config,
         state,
+        instance_name,
         LimitType::SevenDay,
         &usage.seven_day,
         10080, // 7 days in minutes
@@ -129,6 +147,7 @@ fn process_limit(
     sender: &dyn NotificationSender,
     config: &Config,
     state: &mut MonitorState,
+    instance_name: &str,
     limit_type: LimitType,
     limit: &UsageLimit,
     period_minutes: i64,
@@ -181,7 +200,7 @@ fn process_limit(
 
             // Send reset notification if not already sent
             if !state.is_reset_notified(limit_type) {
-                notify_reset(sender, &config.notifications, limit_type)?;
+                notify_reset(sender, &config.notifications, instance_name, limit_type)?;
                 state.mark_reset_notified(limit_type);
                 tracing::info!("Sent reset notification for {} limit", limit_type.as_str());
             }
@@ -207,6 +226,7 @@ fn process_limit(
                 notify_upcoming_reset(
                     sender,
                     &config.notifications,
+                    instance_name,
                     limit_type,
                     percentage,
                     remaining_capacity,
@@ -264,6 +284,7 @@ fn process_limit(
                 notify_unused_capacity(
                     sender,
                     &config.notifications,
+                    instance_name,
                     limit_type,
                     percentage,
                     remaining_capacity,
@@ -292,38 +313,6 @@ fn process_limit(
         }
     }
 
-    // Check for percentage-based usage warning
-    let percentage_warning_config = match limit_type {
-        LimitType::FiveHour => config.notifications.percentage_warning_five_hour,
-        LimitType::SevenDay => config.notifications.percentage_warning_seven_day,
-    };
-
-    if let Some(warn_at_percentage) = percentage_warning_config {
-        if percentage >= warn_at_percentage as f64 && !state.is_percentage_warning_notified(limit_type) {
-            crate::notifications::notify_percentage_warning(
-                sender,
-                &config.notifications,
-                limit_type,
-                percentage,
-                warn_at_percentage,
-                &resets_in,
-            )?;
-            state.mark_percentage_warning_notified(limit_type);
-            tracing::info!(
-                "Sent percentage warning for {} limit at {}%",
-                limit_type.as_str(),
-                percentage
-            );
-
-            if verbose {
-                println!(
-                    "  🔔 Sent notification: {:.1}% usage warning (threshold {}%)",
-                    percentage, warn_at_percentage
-                );
-            }
-        }
-    }
-
     // Get thresholds for this limit type
     let thresholds = match limit_type {
         LimitType::FiveHour => &config.thresholds.five_hour,
@@ -341,6 +330,7 @@ fn process_limit(
         notify_threshold(
             sender,
             &config.notifications,
+            instance_name,
             limit_type,
             percentage,
             &resets_in,
@@ -382,6 +372,7 @@ fn process_limit(
                     notify_predicted_overage(
                         sender,
                         &config.notifications,
+                        instance_name,
                         limit_type,
                         percentage,
                         predicted_percentage,
@@ -408,24 +399,3 @@ fn process_limit(
     Ok(())
 }
 
-fn session_to_cookie_pairs(session: &SessionData) -> Vec<(String, String)> {
-    let mut cookies = vec![("sessionKey".to_string(), session.session_key.clone())];
-
-    if let Some(ref cf) = session.cf_clearance {
-        cookies.push(("cf_clearance".to_string(), cf.clone()));
-    }
-    if let Some(ref org) = session.last_active_org {
-        cookies.push(("lastActiveOrg".to_string(), org.clone()));
-    }
-    if let Some(ref device) = session.anthropic_device_id {
-        cookies.push(("anthropic-device-id".to_string(), device.clone()));
-    }
-    if let Some(ref bm) = session.cf_bm {
-        cookies.push(("__cf_bm".to_string(), bm.clone()));
-    }
-    if let Some(ref ssid) = session.ssid {
-        cookies.push(("__ssid".to_string(), ssid.clone()));
-    }
-
-    cookies
-}

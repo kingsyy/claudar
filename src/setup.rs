@@ -2,12 +2,45 @@ use crate::browser_auth::BrowserAuthenticator;
 use crate::config::Config;
 use crate::storage::SessionData;
 
-pub fn run_setup(verbose: bool) -> anyhow::Result<()> {
+pub fn run_setup(verbose: bool, instance_name: Option<String>) -> anyhow::Result<()> {
     println!("\n=== Claude Code Usage Monitor - Setup Wizard ===\n");
     println!("This wizard will help you log in to Claude.ai and extract your session credentials.\n");
 
-    // Store verbose for later use
-    let _verbose = verbose;
+    // Determine instance name
+    let mut config = Config::load()?;
+    let instance_name = match instance_name {
+        Some(name) => name,
+        None => {
+            if config.has_instances() {
+                // Prompt user to pick from existing instances or enter a new one
+                let mut names: Vec<String> = config.instances.iter().map(|i| i.name.clone()).collect();
+                names.push("(new instance)".to_string());
+
+                use dialoguer::Select;
+                let selection = Select::new()
+                    .with_prompt("Which instance do you want to set up?")
+                    .items(&names)
+                    .default(0)
+                    .interact()?;
+
+                if selection == names.len() - 1 {
+                    // New instance
+                    use dialoguer::Input;
+                    Input::<String>::new()
+                        .with_prompt("Enter a name for the new instance")
+                        .interact_text()?
+                } else {
+                    names[selection].clone()
+                }
+            } else {
+                "default".to_string()
+            }
+        }
+    };
+
+    if instance_name != "default" {
+        println!("Setting up instance: {}\n", instance_name);
+    }
 
     // Step 0: Show Chrome launch instructions
     println!("Step 1: Start Chrome with Remote Debugging");
@@ -73,15 +106,19 @@ pub fn run_setup(verbose: bool) -> anyhow::Result<()> {
 
     // Step 5: Save configuration
     println!("\nStep 5: Saving configuration...");
-    let config = Config::default();
+
+    // Add instance to config if it's new and not "default"
+    if instance_name != "default" && !config.instances.iter().any(|i| i.name == instance_name) {
+        config.instances.push(crate::config::InstanceConfig { name: instance_name.clone() });
+    }
     config.save()?;
 
-    let session_path = config.auth.session_file;
+    let session_path = config.session_path_for(&instance_name)?;
     session_data.save(&session_path)?;
 
     println!("  ✓ Configuration saved!");
     println!("\nSetup complete! You can now run:");
-    println!("  claude-notify status  - Check current usage");
+    println!("  claude-notify usage   - Check current usage");
     println!("  claude-notify run     - Start monitoring");
 
     Ok(())
@@ -159,62 +196,4 @@ fn test_api_connection_via_browser(
     }
 }
 
-#[allow(dead_code)]
-fn test_api_connection(session_data: &SessionData) -> anyhow::Result<()> {
-    // Create a blocking HTTP client with more browser-like settings
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-        .gzip(true)
-        .brotli(true)
-        .use_rustls_tls() // Use rustls instead of native-tls for better compatibility
-        .build()?;
-
-    let url = format!(
-        "https://claude.ai/api/organizations/{}/usage",
-        session_data.org_id
-    );
-
-    let cookie_str = session_data.cookie_string();
-    println!("  → Sending request with {} cookies", cookie_str.split(';').count());
-    println!("  → URL: {}", url);
-
-    // Build request with all necessary headers (matching real browser order)
-    let request = client
-        .get(&url)
-        .header("Accept", "*/*")
-        .header("Accept-Language", "en-US,en;q=0.9")
-        .header("Accept-Encoding", "gzip, deflate, br")
-        .header("Referer", "https://claude.ai/settings/usage")
-        .header("Origin", "https://claude.ai")
-        .header("Connection", "keep-alive")
-        .header("Sec-Fetch-Dest", "empty")
-        .header("Sec-Fetch-Mode", "cors")
-        .header("Sec-Fetch-Site", "same-origin")
-        .header("Sec-Ch-Ua", r#""Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24""#)
-        .header("Sec-Ch-Ua-Mobile", "?0")
-        .header("Sec-Ch-Ua-Platform", r#""macOS""#)
-        .header("Cookie", cookie_str);
-
-    let response = request.send()?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().unwrap_or_else(|_| "Unable to read response".to_string());
-        anyhow::bail!(
-            "API test failed with status: {}. Response: {}",
-            status,
-            &body[..body.len().min(500)]
-        );
-    }
-
-    // Try to parse the response to verify it's valid
-    let json: serde_json::Value = response.json()?;
-
-    // Verify the response has the expected structure
-    if json.get("five_hour").is_some() || json.get("seven_day").is_some() {
-        Ok(())
-    } else {
-        anyhow::bail!("API response doesn't have expected structure. Got: {:?}", json);
-    }
-}
 

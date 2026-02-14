@@ -15,13 +15,21 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Interactive setup wizard to configure authentication
-    Setup,
+    Setup {
+        /// Instance name to set up (e.g., "work", "personal")
+        #[arg(long)]
+        instance: Option<String>,
+    },
 
     /// Run the monitor daemon in foreground mode
     Run,
 
     /// Check current Claude API usage statistics
-    Usage,
+    Usage {
+        /// Show usage for a specific instance only
+        #[arg(long)]
+        instance: Option<String>,
+    },
 
     /// Check service status, configuration, and session info
     Status,
@@ -58,6 +66,33 @@ pub enum Commands {
     /// Uninstall the system service
     #[command(name = "uninstall-service")]
     UninstallService,
+
+    /// Manage monitored instances
+    ///
+    /// Add, remove, or list Claude account instances.
+    /// Each instance has its own session and state files.
+    Instances {
+        #[command(subcommand)]
+        action: InstancesAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum InstancesAction {
+    /// List all configured instances
+    List,
+
+    /// Add a new instance
+    Add {
+        /// Name for the instance (e.g., "work", "personal")
+        name: String,
+    },
+
+    /// Remove an instance
+    Remove {
+        /// Name of the instance to remove
+        name: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]

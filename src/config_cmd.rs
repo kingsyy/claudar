@@ -37,14 +37,15 @@ pub fn handle_config_list() -> Result<()> {
         config.notifications.capacity_warning_seven_day
             .map(|(min, pct)| format!("{},{}", min, pct))
             .unwrap_or_else(|| "disabled".to_string()));
-    println!("  percentage_warning_five_hour = {}",
-        config.notifications.percentage_warning_five_hour
-            .map(|p| p.to_string())
-            .unwrap_or_else(|| "disabled".to_string()));
-    println!("  percentage_warning_seven_day = {}",
-        config.notifications.percentage_warning_seven_day
-            .map(|p| p.to_string())
-            .unwrap_or_else(|| "disabled".to_string()));
+    println!();
+    println!("[instances]");
+    if config.instances.is_empty() {
+        println!("  (none configured - using single default instance)");
+    } else {
+        for instance in &config.instances {
+            println!("  - {}", instance.name);
+        }
+    }
     println!();
     println!("Config file location: {}", Config::config_path()?.display());
 
@@ -84,16 +85,6 @@ pub fn handle_config_get(key: &str) -> Result<()> {
                 .map(|(min, pct)| format!("{},{}", min, pct))
                 .unwrap_or_else(|| "disabled".to_string())
         }
-        "notifications.percentage_warning_five_hour" => {
-            config.notifications.percentage_warning_five_hour
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| "disabled".to_string())
-        }
-        "notifications.percentage_warning_seven_day" => {
-            config.notifications.percentage_warning_seven_day
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| "disabled".to_string())
-        }
         _ => return Err(anyhow!("Unknown config key: {}\n\nAvailable keys:\n  \
             general.poll_interval_seconds\n  \
             general.timezone\n  \
@@ -107,9 +98,7 @@ pub fn handle_config_get(key: &str) -> Result<()> {
             notifications.minutes_before_five_hour_reset\n  \
             notifications.minutes_before_seven_day_reset\n  \
             notifications.capacity_warning_five_hour\n  \
-            notifications.capacity_warning_seven_day\n  \
-            notifications.percentage_warning_five_hour\n  \
-            notifications.percentage_warning_seven_day", key)),
+            notifications.capacity_warning_seven_day", key)),
     };
 
     println!("{} = {}", key, value);
@@ -182,12 +171,6 @@ pub fn handle_config_set(key: &str, value: &str) -> Result<()> {
             }
             config.notifications.capacity_warning_seven_day = val;
         }
-        "notifications.percentage_warning_five_hour" => {
-            config.notifications.percentage_warning_five_hour = parse_optional_percentage(value)?;
-        }
-        "notifications.percentage_warning_seven_day" => {
-            config.notifications.percentage_warning_seven_day = parse_optional_percentage(value)?;
-        }
         _ => return Err(anyhow!("Unknown config key: {}\n\nAvailable keys:\n  \
             general.poll_interval_seconds\n  \
             general.timezone\n  \
@@ -201,9 +184,7 @@ pub fn handle_config_set(key: &str, value: &str) -> Result<()> {
             notifications.minutes_before_five_hour_reset\n  \
             notifications.minutes_before_seven_day_reset\n  \
             notifications.capacity_warning_five_hour\n  \
-            notifications.capacity_warning_seven_day\n  \
-            notifications.percentage_warning_five_hour\n  \
-            notifications.percentage_warning_seven_day", key)),
+            notifications.capacity_warning_seven_day", key)),
     }
 
     config.save()?;
@@ -241,23 +222,6 @@ fn parse_threshold_list(value: &str) -> Result<Vec<u8>> {
     }
 
     Ok(thresholds)
-}
-
-fn parse_optional_percentage(value: &str) -> Result<Option<u8>> {
-    match value.to_lowercase().as_str() {
-        "disabled" | "none" | "off" | "0" => Ok(None),
-        _ => {
-            let percentage: u8 = value.parse()
-                .context("Value must be a number between 1-100 or 'disabled'")?;
-            if percentage == 0 {
-                Ok(None)
-            } else if percentage > 100 {
-                Err(anyhow!("Percentage must be between 1-100"))
-            } else {
-                Ok(Some(percentage))
-            }
-        }
-    }
 }
 
 fn parse_bool(value: &str) -> Result<bool> {
@@ -311,6 +275,83 @@ fn parse_capacity_warning(value: &str) -> Result<Option<(u64, u8)>> {
             Ok(Some((minutes, percentage)))
         }
     }
+}
+
+pub fn handle_instances_list() -> Result<()> {
+    let config = Config::load()?;
+
+    if config.instances.is_empty() {
+        println!("No instances configured (using single default instance).");
+        println!("\nTo add instances:");
+        println!("  claude-notify instances add personal");
+        println!("  claude-notify instances add work");
+        return Ok(());
+    }
+
+    println!("Configured instances:");
+    for instance in &config.instances {
+        println!("  - {}", instance.name);
+    }
+
+    Ok(())
+}
+
+pub fn handle_instances_add(name: &str) -> Result<()> {
+    let mut config = Config::load()?;
+
+    // Validate name
+    if name.is_empty() {
+        return Err(anyhow!("Instance name cannot be empty"));
+    }
+    if name == "default" {
+        return Err(anyhow!("'default' is a reserved instance name"));
+    }
+    if !name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+        return Err(anyhow!("Instance name can only contain alphanumeric characters, hyphens, and underscores"));
+    }
+
+    // Check for duplicate
+    if config.instances.iter().any(|i| i.name == name) {
+        return Err(anyhow!("Instance '{}' already exists", name));
+    }
+
+    config.instances.push(crate::config::InstanceConfig { name: name.to_string() });
+    config.save()?;
+
+    println!("✓ Added instance '{}'", name);
+    println!("\nNext step: Run setup for this instance:");
+    println!("  claude-notify setup --instance {}", name);
+
+    Ok(())
+}
+
+pub fn handle_instances_remove(name: &str) -> Result<()> {
+    let mut config = Config::load()?;
+
+    let original_len = config.instances.len();
+    config.instances.retain(|i| i.name != name);
+
+    if config.instances.len() == original_len {
+        return Err(anyhow!("Instance '{}' not found", name));
+    }
+
+    config.save()?;
+
+    // Clean up session and state files
+    if let Ok(session_path) = config.session_path_for(name) {
+        if session_path.exists() {
+            let _ = std::fs::remove_file(&session_path);
+        }
+    }
+    if let Ok(state_path) = config.state_path_for(name) {
+        if state_path.exists() {
+            let _ = std::fs::remove_file(&state_path);
+        }
+    }
+
+    println!("✓ Removed instance '{}' and its associated files", name);
+
+    Ok(())
 }
 
 fn validate_notification_window(notification_minutes: u64, poll_interval_seconds: u64) -> Result<()> {

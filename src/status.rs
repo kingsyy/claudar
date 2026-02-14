@@ -118,19 +118,39 @@ fn display_session_info() -> anyhow::Result<()> {
     println!();
 
     let config = Config::load()?;
+    let instances = config.effective_instances();
+    let show_labels = instances.len() > 1;
 
-    match SessionData::load(&config.auth.session_file) {
-        Ok(session) => {
-            println!("  Status:          {} {}", "✓".green(), "Authenticated".green());
-            println!("  Organization ID: {}", session.org_id.cyan());
+    for instance in &instances {
+        if show_labels {
+            println!("  {}:", instance.name.bold());
+        }
 
-            if let Some(ref org) = session.last_active_org {
-                println!("  Last Active Org: {}", org.bright_black());
+        let session_path = config.session_path_for(&instance.name)?;
+        let indent = if show_labels { "    " } else { "  " };
+
+        match SessionData::load(&session_path) {
+            Ok(session) => {
+                println!("{}Status:          {} {}", indent, "✓".green(), "Authenticated".green());
+                println!("{}Organization ID: {}", indent, session.org_id.cyan());
+
+                if let Some(ref org) = session.last_active_org {
+                    println!("{}Last Active Org: {}", indent, org.bright_black());
+                }
+            }
+            Err(_) => {
+                let setup_hint = if show_labels {
+                    format!("claude-notify setup --instance {}", instance.name)
+                } else {
+                    "claude-notify setup".to_string()
+                };
+                println!("{}Status:          {} {}", indent, "✗".red(), "Not authenticated".red());
+                println!("{}{}  Run '{}' to authenticate", indent, "💡".bright_blue(), setup_hint);
             }
         }
-        Err(_) => {
-            println!("  Status:          {} {}", "✗".red(), "Not authenticated".red());
-            println!("  {}  Run 'claude-notify setup' to authenticate", "💡".bright_blue());
+
+        if show_labels {
+            println!();
         }
     }
 

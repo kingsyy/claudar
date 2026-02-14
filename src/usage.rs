@@ -20,7 +20,7 @@ struct UsageLimit {
     resets_at: Option<String>,
 }
 
-pub fn run_usage(verbose: bool) -> anyhow::Result<()> {
+pub fn run_usage(verbose: bool, instance_filter: Option<String>) -> anyhow::Result<()> {
     // Load configuration first to get timezone setting
     let config = Config::load()?;
 
@@ -33,6 +33,40 @@ pub fn run_usage(verbose: bool) -> anyhow::Result<()> {
     println!("Fetched at: {}", timestamp.bright_black());
     println!();
 
+    let instances = config.effective_instances();
+    let show_headers = instances.len() > 1;
+
+    // Filter to specific instance if requested
+    let instances_to_show: Vec<_> = match &instance_filter {
+        Some(name) => {
+            let matching: Vec<_> = instances.into_iter().filter(|i| i.name == *name).collect();
+            if matching.is_empty() {
+                anyhow::bail!("Instance '{}' not found. Use 'claude-notify instances list' to see configured instances.", name);
+            }
+            matching
+        }
+        None => instances,
+    };
+
+    for (idx, instance) in instances_to_show.iter().enumerate() {
+        if show_headers {
+            println!("── {} {}", instance.name.bold(), "─".repeat(48 - instance.name.len()));
+            println!();
+        }
+
+        if let Err(e) = display_instance_usage(&config, &instance.name, verbose) {
+            eprintln!("  Error fetching usage for '{}': {}", instance.name, e);
+        }
+
+        if idx < instances_to_show.len() - 1 {
+            println!();
+        }
+    }
+
+    Ok(())
+}
+
+fn display_instance_usage(config: &Config, instance_name: &str, verbose: bool) -> anyhow::Result<()> {
     // Create loading spinner
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
@@ -45,11 +79,12 @@ pub fn run_usage(verbose: bool) -> anyhow::Result<()> {
     spinner.set_message("Loading configuration...");
     spinner.enable_steady_tick(std::time::Duration::from_millis(80));
 
-    // Load session data (config already loaded above)
-    let session = SessionData::load(&config.auth.session_file)?;
+    // Load session data for this instance
+    let session_path = config.session_path_for(instance_name)?;
+    let session = SessionData::load(&session_path)?;
 
     // Convert session data to cookie pairs for injection
-    let cookie_pairs = session_to_cookie_pairs(&session);
+    let cookie_pairs = session.cookie_pairs();
 
     spinner.set_message("Launching browser...");
 
@@ -71,7 +106,6 @@ pub fn run_usage(verbose: bool) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to parse usage data: {}", e))?;
 
     spinner.finish_and_clear();
-    println!();
 
     // Display 5-hour limit (5 hours = 300 minutes)
     display_usage_limit(
@@ -283,26 +317,3 @@ fn get_color_and_status(percentage: f64, thresholds: &[u8]) -> (colored::Color, 
     }
 }
 
-fn session_to_cookie_pairs(session: &SessionData) -> Vec<(String, String)> {
-    let mut cookies = vec![
-        ("sessionKey".to_string(), session.session_key.clone()),
-    ];
-
-    if let Some(ref cf) = session.cf_clearance {
-        cookies.push(("cf_clearance".to_string(), cf.clone()));
-    }
-    if let Some(ref org) = session.last_active_org {
-        cookies.push(("lastActiveOrg".to_string(), org.clone()));
-    }
-    if let Some(ref device) = session.anthropic_device_id {
-        cookies.push(("anthropic-device-id".to_string(), device.clone()));
-    }
-    if let Some(ref bm) = session.cf_bm {
-        cookies.push(("__cf_bm".to_string(), bm.clone()));
-    }
-    if let Some(ref ssid) = session.ssid {
-        cookies.push(("__ssid".to_string(), ssid.clone()));
-    }
-
-    cookies
-}
