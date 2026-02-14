@@ -1,61 +1,44 @@
 # Claude Notify
 
-A lightweight Rust daemon that monitors Claude Code usage and sends native macOS notifications when approaching usage limits.
+A lightweight Rust daemon that monitors your Claude.ai usage limits and sends native desktop notifications when approaching rate limits.
+
+## Why This Tool?
+
+Claude Code's built-in `/usage` command only shows locally tracked usage, which is inaccurate if you use Claude across multiple machines or browser sessions with the same account. Claude Notify fetches your **actual usage data directly from claude.ai** via authenticated browser requests, giving you an accurate, real-time view of your rate limits regardless of how many devices you use.
 
 ## Features
 
-- **Automated Browser Login**: Headless Chrome automation handles the login flow
-- **Native OS Notifications**: Cross-platform notifications (macOS, Linux, Windows) when approaching usage thresholds
+- **Accurate Multi-Device Usage**: Fetches real usage data from claude.ai, not local estimates
+- **Native OS Notifications**: Cross-platform notifications (macOS, Linux) when approaching usage thresholds
 - **Smart Monitoring**: Threshold crossings, predicted overage warnings, and reset notifications
 - **Configurable Thresholds**: Monitor both 5-hour and 7-day usage limits
 - **Background Service**: Install as launchd (macOS) or systemd (Linux) service for automatic monitoring
+- **Multiple Accounts**: Monitor multiple Claude accounts simultaneously
 - **Minimal Footprint**: Low memory and CPU usage
 
 ## Download & Install (Recommended)
 
-1. Open the GitHub Releases page and download the file for your system.
-2. Windows: run `claude-notify-windows.exe`.
-3. macOS: open `claude-notify-macos.dmg`, then run `claude-notify` from the window that opens.
-4. Linux: run `chmod +x claude-notify-linux`, then run `./claude-notify-linux`.
-5. Run the setup wizard:
+1. Go to [Releases](https://github.com/kingsyy/claude-notify/releases) and download the file for your system.
+2. macOS: open `claude-notify-macos.dmg`, then run `claude-notify` from the window that opens.
+3. Linux: run `chmod +x claude-notify-linux`, then run `./claude-notify-linux`.
+4. Run the setup wizard:
 
 ```bash
 claude-notify setup
 ```
 
-If you kept the Linux filename, run:
+## Build from Source
 
-```bash
-./claude-notify-linux setup
-```
-
-## Quick Start
-
-```bash
-# 1. Build the project
-cargo build --release
-
-# 2. Run the setup wizard
-cargo run --release -- setup
-
-# 3. Check your current usage
-cargo run --release -- usage
-
-# 4. Install as background service (optional)
-cargo run --release -- setup-service
-cargo run --release -- start
-```
-
-## Prerequisites
+### Prerequisites
 
 - Rust 1.70+ (install from [rustup.rs](https://rustup.rs))
 - Chrome or Chromium browser installed on your system
 
-## Installation
+### Installation
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/kingsyy/claude-notify.git
 cd claude-notify
 
 # Build the project
@@ -65,26 +48,35 @@ cargo build --release
 cargo install --path .
 ```
 
+### Quick Start
+
+```bash
+# 1. Run the setup wizard
+claude-notify setup
+
+# 2. Check your current usage
+claude-notify usage
+
+# 3. Install as background service (optional)
+claude-notify setup-service
+claude-notify start
+```
+
 ## Setup
 
 Run the interactive setup wizard:
 
 ```bash
-cargo run -- setup
-# or if installed:
-# claude-notify setup
+claude-notify setup
 ```
 
 The setup wizard will:
 
-1. **Ask for your email** - Enter the email associated with your Claude.ai account
-2. **Launch a headless browser** - Automatically navigates to claude.ai/login
-3. **Submit your email** - Fills in the email field and submits
-4. **Prompt for verification code** - Check your email and enter the 6-digit code
-5. **Complete login** - Submits the code and extracts session cookies
-6. **Extract organization ID** - Automatically finds your org ID from the URL
-7. **Test API connection** - Verifies everything works
-8. **Save configuration** - Stores credentials securely
+1. **Open Chrome** with remote debugging for authentication
+2. **Let you log in** to your Claude.ai account manually in the browser
+3. **Extract session cookies** and organization ID automatically
+4. **Test the API connection** to verify everything works
+5. **Save configuration** for future use
 
 ## Usage
 
@@ -103,11 +95,6 @@ claude-notify usage --verbose
 ```bash
 # View service status, configuration, and session info
 claude-notify status
-
-# Shows:
-# - Service installation and running status
-# - Current configuration (poll interval, thresholds, notifications)
-# - Session information (logged-in organization)
 ```
 
 ### Monitor in Foreground
@@ -140,27 +127,22 @@ claude-notify uninstall-service
 
 ### Manage Configuration
 
-You can view and modify configuration settings using the built-in config commands:
-
 ```bash
 # List all configuration values
 claude-notify config list
 
 # Get a specific configuration value
 claude-notify config get general.poll_interval_seconds
-claude-notify config get thresholds.five_hour
-claude-notify config get notifications.sound
 
 # Set a configuration value
 claude-notify config set general.poll_interval_seconds 600      # Poll every 10 minutes
 claude-notify config set thresholds.five_hour 50,75,90,95       # Custom thresholds
-claude-notify config set thresholds.seven_day 60,80,95          # Custom 7-day thresholds
 claude-notify config set notifications.sound false              # Disable sounds
-claude-notify config set notifications.notify_resets true       # Enable reset notifications
 ```
 
 **Available configuration keys:**
 - `general.poll_interval_seconds` - How often to check usage (minimum: 60 seconds)
+- `general.timezone` - Timezone for displayed times (`local`, `UTC`, or IANA name)
 - `thresholds.five_hour` - Percentage thresholds for 5-hour limit (comma-separated, 0-100)
 - `thresholds.seven_day` - Percentage thresholds for 7-day limit (comma-separated, 0-100)
 - `notifications.sound` - Enable/disable notification sounds (true/false)
@@ -168,11 +150,33 @@ claude-notify config set notifications.notify_resets true       # Enable reset n
 - `notifications.notify_threshold_crossings` - Alert when crossing thresholds (true/false)
 - `notifications.notify_predicted_overage` - Warn if predicted to exceed limit (true/false)
 - `notifications.notify_resets` - Notify when usage limits reset (true/false)
+- `notifications.minutes_before_five_hour_reset` - Alert X minutes before 5-hour reset (number or `disabled`)
+- `notifications.minutes_before_seven_day_reset` - Alert X minutes before 7-day reset (number or `disabled`)
 
 **Note**: After changing configuration, restart the service if running in the background:
 ```bash
 claude-notify stop
 claude-notify start
+```
+
+### Multiple Accounts
+
+Monitor multiple Claude accounts (e.g., work and personal):
+
+```bash
+# Add instances
+claude-notify instances add work
+claude-notify instances add personal
+
+# Set up each instance
+claude-notify setup --instance work
+claude-notify setup --instance personal
+
+# View usage for all instances
+claude-notify usage
+
+# View usage for a specific instance
+claude-notify usage --instance work
 ```
 
 ## Configuration
@@ -182,94 +186,69 @@ Configuration is stored at: `~/.config/claude-notify/config.toml`
 Default settings:
 ```toml
 [general]
-poll_interval_seconds = 900  # 15 minutes (how often to check usage)
+poll_interval_seconds = 900  # 15 minutes
+timezone = "local"
 
 [thresholds]
-five_hour = [50, 70, 90]  # Percentage thresholds for 5-hour limit
-seven_day = [50, 70, 90]  # Percentage thresholds for 7-day limit
+five_hour = [50, 70, 90]
+seven_day = [50, 70, 90]
 
 [notifications]
-sound = true                          # Enable notification sounds
-persistent = false                    # Keep notifications on screen
-notify_threshold_crossings = true    # Alert when crossing thresholds (50%, 70%, 90%)
-notify_predicted_overage = true      # Warn if predicted to exceed 100% before reset
-notify_resets = true                 # Notify when usage limits reset
+sound = true
+persistent = false
+notify_threshold_crossings = true
+notify_predicted_overage = true
+notify_resets = true
 ```
 
-You can customize these settings by editing the config file directly. Changes take effect on the next monitoring cycle.
-
-Session data (cookies) is stored at: `~/.config/claude-notify/session.json`
-Monitor state (notification tracking) is stored at: `~/.config/claude-notify/monitor_state.json`
+Session data is stored at: `~/.config/claude-notify/sessions/`
+Monitor state is stored at: `~/.config/claude-notify/state/`
 
 ## How It Works
 
-1. **Headless Browser Authentication**: Uses `headless_chrome` to automate the login flow, bypassing Cloudflare's bot detection
-2. **Cookie Extraction**: Extracts all necessary cookies including `sessionKey`, `cf_clearance`, and Cloudflare bot management tokens
-3. **API Polling**: Makes authenticated requests to `claude.ai/api/organizations/{org_id}/usage`
-4. **Smart Notifications**: Calculates usage rate and sends timely notifications before hitting limits
+1. **Browser Authentication**: Connects to Chrome with remote debugging to log in to claude.ai, bypassing Cloudflare bot detection
+2. **Cookie Extraction**: Extracts session cookies (`sessionKey`, `cf_clearance`, etc.)
+3. **API Polling**: Uses a headless browser to make authenticated requests to the claude.ai usage API
+4. **Smart Notifications**: Calculates usage rate and sends timely native desktop notifications
 
 ### Notification Types
 
-The monitor sends three types of notifications (all configurable via config.toml):
-
 1. **Threshold Crossings** (50%, 70%, 90%)
    - Notified once per threshold per reset period
-   - Urgency level increases with threshold (Low → Normal → Critical)
    - Example: "You've used 70% of your 5-hour limit. Resets in 2h 15m"
 
 2. **Predicted Overage** (5-hour limit only)
-   - Analyzes current usage rate vs. time elapsed
-   - Warns if predicted to exceed 100% before reset
-   - Only warns once per hour to avoid spam
+   - Warns if current usage rate suggests exceeding 100% before reset
    - Example: "At current pace, you'll use 115% of your 5-hour limit before reset"
 
 3. **Reset Notifications**
    - Sent when usage limits reset
-   - Lets you know fresh capacity is available
-   - Example: "Your 5-hour usage limit has been reset. You now have fresh capacity available"
+   - Example: "Your 5-hour usage limit has been reset"
+
+4. **Upcoming Reset Notifications** (optional)
+   - Alert before limits reset so you can use remaining capacity
+
+5. **Unused Capacity Warnings** (optional)
+   - Alert when significant unused capacity is about to expire
 
 The monitor maintains state to avoid duplicate notifications and automatically clears notification state when limits reset.
 
-## Project Status
+## Security
 
-**Phase 0: Setup Wizard** ✅ Complete
-- Automated browser login
-- Email verification code flow
-- Cookie extraction
-- Organization ID detection
-
-**Phase 1: Core Monitoring** ✅ Complete
-- API polling with configurable intervals
-- Threshold crossing detection
-- Predicted overage warnings (5-hour limit)
-- Reset notifications
-- Native OS notifications (macOS/Linux/Windows via notify-rust)
-- Status command with progress bars
-- Foreground monitoring mode
-- Background service installation (launchd/systemd)
-- Smart notification state tracking (no spam)
-- CLI configuration management (list/get/set commands)
-
-**Phase 2: Polish** 📋 In Progress
-- Auto cookie refresh
-- GUI configuration tool
-- Advanced usage analytics
+Session cookies are stored in plaintext JSON files in `~/.config/claude-notify/sessions/`. These files contain authentication tokens that grant access to your Claude.ai account. Ensure appropriate file permissions are set on this directory.
 
 ## Troubleshooting
 
 ### "Failed to launch browser"
 - Make sure Chrome or Chromium is installed
 - Check that Chrome is in your PATH
-- Try running with `RUST_LOG=debug` for more details
 
 ### "API test failed"
-- Verify your email is correct
-- Check that you entered the verification code correctly
+- Ensure you completed the login process in the browser
 - Ensure you have an active Claude.ai account
 
-### Cookies expire quickly
-- The tool will need periodic re-authentication
-- Future versions will handle automatic cookie refresh
+### Cookies expire
+- Re-run `claude-notify setup` to refresh your session
 
 ## Development
 
@@ -277,18 +256,17 @@ The monitor maintains state to avoid duplicate notifications and automatically c
 # Run with debug logging
 RUST_LOG=debug cargo run -- setup
 
-# Run tests (coming soon)
+# Run tests
 cargo test
 
 # Build optimized release
 cargo build --release
-strip target/release/claude-notify
 ```
 
 ## License
 
-[License TBD]
+This project is licensed under the [MIT License](LICENSE).
 
 ## Contributing
 
-Contributions welcome! Please open an issue or PR.
+Contributions welcome! Please open an issue or submit a pull request.
