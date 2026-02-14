@@ -4,10 +4,21 @@ use crate::state::LimitType;
 use crate::time_format;
 use notify_rust::Timeout;
 
+/// Format a notification title with optional instance prefix.
+/// When instance_name is "default", no prefix is added (backward compat).
+fn format_title(instance_name: &str, title: &str) -> String {
+    if instance_name == "default" {
+        title.to_string()
+    } else {
+        format!("[{}] {}", instance_name, title)
+    }
+}
+
 /// Send a threshold crossing notification
 pub fn notify_threshold(
     sender: &dyn NotificationSender,
     config: &NotificationsConfig,
+    instance_name: &str,
     limit_type: LimitType,
     percentage: f64,
     resets_in: &str,
@@ -28,10 +39,13 @@ pub fn notify_threshold(
         Timeout::Milliseconds(10000) // 10 seconds
     };
 
-    let summary = format!(
-        "{} Claude Usage Alert: {} Limit",
-        emoji,
-        limit_type.as_str()
+    let summary = format_title(
+        instance_name,
+        &format!(
+            "{} Claude Usage Alert: {} Limit",
+            emoji,
+            limit_type.as_str()
+        ),
     );
     let body = format!(
         "You've used {:.0}% of your {} limit.\nResets in {}",
@@ -49,6 +63,7 @@ pub fn notify_threshold(
 pub fn notify_predicted_overage(
     sender: &dyn NotificationSender,
     config: &NotificationsConfig,
+    instance_name: &str,
     limit_type: LimitType,
     current_percentage: f64,
     predicted_percentage: f64,
@@ -64,9 +79,12 @@ pub fn notify_predicted_overage(
         Timeout::Milliseconds(10000)
     };
 
-    let summary = format!(
-        "⚡ Claude Usage Warning: {} Limit",
-        limit_type.as_str()
+    let summary = format_title(
+        instance_name,
+        &format!(
+            "⚡ Claude Usage Warning: {} Limit",
+            limit_type.as_str()
+        ),
     );
     let body = format!(
         "At current pace, you'll use {:.0}% of your {} limit before reset.\n\
@@ -86,6 +104,7 @@ pub fn notify_predicted_overage(
 pub fn notify_reset(
     sender: &dyn NotificationSender,
     config: &NotificationsConfig,
+    instance_name: &str,
     limit_type: LimitType,
 ) -> anyhow::Result<()> {
     if !config.notify_resets {
@@ -98,9 +117,12 @@ pub fn notify_reset(
         Timeout::Milliseconds(8000) // 8 seconds
     };
 
-    let summary = format!(
-        "✓ Claude {} Limit Reset",
-        limit_type.as_str()
+    let summary = format_title(
+        instance_name,
+        &format!(
+            "✓ Claude {} Limit Reset",
+            limit_type.as_str()
+        ),
     );
     let body = format!(
         "Your {} usage limit has been reset.\nYou now have fresh capacity available.",
@@ -116,6 +138,7 @@ pub fn notify_reset(
 pub fn notify_upcoming_reset(
     sender: &dyn NotificationSender,
     config: &NotificationsConfig,
+    instance_name: &str,
     limit_type: LimitType,
     current_percentage: f64,
     remaining_capacity: f64,
@@ -127,9 +150,12 @@ pub fn notify_upcoming_reset(
         Timeout::Milliseconds(10000) // 10 seconds
     };
 
-    let summary = format!(
-        "⏰ Claude {} Limit Resetting Soon",
-        limit_type.as_str()
+    let summary = format_title(
+        instance_name,
+        &format!(
+            "⏰ Claude {} Limit Resetting Soon",
+            limit_type.as_str()
+        ),
     );
     let body = format!(
         "Your {} limit resets in {}.\n\
@@ -150,6 +176,7 @@ pub fn notify_upcoming_reset(
 pub fn notify_unused_capacity(
     sender: &dyn NotificationSender,
     config: &NotificationsConfig,
+    instance_name: &str,
     limit_type: LimitType,
     _current_percentage: f64,
     remaining_capacity: f64,
@@ -173,50 +200,23 @@ pub fn notify_unused_capacity(
         });
     let other_remaining = 100.0 - other_percentage;
 
-    let summary = format!(
-        "💡 Claude {} Capacity Available!",
-        limit_type.as_str()
+    let summary = format_title(
+        instance_name,
+        &format!(
+            "💡 Unused {} Capacity Warning",
+            limit_type.as_str()
+        ),
     );
     let body = format!(
-        "Your {} limit resets in {} with {:.0}% left.\n\
-         Your {} limit has {:.0}% left, resets {}.",
+        "Your {} limit resets in {} with {:.0}% unused capacity.\n\
+         Consider using it for large tasks before it expires!\n\
+         (Your {} limit has {:.0}% remaining, resets {})",
         limit_type.as_str(),
         resets_in,
         remaining_capacity,
         other_limit_type.as_str(),
         other_remaining,
         other_reset_str
-    );
-
-    sender.send(&summary, &body, timeout)?;
-
-    Ok(())
-}
-
-/// Send a percentage-based usage warning
-pub fn notify_percentage_warning(
-    sender: &dyn NotificationSender,
-    config: &NotificationsConfig,
-    limit_type: LimitType,
-    percentage: f64,
-    warn_at_percentage: u8,
-    resets_in: &str,
-) -> anyhow::Result<()> {
-    let timeout = if config.persistent {
-        Timeout::Never
-    } else {
-        Timeout::Milliseconds(10000) // 10 seconds
-    };
-
-    let summary = format!(
-        "🔔 Claude Usage Warning: {} Limit",
-        limit_type.as_str()
-    );
-    let body = format!(
-        "Usage has reached {:.0}%, exceeding your {}% threshold.\nResets in {}",
-        percentage,
-        warn_at_percentage,
-        resets_in
     );
 
     sender.send(&summary, &body, timeout)?;
@@ -262,8 +262,6 @@ mod tests {
             minutes_before_seven_day_reset: None,
             capacity_warning_five_hour: None,
             capacity_warning_seven_day: None,
-            percentage_warning_five_hour: None,
-            percentage_warning_seven_day: None,
         }
     }
 
@@ -277,6 +275,7 @@ mod tests {
         notify_threshold(
             &mock,
             &config,
+            "default",
             LimitType::FiveHour,
             75.0,
             "2h 30m",
@@ -301,6 +300,7 @@ mod tests {
         notify_threshold(
             &mock,
             &config,
+            "default",
             LimitType::FiveHour,
             75.0,
             "2h 30m",
@@ -318,6 +318,7 @@ mod tests {
         notify_threshold(
             &mock,
             &config,
+            "default",
             LimitType::SevenDay,
             95.0,
             "1d 5h",
@@ -336,6 +337,7 @@ mod tests {
         notify_threshold(
             &mock,
             &config,
+            "default",
             LimitType::FiveHour,
             75.0,
             "1h",
@@ -354,6 +356,7 @@ mod tests {
         notify_threshold(
             &mock,
             &config,
+            "default",
             LimitType::FiveHour,
             50.0,
             "2h",
@@ -373,6 +376,7 @@ mod tests {
         notify_threshold(
             &mock,
             &config,
+            "default",
             LimitType::FiveHour,
             90.0,
             "30m",
@@ -393,6 +397,7 @@ mod tests {
         notify_predicted_overage(
             &mock,
             &config,
+            "default",
             LimitType::FiveHour,
             60.0,
             120.0,
@@ -418,6 +423,7 @@ mod tests {
         notify_predicted_overage(
             &mock,
             &config,
+            "default",
             LimitType::FiveHour,
             60.0,
             120.0,
@@ -438,6 +444,7 @@ mod tests {
         notify_reset(
             &mock,
             &config,
+            "default",
             LimitType::FiveHour,
         )
         .unwrap();
@@ -459,6 +466,7 @@ mod tests {
         notify_reset(
             &mock,
             &config,
+            "default",
             LimitType::SevenDay,
         )
         .unwrap();
@@ -474,6 +482,7 @@ mod tests {
         notify_reset(
             &mock,
             &config,
+            "default",
             LimitType::SevenDay,
         )
         .unwrap();
@@ -492,6 +501,7 @@ mod tests {
         notify_upcoming_reset(
             &mock,
             &config,
+            "default",
             LimitType::FiveHour,
             65.0,
             35.0,
@@ -517,6 +527,7 @@ mod tests {
         notify_upcoming_reset(
             &mock,
             &config,
+            "default",
             LimitType::SevenDay,
             80.0,
             20.0,
@@ -528,30 +539,44 @@ mod tests {
         assert!(sent[0].summary.contains("7-day"));
     }
 
-    // ========== Percentage Warning Notification Tests ==========
+    // ========== Instance Name Prefix Tests ==========
 
     #[test]
-    fn test_notify_percentage_warning_sends_notification() {
+    fn test_notify_threshold_with_instance_prefix() {
         let mock = MockNotificationSender::new();
         let config = default_config();
 
-        notify_percentage_warning(
+        notify_threshold(
             &mock,
             &config,
-            LimitType::SevenDay,
-            81.0,
-            80,
-            "2d 4h",
+            "work",
+            LimitType::FiveHour,
+            90.0,
+            "1h",
         )
         .unwrap();
 
         let sent = mock.get_sent();
-        assert_eq!(sent.len(), 1);
-        assert!(sent[0].summary.contains("🔔"));
-        assert!(sent[0].summary.contains("7-day"));
-        assert!(sent[0].body.contains("81%"));
-        assert!(sent[0].body.contains("80% threshold"));
-        assert!(sent[0].body.contains("2d 4h"));
+        assert!(sent[0].summary.contains("[work]"));
+    }
+
+    #[test]
+    fn test_notify_threshold_default_no_prefix() {
+        let mock = MockNotificationSender::new();
+        let config = default_config();
+
+        notify_threshold(
+            &mock,
+            &config,
+            "default",
+            LimitType::FiveHour,
+            90.0,
+            "1h",
+        )
+        .unwrap();
+
+        let sent = mock.get_sent();
+        assert!(!sent[0].summary.contains("[default]"));
     }
 
     // ========== Duration Formatting Tests ==========
