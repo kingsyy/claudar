@@ -14,6 +14,12 @@ Cargo.lock
 # macOS
 .DS_Store
 
+# Logs
+*.log
+
+# Internal spec docs
+beginning.md
+
 # Config and session files (user-specific)
 # Note: These will be created in ~/.config/claude-notify/
 # but adding here in case anyone tests locally
