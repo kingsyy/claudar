@@ -1,9 +1,0 @@
-ERROR OCCURRED AT: 2025-11-11 17:53:48 UTC
-ERROR TYPE: "gittype::error::GitTypeError"
-ERROR MESSAGE: Terminal error: repository_id is required for session_results
-EXECUTABLE: "/opt/homebrew/bin/gittype"
-WORKING_DIR: "/Users/arthur/Repos/personal/claude-notify"
-COMMAND_ARGS: ["gittype"]
-OS: macos
-ARCH: aarch64
-
