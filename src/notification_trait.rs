@@ -1,4 +1,6 @@
 use notify_rust::{Notification, Timeout};
+
+#[cfg(test)]
 use std::sync::{Arc, Mutex};
 
 /// Trait for sending notifications, allowing for mocking in tests
@@ -21,11 +23,13 @@ impl NotificationSender for RealNotificationSender {
 }
 
 /// Mock notification sender for testing
+#[cfg(test)]
 #[derive(Clone, Default)]
 pub struct MockNotificationSender {
     pub sent_notifications: Arc<Mutex<Vec<SentNotification>>>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct SentNotification {
     pub summary: String,
@@ -33,6 +37,7 @@ pub struct SentNotification {
     pub timeout_ms: Option<u32>, // None for Timeout::Never
 }
 
+#[cfg(test)]
 impl MockNotificationSender {
     pub fn new() -> Self {
         Self {
@@ -53,6 +58,7 @@ impl MockNotificationSender {
     }
 }
 
+#[cfg(test)]
 impl NotificationSender for MockNotificationSender {
     fn send(&self, summary: &str, body: &str, timeout: Timeout) -> anyhow::Result<()> {
         let timeout_ms = match timeout {
