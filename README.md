@@ -21,7 +21,8 @@ Claude Code's built-in `/usage` command only shows locally tracked usage, which 
 1. Go to [Releases](https://github.com/kingsyy/claude-notify/releases) and download the file for your system.
 2. macOS: open `claude-notify-macos.dmg`, then run `claude-notify` from the window that opens.
 3. Linux: run `chmod +x claude-notify-linux`, then run `./claude-notify-linux`.
-4. Run the setup wizard:
+4. Windows: download `claude-notify-windows.exe` and run it from a terminal.
+5. Run the setup wizard:
 
 ```bash
 claude-notify setup
@@ -161,23 +162,33 @@ claude-notify start
 
 ### Multiple Accounts
 
-Monitor multiple Claude accounts (e.g., work and personal):
+Monitor multiple Claude accounts simultaneously (e.g., work and personal). Each instance has its own session credentials and notification state, stored separately under `~/.config/claude-notify/sessions/` and `~/.config/claude-notify/state/`.
 
 ```bash
 # Add instances
 claude-notify instances add work
 claude-notify instances add personal
 
-# Set up each instance
+# List configured instances
+claude-notify instances list
+
+# Set up each instance (opens Chrome for login)
 claude-notify setup --instance work
 claude-notify setup --instance personal
 
-# View usage for all instances
+# View usage for all instances at once
 claude-notify usage
 
 # View usage for a specific instance
 claude-notify usage --instance work
+
+# Remove an instance (deletes its session and state files)
+claude-notify instances remove work
 ```
+
+When running as a background service or in foreground mode (`claude-notify run`), all configured instances are monitored in each polling cycle. Notifications include the instance name as a prefix so you can tell which account they refer to.
+
+If no instances are configured, a single "default" instance is used automatically — no changes needed for single-account setups.
 
 ## Configuration
 
