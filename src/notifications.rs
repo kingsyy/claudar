@@ -22,6 +22,7 @@ pub fn notify_threshold(
     limit_type: LimitType,
     percentage: f64,
     resets_in: &str,
+    predicted_percentage: Option<f64>,
 ) -> anyhow::Result<()> {
     if !config.notify_threshold_crossings {
         return Ok(());
@@ -47,11 +48,19 @@ pub fn notify_threshold(
             limit_type.as_str()
         ),
     );
+
+    let pace_line = match predicted_percentage {
+        Some(pred) if pred > 100.0 => format!("\nAt current pace: {:.0}% of limit", pred),
+        Some(pred) => format!("\nAt current pace: {:.0}% of limit", pred),
+        None => String::new(),
+    };
+
     let body = format!(
-        "You've used {:.0}% of your {} limit.\nResets in {}",
+        "You've used {:.0}% of your {} limit.\nResets in {}{}",
         percentage,
         limit_type.as_str(),
-        resets_in
+        resets_in,
+        pace_line,
     );
 
     sender.send(&summary, &body, timeout)?;
@@ -279,6 +288,7 @@ mod tests {
             LimitType::FiveHour,
             75.0,
             "2h 30m",
+            None,
         )
         .unwrap();
 
@@ -304,6 +314,7 @@ mod tests {
             LimitType::FiveHour,
             75.0,
             "2h 30m",
+            None,
         )
         .unwrap();
 
@@ -322,6 +333,7 @@ mod tests {
             LimitType::SevenDay,
             95.0,
             "1d 5h",
+            None,
         )
         .unwrap();
 
@@ -341,6 +353,7 @@ mod tests {
             LimitType::FiveHour,
             75.0,
             "1h",
+            None,
         )
         .unwrap();
 
@@ -360,6 +373,7 @@ mod tests {
             LimitType::FiveHour,
             50.0,
             "2h",
+            None,
         )
         .unwrap();
 
@@ -380,6 +394,7 @@ mod tests {
             LimitType::FiveHour,
             90.0,
             "30m",
+            None,
         )
         .unwrap();
 
@@ -553,6 +568,7 @@ mod tests {
             LimitType::FiveHour,
             90.0,
             "1h",
+            None,
         )
         .unwrap();
 
@@ -572,6 +588,7 @@ mod tests {
             LimitType::FiveHour,
             90.0,
             "1h",
+            None,
         )
         .unwrap();
 

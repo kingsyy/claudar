@@ -46,8 +46,13 @@ pub fn run_monitor(foreground: bool) -> anyhow::Result<()> {
 
     let poll_interval = Duration::from_secs(config.general.poll_interval_seconds);
 
+    // One persistent browser per instance. Reusing the same Chrome process across poll cycles
+    // prevents macOS from creating a new ~1.3GB code-signing clone on every launch
+    // (stored in /private/var/folders/.../X/com.google.Chrome.code_sign_clone/).
+    let mut browsers: Vec<Option<BrowserAuthenticator>> = instances.iter().map(|_| None).collect();
+
     loop {
-        for instance in &instances {
+        for (idx, instance) in instances.iter().enumerate() {
             let instance_name = &instance.name;
             let mut state = MonitorState::load_for(&config, instance_name)?;
 
@@ -55,11 +60,28 @@ pub fn run_monitor(foreground: bool) -> anyhow::Result<()> {
                 println!("── {} ──", instance_name);
             }
 
-            if let Err(e) = check_usage(&config, &mut state, instance_name, foreground) {
+            // Lazily create the browser for this instance (or recreate after a failure).
+            if browsers[idx].is_none() {
+                match BrowserAuthenticator::new_headless(false) {
+                    Ok(b) => browsers[idx] = Some(b),
+                    Err(e) => {
+                        tracing::error!("Failed to launch browser for instance '{}': {}", instance_name, e);
+                        if foreground {
+                            eprintln!("❌ Browser launch failed ({}): {}", instance_name, e);
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            let browser = browsers[idx].as_ref().unwrap();
+            if let Err(e) = check_usage(browser, &config, &mut state, instance_name, foreground) {
                 tracing::error!("Error checking usage for instance '{}': {}", instance_name, e);
                 if foreground {
                     eprintln!("❌ Error ({}): {}", instance_name, e);
                 }
+                // Drop the browser so it is recreated fresh on the next poll.
+                browsers[idx] = None;
             }
 
             // Save state after each check
@@ -76,7 +98,7 @@ pub fn run_monitor(foreground: bool) -> anyhow::Result<()> {
     }
 }
 
-fn check_usage(config: &Config, state: &mut MonitorState, instance_name: &str, verbose: bool) -> anyhow::Result<()> {
+fn check_usage(browser: &BrowserAuthenticator, config: &Config, state: &mut MonitorState, instance_name: &str, verbose: bool) -> anyhow::Result<()> {
     if verbose {
         println!("📊 Checking usage...");
     }
@@ -89,10 +111,7 @@ fn check_usage(config: &Config, state: &mut MonitorState, instance_name: &str, v
     // Convert session data to cookie pairs
     let cookie_pairs = session.cookie_pairs();
 
-    // Launch headless Chrome
-    let browser = BrowserAuthenticator::new_headless(false)?;
-
-    // Inject stored cookies
+    // Inject stored cookies into the persistent browser
     browser.inject_cookies(cookie_pairs, false)?;
 
     // Fetch usage data
@@ -313,6 +332,21 @@ fn process_limit(
         }
     }
 
+    // Compute predicted end-of-period percentage (if we have a reset time and enough elapsed time)
+    let predicted_percentage: Option<f64> = if let Some(reset_time) = reset_time_utc {
+        let now = Utc::now();
+        let period_start = reset_time - chrono::Duration::minutes(period_minutes);
+        let elapsed_minutes = now.signed_duration_since(period_start).num_minutes().max(1);
+        let time_pct = (elapsed_minutes as f64 / period_minutes as f64 * 100.0).min(100.0);
+        if time_pct > 10.0 {
+            Some((percentage / time_pct) * 100.0)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Get thresholds for this limit type
     let thresholds = match limit_type {
         LimitType::FiveHour => &config.thresholds.five_hour,
@@ -334,6 +368,7 @@ fn process_limit(
             limit_type,
             percentage,
             &resets_in,
+            predicted_percentage,
         )?;
         state.mark_threshold_notified(limit_type, highest_threshold);
         tracing::info!(
@@ -351,46 +386,31 @@ fn process_limit(
     }
 
     // Check for predicted overage (only for 5-hour limit, and only if we're past 50%)
-    // Also requires valid reset time for prediction
     if limit_type == LimitType::FiveHour && percentage >= 50.0 {
-        if let Some(reset_time) = reset_time_utc {
-            let now = Utc::now();
-            let period_start = reset_time - chrono::Duration::minutes(period_minutes);
-            let elapsed_duration = now.signed_duration_since(period_start);
-            let elapsed_minutes = elapsed_duration.num_minutes().max(1); // Avoid division by zero
-            let time_percentage = (elapsed_minutes as f64 / period_minutes as f64 * 100.0)
-                .max(0.0)
-                .min(100.0);
+        if let Some(pred) = predicted_percentage {
+            // Warn if predicted to exceed 100% and we haven't warned recently
+            if pred > 100.0 && state.should_warn_overage(limit_type) {
+                notify_predicted_overage(
+                    sender,
+                    &config.notifications,
+                    instance_name,
+                    limit_type,
+                    percentage,
+                    pred,
+                    &resets_in,
+                )?;
+                state.mark_overage_warned(limit_type);
+                tracing::info!(
+                    "Sent overage prediction for {} limit: predicted {:.0}%",
+                    limit_type.as_str(),
+                    pred
+                );
 
-            // Only predict if we have some meaningful time elapsed
-            if time_percentage > 10.0 {
-                let usage_rate = percentage / time_percentage; // usage per 1% of time
-                let predicted_percentage = usage_rate * 100.0;
-
-                // Warn if predicted to exceed 100% and we haven't warned recently
-                if predicted_percentage > 100.0 && state.should_warn_overage(limit_type) {
-                    notify_predicted_overage(
-                        sender,
-                        &config.notifications,
-                        instance_name,
-                        limit_type,
-                        percentage,
-                        predicted_percentage,
-                        &resets_in,
-                    )?;
-                    state.mark_overage_warned(limit_type);
-                    tracing::info!(
-                        "Sent overage prediction for {} limit: predicted {:.0}%",
-                        limit_type.as_str(),
-                        predicted_percentage
+                if verbose {
+                    println!(
+                        "  ⚡ Sent overage warning: predicted {:.0}% usage",
+                        pred
                     );
-
-                    if verbose {
-                        println!(
-                            "  ⚡ Sent overage warning: predicted {:.0}% usage",
-                            predicted_percentage
-                        );
-                    }
                 }
             }
         }

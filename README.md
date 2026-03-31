@@ -1,6 +1,6 @@
 # Claude Notify
 
-A lightweight Rust daemon that monitors your Claude.ai usage limits and sends native desktop notifications when approaching rate limits.
+A "lightweight" Rust daemon that monitors your Claude.ai usage limits and sends native desktop notifications when approaching rate limits.
 
 ## Why This Tool?
 
@@ -281,3 +281,4 @@ This project is licensed under the [MIT License](LICENSE).
 ## Contributing
 
 Contributions welcome! Please open an issue or submit a pull request.
+This whole project was vibe coded. Any comments or suggestions are welcome!

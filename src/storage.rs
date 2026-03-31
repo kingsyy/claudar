@@ -58,3 +58,65 @@ impl SessionData {
         cookies
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_session(all_fields: bool) -> SessionData {
+        SessionData {
+            org_id: "org-123".to_string(),
+            session_key: "sk-abc".to_string(),
+            cf_clearance: if all_fields { Some("cf-clear".to_string()) } else { None },
+            last_active_org: if all_fields { Some("org-456".to_string()) } else { None },
+            anthropic_device_id: if all_fields { Some("dev-789".to_string()) } else { None },
+            cf_bm: if all_fields { Some("bm-val".to_string()) } else { None },
+            ssid: if all_fields { Some("ssid-val".to_string()) } else { None },
+            full_cookie_string: None,
+        }
+    }
+
+    #[test]
+    fn cookie_pairs_required_only() {
+        let session = make_session(false);
+        let pairs = session.cookie_pairs();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0], ("sessionKey".to_string(), "sk-abc".to_string()));
+    }
+
+    #[test]
+    fn cookie_pairs_all_fields() {
+        let session = make_session(true);
+        let pairs = session.cookie_pairs();
+        assert_eq!(pairs.len(), 6);
+
+        let names: Vec<&str> = pairs.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"sessionKey"));
+        assert!(names.contains(&"cf_clearance"));
+        assert!(names.contains(&"lastActiveOrg"));
+        assert!(names.contains(&"anthropic-device-id"));
+        assert!(names.contains(&"__cf_bm"));
+        assert!(names.contains(&"__ssid"));
+    }
+
+    #[test]
+    fn save_load_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test-session.json");
+
+        let session = make_session(true);
+        session.save(&path.to_path_buf()).unwrap();
+
+        let loaded = SessionData::load(&path.to_path_buf()).unwrap();
+        assert_eq!(loaded.org_id, "org-123");
+        assert_eq!(loaded.session_key, "sk-abc");
+        assert_eq!(loaded.cf_clearance, Some("cf-clear".to_string()));
+        assert_eq!(loaded.anthropic_device_id, Some("dev-789".to_string()));
+    }
+
+    #[test]
+    fn load_nonexistent_file_errors() {
+        let path = PathBuf::from("/tmp/nonexistent-claude-notify-test.json");
+        assert!(SessionData::load(&path).is_err());
+    }
+}

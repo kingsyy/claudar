@@ -150,3 +150,88 @@ impl Config {
         Ok(state_dir.join(format!("{}.json", name)))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_values() {
+        let config = Config::default();
+        assert_eq!(config.general.poll_interval_seconds, 900);
+        assert_eq!(config.general.timezone, "local");
+        assert_eq!(config.thresholds.five_hour, vec![50, 70, 90]);
+        assert_eq!(config.thresholds.seven_day, vec![50, 70, 90]);
+        assert!(config.notifications.sound);
+        assert!(!config.notifications.persistent);
+        assert!(config.notifications.notify_threshold_crossings);
+        assert!(config.notifications.notify_predicted_overage);
+        assert!(config.notifications.notify_resets);
+        assert!(config.notifications.minutes_before_five_hour_reset.is_none());
+        assert!(config.notifications.capacity_warning_five_hour.is_none());
+        assert!(config.instances.is_empty());
+    }
+
+    #[test]
+    fn effective_instances_empty_returns_default() {
+        let config = Config::default();
+        let instances = config.effective_instances();
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].name, "default");
+    }
+
+    #[test]
+    fn effective_instances_returns_configured() {
+        let mut config = Config::default();
+        config.instances = vec![
+            InstanceConfig { name: "personal".to_string() },
+            InstanceConfig { name: "work".to_string() },
+        ];
+        let instances = config.effective_instances();
+        assert_eq!(instances.len(), 2);
+        assert_eq!(instances[0].name, "personal");
+        assert_eq!(instances[1].name, "work");
+    }
+
+    #[test]
+    fn has_instances_false_when_empty() {
+        let config = Config::default();
+        assert!(!config.has_instances());
+    }
+
+    #[test]
+    fn has_instances_true_when_configured() {
+        let mut config = Config::default();
+        config.instances = vec![InstanceConfig { name: "test".to_string() }];
+        assert!(config.has_instances());
+    }
+
+    #[test]
+    fn toml_round_trip() {
+        let config = Config::default();
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let deserialized: Config = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.general.poll_interval_seconds, config.general.poll_interval_seconds);
+        assert_eq!(deserialized.general.timezone, config.general.timezone);
+        assert_eq!(deserialized.thresholds.five_hour, config.thresholds.five_hour);
+        assert_eq!(deserialized.notifications.sound, config.notifications.sound);
+    }
+
+    #[test]
+    fn toml_round_trip_with_instances() {
+        let mut config = Config::default();
+        config.instances = vec![
+            InstanceConfig { name: "personal".to_string() },
+            InstanceConfig { name: "work".to_string() },
+        ];
+        config.notifications.minutes_before_five_hour_reset = Some(15);
+        config.notifications.capacity_warning_five_hour = Some((30, 20));
+
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let deserialized: Config = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.instances.len(), 2);
+        assert_eq!(deserialized.instances[0].name, "personal");
+        assert_eq!(deserialized.notifications.minutes_before_five_hour_reset, Some(15));
+        assert_eq!(deserialized.notifications.capacity_warning_five_hour, Some((30, 20)));
+    }
+}

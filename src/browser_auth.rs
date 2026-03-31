@@ -87,8 +87,23 @@ impl BrowserAuthenticator {
             println!("  → Injecting {} stored cookies...", cookies.len());
         }
 
-        // Get or create a tab
-        let tab = self.browser.new_tab()?;
+        // Reuse the first existing tab, or open one if none exist yet.
+        // Creating a new tab on every poll would accumulate tabs in the persistent browser.
+        let tab = {
+            let tabs = self.browser.get_tabs().lock().unwrap();
+            match tabs.first() {
+                Some(t) => t.clone(),
+                None => {
+                    drop(tabs);
+                    self.browser.new_tab()?
+                }
+            }
+        };
+
+        // Clear any stale cookies from a previous poll before injecting fresh ones.
+        // This matters for multi-instance setups where a shared browser might carry
+        // cookies from a different account.
+        tab.call_method(Network::ClearBrowserCookies(None))?;
 
         // Navigate to claude.ai first (cookies can only be set for the current domain)
         tab.navigate_to("https://claude.ai")?;

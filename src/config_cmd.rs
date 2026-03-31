@@ -369,3 +369,143 @@ fn validate_notification_window(notification_minutes: u64, poll_interval_seconds
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- parse_threshold_list ---
+
+    #[test]
+    fn parse_threshold_list_valid_multiple() {
+        let result = parse_threshold_list("50,70,90").unwrap();
+        assert_eq!(result, vec![50, 70, 90]);
+    }
+
+    #[test]
+    fn parse_threshold_list_single_value() {
+        let result = parse_threshold_list("80").unwrap();
+        assert_eq!(result, vec![80]);
+    }
+
+    #[test]
+    fn parse_threshold_list_with_spaces() {
+        let result = parse_threshold_list("50, 70, 90").unwrap();
+        assert_eq!(result, vec![50, 70, 90]);
+    }
+
+    #[test]
+    fn parse_threshold_list_invalid_string() {
+        assert!(parse_threshold_list("abc").is_err());
+    }
+
+    #[test]
+    fn parse_threshold_list_boundary_values() {
+        let result = parse_threshold_list("0,100").unwrap();
+        assert_eq!(result, vec![0, 100]);
+    }
+
+    // --- parse_bool ---
+
+    #[test]
+    fn parse_bool_truthy_values() {
+        for val in &["true", "yes", "1", "on", "True", "YES", "On"] {
+            assert_eq!(parse_bool(val).unwrap(), true, "failed for {}", val);
+        }
+    }
+
+    #[test]
+    fn parse_bool_falsy_values() {
+        for val in &["false", "no", "0", "off", "False", "NO", "Off"] {
+            assert_eq!(parse_bool(val).unwrap(), false, "failed for {}", val);
+        }
+    }
+
+    #[test]
+    fn parse_bool_invalid() {
+        assert!(parse_bool("maybe").is_err());
+        assert!(parse_bool("").is_err());
+    }
+
+    // --- parse_optional_minutes ---
+
+    #[test]
+    fn parse_optional_minutes_numeric() {
+        assert_eq!(parse_optional_minutes("30").unwrap(), Some(30));
+        assert_eq!(parse_optional_minutes("1").unwrap(), Some(1));
+    }
+
+    #[test]
+    fn parse_optional_minutes_disabled_variants() {
+        for val in &["disabled", "none", "off", "0", "Disabled", "NONE", "OFF"] {
+            assert_eq!(parse_optional_minutes(val).unwrap(), None, "failed for {}", val);
+        }
+    }
+
+    #[test]
+    fn parse_optional_minutes_invalid() {
+        assert!(parse_optional_minutes("abc").is_err());
+        assert!(parse_optional_minutes("-5").is_err());
+    }
+
+    // --- parse_capacity_warning ---
+
+    #[test]
+    fn parse_capacity_warning_valid() {
+        assert_eq!(parse_capacity_warning("30,20").unwrap(), Some((30, 20)));
+    }
+
+    #[test]
+    fn parse_capacity_warning_with_spaces() {
+        assert_eq!(parse_capacity_warning("30, 20").unwrap(), Some((30, 20)));
+    }
+
+    #[test]
+    fn parse_capacity_warning_disabled() {
+        for val in &["disabled", "none", "off", "Disabled"] {
+            assert_eq!(parse_capacity_warning(val).unwrap(), None, "failed for {}", val);
+        }
+    }
+
+    #[test]
+    fn parse_capacity_warning_wrong_format() {
+        assert!(parse_capacity_warning("30").is_err());
+        assert!(parse_capacity_warning("30,20,10").is_err());
+    }
+
+    #[test]
+    fn parse_capacity_warning_zero_minutes() {
+        assert!(parse_capacity_warning("0,20").is_err());
+    }
+
+    #[test]
+    fn parse_capacity_warning_percentage_over_100() {
+        assert!(parse_capacity_warning("30,101").is_err());
+    }
+
+    // --- format_vec ---
+
+    #[test]
+    fn format_vec_basic() {
+        assert_eq!(format_vec(&[50, 70, 90]), "50,70,90");
+    }
+
+    #[test]
+    fn format_vec_single() {
+        assert_eq!(format_vec(&[42]), "42");
+    }
+
+    #[test]
+    fn format_vec_empty() {
+        assert_eq!(format_vec(&[]), "");
+    }
+
+    // --- validate_notification_window ---
+
+    #[test]
+    fn validate_notification_window_ok() {
+        // Should not error even when window < poll interval (it just warns)
+        assert!(validate_notification_window(5, 900).is_ok());
+        assert!(validate_notification_window(30, 900).is_ok());
+    }
+}

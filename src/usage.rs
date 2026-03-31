@@ -148,23 +148,9 @@ fn display_usage_limit(
     // Determine color based on thresholds
     let (color, status, emoji) = get_color_and_status(percentage, thresholds);
 
-    // Create progress bar (needs normalized 0-1 value)
-    let normalized_utilization = percentage / 100.0;
-    let progress_bar = create_progress_bar(normalized_utilization);
-
-    // Format the main line
     let name_padded = format!("{:14}", name);
-    let progress_colored = progress_bar.color(color);
+    let token_bar = create_progress_bar(percentage / 100.0);
     let percentage_str = format!("{:5.1}%", percentage).color(color).bold();
-
-    println!(
-        "{}  {}  {}  {}  {}",
-        name_padded.bold(),
-        progress_colored,
-        percentage_str,
-        emoji,
-        status.color(color)
-    );
 
     // Parse and format reset time (handle null gracefully)
     match resets_at {
@@ -209,45 +195,43 @@ fn display_usage_limit(
             let absolute_time = time_format::format_reset_time_24h(&reset_time, timezone)
                 .unwrap_or_else(|_| reset_time.with_timezone(&Local).format("%b %d, %H:%M").to_string());
 
+            let time_bar = create_progress_bar(time_percentage / 100.0);
+            let time_pct_str = format!("{:5.1}%", time_percentage).bright_black();
+
+            let pace_diff = percentage - time_percentage;
+            let (pace_emoji, pace_text, pace_color) = if pace_diff > 10.0 {
+                ("⚡", format!("{:.1}% over pace", pace_diff), colored::Color::Yellow)
+            } else if pace_diff < -10.0 {
+                ("🐌", format!("{:.1}% under pace", pace_diff.abs()), colored::Color::Green)
+            } else {
+                ("✓", "On pace".to_string(), colored::Color::BrightBlack)
+            };
+
+            println!(
+                "{}  {} {} {}",
+                name_padded.bold(),
+                emoji,
+                status.color(color),
+                pace_text.color(pace_color)
+            );
+            println!("  ⏱  {}  {}", time_bar.bright_black(), time_pct_str);
+            println!("  💬 {}  {}", token_bar.color(color), percentage_str);
             println!(
                 "  Resets in: {} (at {})",
                 relative_time.bright_black(),
                 absolute_time.bright_black()
             );
-
-            // Display time elapsed vs usage comparison with overlapping bar
-            if time_percentage > 0.0 {
-                let expected_usage = time_percentage; // If perfectly paced, usage should match time elapsed
-                let pace_diff = percentage - expected_usage;
-
-                // Create the overlapping bar
-                let overlap_bar = create_overlapping_bar(time_percentage, percentage);
-
-                // Determine pace status and color
-                let (pace_emoji, pace_text, pace_color) = if pace_diff > 10.0 {
-                    ("⚡", format!("{:.1}% over pace", pace_diff), colored::Color::Yellow)
-                } else if pace_diff < -10.0 {
-                    ("🐌", format!("{:.1}% under pace", pace_diff.abs()), colored::Color::Green)
-                } else {
-                    ("✓", "On pace".to_string(), colored::Color::BrightBlack)
-                };
-
-                // Display the visualization
-                println!(
-                    "  {} ⏱ {:.1}% │ 💬 {:.1}%",
-                    overlap_bar.bright_white(),
-                    time_percentage,
-                    percentage
-                );
-                println!(
-                    "  {} {}",
-                    pace_emoji,
-                    pace_text.color(pace_color)
-                );
-            }
         }
         None => {
-            // API returned null for reset time - show fallback message
+            // No timing info — show token bar only
+            println!(
+                "{}  💬 {}  {}   {}  {}",
+                name_padded.bold(),
+                token_bar.color(color),
+                percentage_str,
+                emoji,
+                status.color(color)
+            );
             println!(
                 "  Resets in: {} (API did not provide reset time)",
                 "Unknown".bright_black()
@@ -271,6 +255,7 @@ fn create_progress_bar(utilization: f64) -> String {
     )
 }
 
+#[cfg(test)]
 fn create_overlapping_bar(time_percentage: f64, usage_percentage: f64) -> String {
     let bar_width = 20;
     let time_pos = ((time_percentage / 100.0) * bar_width as f64).round() as usize;
@@ -317,3 +302,115 @@ fn get_color_and_status(percentage: f64, thresholds: &[u8]) -> (colored::Color, 
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- create_progress_bar ---
+
+    #[test]
+    fn progress_bar_zero() {
+        let bar = create_progress_bar(0.0);
+        assert_eq!(bar, "[░░░░░░░░░░]");
+    }
+
+    #[test]
+    fn progress_bar_half() {
+        let bar = create_progress_bar(0.5);
+        assert_eq!(bar, "[█████░░░░░]");
+    }
+
+    #[test]
+    fn progress_bar_full() {
+        let bar = create_progress_bar(1.0);
+        assert_eq!(bar, "[██████████]");
+    }
+
+    #[test]
+    fn progress_bar_clamps_over_100() {
+        let bar = create_progress_bar(1.5);
+        assert_eq!(bar, "[██████████]");
+    }
+
+    // --- create_overlapping_bar ---
+
+    #[test]
+    fn overlapping_bar_under_pace() {
+        // time=50%, usage=25% => under pace
+        let bar = create_overlapping_bar(50.0, 25.0);
+        // 5 positions usage (█), 5 positions time-only (░), 10 empty (░)
+        assert_eq!(bar, "[█████░░░░░░░░░░░░░░░]");
+    }
+
+    #[test]
+    fn overlapping_bar_over_pace() {
+        // time=25%, usage=50% => over pace
+        let bar = create_overlapping_bar(25.0, 50.0);
+        // 5 positions both (█), 5 positions usage-only (▓), 10 empty (░)
+        assert_eq!(bar, "[█████▓▓▓▓▓░░░░░░░░░░]");
+    }
+
+    #[test]
+    fn overlapping_bar_equal() {
+        let bar = create_overlapping_bar(50.0, 50.0);
+        assert_eq!(bar, "[██████████░░░░░░░░░░]");
+    }
+
+    #[test]
+    fn overlapping_bar_zero() {
+        let bar = create_overlapping_bar(0.0, 0.0);
+        assert_eq!(bar, "[░░░░░░░░░░░░░░░░░░░░]");
+    }
+
+    #[test]
+    fn overlapping_bar_full() {
+        let bar = create_overlapping_bar(100.0, 100.0);
+        assert_eq!(bar, "[████████████████████]");
+    }
+
+    // --- get_color_and_status ---
+
+    #[test]
+    fn color_status_below_all_thresholds() {
+        let (color, status, _) = get_color_and_status(30.0, &[50, 70, 90]);
+        assert_eq!(color, colored::Color::Green);
+        assert_eq!(status, "OK");
+    }
+
+    #[test]
+    fn color_status_at_50() {
+        let (color, status, _) = get_color_and_status(55.0, &[50, 70, 90]);
+        assert_eq!(color, colored::Color::Yellow);
+        assert_eq!(status, "ELEVATED");
+    }
+
+    #[test]
+    fn color_status_at_70() {
+        let (color, status, _) = get_color_and_status(75.0, &[50, 70, 90]);
+        assert_eq!(color, colored::Color::Yellow);
+        assert_eq!(status, "WARNING");
+    }
+
+    #[test]
+    fn color_status_at_90() {
+        let (color, status, _) = get_color_and_status(95.0, &[50, 70, 90]);
+        assert_eq!(color, colored::Color::Red);
+        assert_eq!(status, "CRITICAL");
+    }
+
+    #[test]
+    fn color_status_custom_thresholds() {
+        // Only threshold at 80 — so 85% should match 80 => range 70..=89 => WARNING
+        let (color, status, _) = get_color_and_status(85.0, &[80]);
+        assert_eq!(color, colored::Color::Yellow);
+        assert_eq!(status, "WARNING");
+    }
+
+    #[test]
+    fn color_status_empty_thresholds() {
+        // No thresholds exceeded => OK
+        let (color, status, _) = get_color_and_status(99.0, &[]);
+        assert_eq!(color, colored::Color::Green);
+        assert_eq!(status, "OK");
+    }
+}
