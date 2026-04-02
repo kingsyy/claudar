@@ -1,7 +1,9 @@
 use crate::config::NotificationsConfig;
 use crate::notification_trait::NotificationSender;
+use crate::pace;
 use crate::state::LimitType;
 use crate::time_format;
+use chrono::{DateTime, Utc};
 use notify_rust::Timeout;
 
 /// Format a notification title with optional instance prefix.
@@ -23,6 +25,8 @@ pub fn notify_threshold(
     percentage: f64,
     resets_in: &str,
     predicted_percentage: Option<f64>,
+    reset_time: Option<DateTime<Utc>>,
+    period_minutes: i64,
 ) -> anyhow::Result<()> {
     if !config.notify_threshold_crossings {
         return Ok(());
@@ -49,18 +53,26 @@ pub fn notify_threshold(
         ),
     );
 
-    let pace_line = match predicted_percentage {
+    let pace_line = if let Some(reset_time) = reset_time {
+        let pace_info = pace::calculate_pace_info(percentage, reset_time, period_minutes);
+        format!("\n{}", pace_info)
+    } else {
+        String::new()
+    };
+
+    let predicted_line = match predicted_percentage {
         Some(pred) if pred > 100.0 => format!("\nAt current pace: {:.0}% of limit", pred),
         Some(pred) => format!("\nAt current pace: {:.0}% of limit", pred),
         None => String::new(),
     };
 
     let body = format!(
-        "You've used {:.0}% of your {} limit.\nResets in {}{}",
+        "You've used {:.0}% of your {} limit.\nResets in {}{}{}",
         percentage,
         limit_type.as_str(),
         resets_in,
         pace_line,
+        predicted_line,
     );
 
     sender.send(&summary, &body, timeout)?;
@@ -77,6 +89,8 @@ pub fn notify_predicted_overage(
     current_percentage: f64,
     predicted_percentage: f64,
     resets_in: &str,
+    reset_time: Option<DateTime<Utc>>,
+    period_minutes: i64,
 ) -> anyhow::Result<()> {
     if !config.notify_predicted_overage {
         return Ok(());
@@ -95,13 +109,22 @@ pub fn notify_predicted_overage(
             limit_type.as_str()
         ),
     );
+
+    let pace_line = if let Some(reset_time) = reset_time {
+        let pace_info = pace::calculate_pace_info(current_percentage, reset_time, period_minutes);
+        format!("\n{}", pace_info)
+    } else {
+        String::new()
+    };
+
     let body = format!(
         "At current pace, you'll use {:.0}% of your {} limit before reset.\n\
-         Current: {:.0}% | Resets in: {}",
+         Current: {:.0}% | Resets in: {}{}",
         predicted_percentage,
         limit_type.as_str(),
         current_percentage,
-        resets_in
+        resets_in,
+        pace_line
     );
 
     sender.send(&summary, &body, timeout)?;
@@ -289,6 +312,8 @@ mod tests {
             75.0,
             "2h 30m",
             None,
+            None,
+            300,
         )
         .unwrap();
 
@@ -315,6 +340,8 @@ mod tests {
             75.0,
             "2h 30m",
             None,
+            None,
+            300,
         )
         .unwrap();
 
@@ -334,6 +361,8 @@ mod tests {
             95.0,
             "1d 5h",
             None,
+            None,
+            10080,
         )
         .unwrap();
 
@@ -354,6 +383,8 @@ mod tests {
             75.0,
             "1h",
             None,
+            None,
+            300,
         )
         .unwrap();
 
@@ -374,6 +405,8 @@ mod tests {
             50.0,
             "2h",
             None,
+            None,
+            300,
         )
         .unwrap();
 
@@ -395,6 +428,8 @@ mod tests {
             90.0,
             "30m",
             None,
+            None,
+            300,
         )
         .unwrap();
 
@@ -417,6 +452,8 @@ mod tests {
             60.0,
             120.0,
             "1h 30m",
+            None,
+            300,
         )
         .unwrap();
 
@@ -443,6 +480,8 @@ mod tests {
             60.0,
             120.0,
             "1h 30m",
+            None,
+            300,
         )
         .unwrap();
 
@@ -569,6 +608,8 @@ mod tests {
             90.0,
             "1h",
             None,
+            None,
+            300,
         )
         .unwrap();
 
@@ -589,6 +630,8 @@ mod tests {
             90.0,
             "1h",
             None,
+            None,
+            300,
         )
         .unwrap();
 

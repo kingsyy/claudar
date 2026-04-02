@@ -1,5 +1,6 @@
 use crate::browser_auth::BrowserAuthenticator;
 use crate::config::Config;
+use crate::pace;
 use crate::storage::SessionData;
 use crate::time_format;
 use chrono::{DateTime, Local, Utc};
@@ -198,13 +199,13 @@ fn display_usage_limit(
             let time_bar = create_progress_bar(time_percentage / 100.0);
             let time_pct_str = format!("{:5.1}%", time_percentage).bright_black();
 
-            let pace_diff = percentage - time_percentage;
-            let (pace_emoji, pace_text, pace_color) = if pace_diff > 10.0 {
-                ("⚡", format!("{:.1}% over pace", pace_diff), colored::Color::Yellow)
-            } else if pace_diff < -10.0 {
-                ("🐌", format!("{:.1}% under pace", pace_diff.abs()), colored::Color::Green)
+            let pace_text = pace::calculate_pace_info(percentage, reset_time.with_timezone(&Utc), period_minutes);
+            let pace_color = if pace_text.contains("over pace") {
+                colored::Color::Yellow
+            } else if pace_text.contains("under pace") {
+                colored::Color::Green
             } else {
-                ("✓", "On pace".to_string(), colored::Color::BrightBlack)
+                colored::Color::BrightBlack
             };
 
             println!(

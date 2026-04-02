@@ -369,6 +369,8 @@ fn process_limit(
             percentage,
             &resets_in,
             predicted_percentage,
+            reset_time_utc,
+            period_minutes,
         )?;
         state.mark_threshold_notified(limit_type, highest_threshold);
         tracing::info!(
@@ -398,6 +400,8 @@ fn process_limit(
                     percentage,
                     pred,
                     &resets_in,
+                    reset_time_utc,
+                    period_minutes,
                 )?;
                 state.mark_overage_warned(limit_type);
                 tracing::info!(
