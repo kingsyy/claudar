@@ -62,7 +62,17 @@ pub fn run_monitor(foreground: bool) -> anyhow::Result<()> {
 
             // Lazily create the browser for this instance (or recreate after a failure).
             if browsers[idx].is_none() {
-                match BrowserAuthenticator::new_headless(false) {
+                let profile_dir = match config.chrome_profile_path_for(instance_name) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::error!("Failed to resolve Chrome profile dir for '{}': {}", instance_name, e);
+                        if foreground {
+                            eprintln!("❌ Config error ({}): {}", instance_name, e);
+                        }
+                        continue;
+                    }
+                };
+                match BrowserAuthenticator::new_headless(&profile_dir, false) {
                     Ok(b) => browsers[idx] = Some(b),
                     Err(e) => {
                         tracing::error!("Failed to launch browser for instance '{}': {}", instance_name, e);

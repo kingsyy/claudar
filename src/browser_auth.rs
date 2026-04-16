@@ -49,23 +49,50 @@ impl BrowserAuthenticator {
         Ok(Self { browser })
     }
 
-    /// Create a new BrowserAuthenticator with a headless Chrome instance
-    /// This launches Chrome programmatically without a visible window
-    pub fn new_headless(verbose: bool) -> anyhow::Result<Self> {
+    /// Create a new BrowserAuthenticator with a headless Chrome instance.
+    ///
+    /// `profile_dir` should be a fixed, instance-specific path (e.g.
+    /// `~/.config/claude-notify/chrome-profiles/default/`).  Passing a stable
+    /// path instead of relying on headless_chrome's random temp directories
+    /// prevents profile directories from accumulating on disk when the process
+    /// is killed before Drop runs.
+    pub fn new_headless(profile_dir: &std::path::Path, verbose: bool) -> anyhow::Result<Self> {
         if verbose {
             println!("  → Launching headless Chrome...");
         }
 
-        // Use more realistic browser settings to avoid Cloudflare detection
+        std::fs::create_dir_all(profile_dir)
+            .map_err(|e| anyhow::anyhow!("Failed to create Chrome profile dir: {}", e))?;
+
+        // Use more realistic browser settings to avoid Cloudflare detection.
+        //
+        // idle_browser_timeout: headless_chrome's WebSocket event loop exits if no CDP
+        // messages arrive within this window. With a 15-minute poll interval the default
+        // 30 s timeout fires every cycle, killing the connection and forcing a browser
+        // restart on the next poll — defeating the persistent-browser optimization.
+        // Setting it to 24 h keeps the connection alive indefinitely.
+        //
+        // --disk-cache-size=1 / --media-cache-size=1: cap on-disk cache so the fixed
+        // profile directory stays small even across long-running sessions.
+        //
+        // --blink-settings=imagesEnabled=false / --disable-remote-fonts /
+        // --disable-3d-apis / --disable-speech-api: we only navigate to fetch JSON;
+        // none of these browser features are needed.
         let launch_options = LaunchOptions::default_builder()
             .headless(true)
-            .window_size(Some((1920, 1080)))
+            .user_data_dir(Some(profile_dir.to_path_buf()))
+            .idle_browser_timeout(Duration::from_secs(24 * 60 * 60))
             .args(vec![
                 OsStr::new("--disable-blink-features=AutomationControlled"),
                 OsStr::new("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
-                OsStr::new("--disable-web-security"),
                 OsStr::new("--disable-features=IsolateOrigins,site-per-process"),
                 OsStr::new("--lang=en-US,en"),
+                OsStr::new("--disk-cache-size=1"),
+                OsStr::new("--media-cache-size=1"),
+                OsStr::new("--blink-settings=imagesEnabled=false"),
+                OsStr::new("--disable-remote-fonts"),
+                OsStr::new("--disable-3d-apis"),
+                OsStr::new("--disable-speech-api"),
             ])
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build launch options: {}", e))?;

@@ -149,6 +149,16 @@ impl Config {
         let state_dir = dir.join("state");
         Ok(state_dir.join(format!("{}.json", name)))
     }
+
+    /// Get the Chrome profile directory for a given instance name.
+    ///
+    /// Using a fixed path (rather than the random temp dirs headless_chrome creates by default)
+    /// prevents profile directories from accumulating when the process crashes or is killed
+    /// before Drop can run.
+    pub fn chrome_profile_path_for(&self, name: &str) -> anyhow::Result<PathBuf> {
+        let dir = Self::config_dir()?;
+        Ok(dir.join("chrome-profiles").join(name))
+    }
 }
 
 #[cfg(test)]

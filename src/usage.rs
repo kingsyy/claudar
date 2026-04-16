@@ -89,8 +89,10 @@ fn display_instance_usage(config: &Config, instance_name: &str, verbose: bool) -
 
     spinner.set_message("Launching browser...");
 
-    // Launch headless Chrome
-    let browser = BrowserAuthenticator::new_headless(verbose)?;
+    // Launch headless Chrome with a fixed per-instance profile dir so that
+    // temporary directories don't accumulate if the process is killed.
+    let profile_dir = config.chrome_profile_path_for(instance_name)?;
+    let browser = BrowserAuthenticator::new_headless(&profile_dir, verbose)?;
 
     spinner.set_message("Authenticating...");
 
