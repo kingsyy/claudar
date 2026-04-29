@@ -57,6 +57,18 @@ impl BrowserAuthenticator {
     /// prevents profile directories from accumulating on disk when the process
     /// is killed before Drop runs.
     pub fn new_headless(profile_dir: &std::path::Path, verbose: bool) -> anyhow::Result<Self> {
+        // Each instance gets a stable port derived from its profile path, so that
+        // a running daemon's Chrome process can be reused instead of launching a
+        // conflicting second instance on the same user-data-dir.
+        let port = Self::profile_debug_port(profile_dir);
+
+        if let Ok(browser) = Self::try_connect_on_port(port) {
+            if verbose {
+                println!("  ✓ Reusing existing Chrome instance on port {port}");
+            }
+            return Ok(Self { browser });
+        }
+
         if verbose {
             println!("  → Launching headless Chrome...");
         }
@@ -80,6 +92,7 @@ impl BrowserAuthenticator {
         // none of these browser features are needed.
         let launch_options = LaunchOptions::default_builder()
             .headless(true)
+            .port(Some(port))
             .user_data_dir(Some(profile_dir.to_path_buf()))
             .idle_browser_timeout(Duration::from_secs(24 * 60 * 60))
             .args(vec![
@@ -101,10 +114,37 @@ impl BrowserAuthenticator {
             .map_err(|e| anyhow::anyhow!("Failed to launch headless Chrome: {}\n\nPlease ensure Chrome is installed on your system.", e))?;
 
         if verbose {
-            println!("  ✓ Headless Chrome launched successfully");
+            println!("  ✓ Headless Chrome launched successfully on port {port}");
         }
 
         Ok(Self { browser })
+    }
+
+    /// Derive a stable debugging port for a given Chrome profile directory.
+    /// Maps into 9100-9999 to avoid headless_chrome's default scan range (8000-9000).
+    fn profile_debug_port(profile_dir: &std::path::Path) -> u16 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        profile_dir.hash(&mut hasher);
+        9100 + (hasher.finish() % 900) as u16
+    }
+
+    /// Try to connect to an existing Chrome debugging instance on `port`.
+    /// Returns an error if Chrome is not reachable or the response is malformed.
+    fn try_connect_on_port(port: u16) -> anyhow::Result<Browser> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()?;
+        let response = client
+            .get(format!("http://localhost:{port}/json/version"))
+            .send()?;
+        let json: serde_json::Value = response.json()?;
+        let ws_url = json["webSocketDebuggerUrl"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing webSocketDebuggerUrl"))?
+            .to_string();
+        Ok(Browser::connect(ws_url)?)
     }
 
     /// Inject cookies into the browser session
