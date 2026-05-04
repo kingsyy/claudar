@@ -1,4 +1,4 @@
-use crate::browser_auth::BrowserAuthenticator;
+use crate::browser_auth::{fetch_usage_direct, BrowserAuthenticator};
 use crate::config::Config;
 use crate::notification_trait::{NotificationSender, RealNotificationSender};
 use crate::notifications::{
@@ -46,13 +46,13 @@ pub fn run_monitor(foreground: bool) -> anyhow::Result<()> {
 
     let poll_interval = Duration::from_secs(config.general.poll_interval_seconds);
 
-    // One persistent browser per instance. Reusing the same Chrome process across poll cycles
-    // prevents macOS from creating a new ~1.3GB code-signing clone on every launch
-    // (stored in /private/var/folders/.../X/com.google.Chrome.code_sign_clone/).
-    let mut browsers: Vec<Option<BrowserAuthenticator>> = instances.iter().map(|_| None).collect();
+    // Browser is kept as a lazy fallback only — used when direct HTTP fetch is blocked
+    // by Cloudflare. Direct fetch avoids spawning Chrome entirely, which prevents macOS
+    // from accumulating ~1.3GB code-sign clones on every daemon restart.
+    let mut fallback_browser: Option<BrowserAuthenticator> = None;
 
     loop {
-        for (idx, instance) in instances.iter().enumerate() {
+        for instance in &instances {
             let instance_name = &instance.name;
             let mut state = MonitorState::load_for(&config, instance_name)?;
 
@@ -60,41 +60,20 @@ pub fn run_monitor(foreground: bool) -> anyhow::Result<()> {
                 println!("── {} ──", instance_name);
             }
 
-            // Lazily create the browser for this instance (or recreate after a failure).
-            if browsers[idx].is_none() {
-                let profile_dir = match config.chrome_profile_path_for(instance_name) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        tracing::error!("Failed to resolve Chrome profile dir for '{}': {}", instance_name, e);
-                        if foreground {
-                            eprintln!("❌ Config error ({}): {}", instance_name, e);
-                        }
-                        continue;
-                    }
-                };
-                match BrowserAuthenticator::new_headless(&profile_dir, false) {
-                    Ok(b) => browsers[idx] = Some(b),
-                    Err(e) => {
-                        tracing::error!("Failed to launch browser for instance '{}': {}", instance_name, e);
-                        if foreground {
-                            eprintln!("❌ Browser launch failed ({}): {}", instance_name, e);
-                        }
-                        continue;
-                    }
-                }
-            }
-
-            let browser = browsers[idx].as_ref().unwrap();
-            if let Err(e) = check_usage(browser, &config, &mut state, instance_name, foreground) {
+            if let Err(e) = check_usage(&mut fallback_browser, &config, &mut state, instance_name, foreground) {
                 tracing::error!("Error checking usage for instance '{}': {}", instance_name, e);
                 if foreground {
                     eprintln!("❌ Error ({}): {}", instance_name, e);
                 }
-                // Drop the browser so it is recreated fresh on the next poll.
-                browsers[idx] = None;
+
+                // Drop the browser on WebSocket/connection errors so it is recreated next cycle.
+                let err_msg = e.to_string();
+                if err_msg.contains("connection") || err_msg.contains("closed") || err_msg.contains("WebSocket") {
+                    tracing::warn!("Browser connection lost, will recreate on next poll");
+                    fallback_browser = None;
+                }
             }
 
-            // Save state after each check
             if let Err(e) = state.save_for(&config, instance_name) {
                 tracing::error!("Error saving state for instance '{}': {}", instance_name, e);
             }
@@ -108,26 +87,63 @@ pub fn run_monitor(foreground: bool) -> anyhow::Result<()> {
     }
 }
 
-fn check_usage(browser: &BrowserAuthenticator, config: &Config, state: &mut MonitorState, instance_name: &str, verbose: bool) -> anyhow::Result<()> {
+fn check_usage(
+    fallback_browser: &mut Option<BrowserAuthenticator>,
+    config: &Config,
+    state: &mut MonitorState,
+    instance_name: &str,
+    verbose: bool,
+) -> anyhow::Result<()> {
     if verbose {
         println!("📊 Checking usage...");
     }
     tracing::debug!("Fetching usage data for instance '{}'", instance_name);
 
-    // Load session data for this instance
     let session_path = config.session_path_for(instance_name)?;
     let session = SessionData::load(&session_path)?;
-
-    // Convert session data to cookie pairs
     let cookie_pairs = session.cookie_pairs();
 
-    // Inject stored cookies into the persistent browser
-    browser.inject_cookies(cookie_pairs, false)?;
+    // Try a direct HTTP request first — no Chrome process, no code-sign clones.
+    let usage_json = match fetch_usage_direct(&cookie_pairs, &session.org_id, verbose) {
+        Ok(json) => {
+            tracing::info!("monitor: direct fetch succeeded for '{}'", instance_name);
+            json
+        }
+        Err(e) => {
+            let err_msg = e.to_string();
+            let needs_browser = err_msg.starts_with("cloudflare_challenge")
+                || err_msg.starts_with("html_response")
+                || err_msg.starts_with("auth_error");
 
-    // Fetch usage data
-    let usage_json = browser.fetch_usage_api(&session.org_id, false)?;
+            if needs_browser {
+                tracing::warn!(
+                    "monitor: direct fetch blocked for '{}' ({}), switching to browser fallback",
+                    instance_name,
+                    err_msg
+                );
+                if verbose {
+                    println!("  ⚠ Direct fetch blocked, falling back to headless browser...");
+                }
 
-    // Parse the response
+                // Lazily create the fallback browser only when actually needed.
+                if fallback_browser.is_none() {
+                    let profile = Config::config_dir()?.join("chrome-profiles").join("monitor");
+                    tracing::info!("monitor: launching fallback headless browser (profile: {:?})", profile);
+                    *fallback_browser = Some(BrowserAuthenticator::new_headless(&profile, verbose)?);
+                }
+
+                let browser = fallback_browser.as_ref().unwrap();
+                browser.inject_cookies(cookie_pairs, verbose)?;
+                let json = browser.fetch_usage_api(&session.org_id, verbose)?;
+                tracing::info!("monitor: browser fallback succeeded for '{}'", instance_name);
+                json
+            } else {
+                // Network error, JSON parse failure, etc. — propagate as-is.
+                return Err(e);
+            }
+        }
+    };
+
     let usage: UsageResponse = serde_json::from_value(usage_json)?;
 
     if verbose {
@@ -363,8 +379,14 @@ fn process_limit(
         LimitType::SevenDay => &config.thresholds.seven_day,
     };
 
+    // Ensure 100% is always checked as a threshold
+    let mut thresholds_to_check = thresholds.clone();
+    if !thresholds_to_check.contains(&100) {
+        thresholds_to_check.push(100);
+    }
+
     // Check threshold crossings - only notify for the highest crossed threshold
-    let crossed_thresholds: Vec<u8> = thresholds
+    let crossed_thresholds: Vec<u8> = thresholds_to_check
         .iter()
         .filter(|&&threshold| percentage >= threshold as f64 && !state.is_threshold_notified(limit_type, threshold))
         .copied()

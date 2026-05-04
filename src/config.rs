@@ -70,8 +70,8 @@ impl Default for Config {
                 timezone: "local".to_string(),
             },
             thresholds: ThresholdsConfig {
-                five_hour: vec![50, 70, 90],
-                seven_day: vec![50, 70, 90],
+                five_hour: vec![50, 75, 90, 100],
+                seven_day: vec![50, 75, 90, 100],
             },
             notifications: NotificationsConfig {
                 sound: true,
@@ -170,8 +170,8 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.general.poll_interval_seconds, 900);
         assert_eq!(config.general.timezone, "local");
-        assert_eq!(config.thresholds.five_hour, vec![50, 70, 90]);
-        assert_eq!(config.thresholds.seven_day, vec![50, 70, 90]);
+        assert_eq!(config.thresholds.five_hour, vec![50, 75, 90, 100]);
+        assert_eq!(config.thresholds.seven_day, vec![50, 75, 90, 100]);
         assert!(config.notifications.sound);
         assert!(!config.notifications.persistent);
         assert!(config.notifications.notify_threshold_crossings);
