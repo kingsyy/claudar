@@ -75,7 +75,7 @@ pub fn notify_threshold(
         predicted_line,
     );
 
-    sender.send(&summary, &body, timeout)?;
+    sender.send(&summary, &body, timeout, config.sound)?;
 
     Ok(())
 }
@@ -127,7 +127,7 @@ pub fn notify_predicted_overage(
         pace_line
     );
 
-    sender.send(&summary, &body, timeout)?;
+    sender.send(&summary, &body, timeout, config.sound)?;
 
     Ok(())
 }
@@ -161,7 +161,7 @@ pub fn notify_reset(
         limit_type.as_str()
     );
 
-    sender.send(&summary, &body, timeout)?;
+    sender.send(&summary, &body, timeout, config.sound)?;
 
     Ok(())
 }
@@ -199,7 +199,7 @@ pub fn notify_upcoming_reset(
         remaining_capacity
     );
 
-    sender.send(&summary, &body, timeout)?;
+    sender.send(&summary, &body, timeout, config.sound)?;
 
     Ok(())
 }
@@ -251,7 +251,7 @@ pub fn notify_unused_capacity(
         other_reset_str
     );
 
-    sender.send(&summary, &body, timeout)?;
+    sender.send(&summary, &body, timeout, config.sound)?;
 
     Ok(())
 }

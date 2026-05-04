@@ -103,10 +103,10 @@ pub enum ConfigAction {
         [general]\n  \
         poll_interval_seconds               - How often to check API usage (default: 900s / 15min)\n\n\
         [thresholds]\n  \
-        five_hour                           - Usage % thresholds for 5-hour limit alerts (default: 50,70,90)\n  \
-        seven_day                           - Usage % thresholds for 7-day limit alerts (default: 50,70,90)\n\n\
+        five_hour                           - Usage % thresholds for 5-hour limit alerts (default: 50,75,90,100)\n  \
+        seven_day                           - Usage % thresholds for 7-day limit alerts (default: 50,75,90,100)\n\n\
         [notifications]\n  \
-        sound                               - Enable notification sounds (default: true, not yet implemented)\n  \
+        sound                               - Enable notification sounds (default: true)\n  \
         persistent                          - Keep notifications on screen until dismissed (default: false)\n  \
         notify_threshold_crossings          - Alert when crossing usage thresholds (default: true)\n  \
         notify_predicted_overage            - Warn if predicted to exceed 5-hour limit (default: true)\n  \
