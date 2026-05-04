@@ -96,6 +96,7 @@ impl BrowserAuthenticator {
             .user_data_dir(Some(profile_dir.to_path_buf()))
             .idle_browser_timeout(Duration::from_secs(24 * 60 * 60))
             .args(vec![
+                OsStr::new("--headless=new"),
                 OsStr::new("--disable-blink-features=AutomationControlled"),
                 OsStr::new("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
                 OsStr::new("--disable-features=IsolateOrigins,site-per-process"),
@@ -106,6 +107,11 @@ impl BrowserAuthenticator {
                 OsStr::new("--disable-remote-fonts"),
                 OsStr::new("--disable-3d-apis"),
                 OsStr::new("--disable-speech-api"),
+                OsStr::new("--disable-background-networking"),
+                OsStr::new("--disable-default-apps"),
+                OsStr::new("--disable-extensions"),
+                OsStr::new("--disable-sync"),
+                OsStr::new("--metrics-recording-only"),
             ])
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build launch options: {}", e))?;
@@ -541,6 +547,103 @@ impl BrowserAuthenticator {
 
         Ok(cookie_pairs)
     }
+}
+
+/// Fetch usage data directly via reqwest without launching a browser.
+///
+/// Uses authentic browser headers and stored session cookies. Returns a
+/// specific error prefix ("cloudflare_challenge:" or "html_response:") when
+/// the caller should fall back to headless Chrome instead.
+pub fn fetch_usage_direct(
+    cookies: &[(String, String)],
+    org_id: &str,
+    verbose: bool,
+) -> anyhow::Result<serde_json::Value> {
+    let url = format!("https://claude.ai/api/organizations/{}/usage", org_id);
+
+    let cookie_header = cookies
+        .iter()
+        .map(|(name, value)| format!("{}={}", name, value))
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    tracing::info!("direct_fetch: attempting for org {}", org_id);
+    if verbose {
+        println!("  → Attempting direct HTTP fetch (no browser)...");
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+
+    let response = client
+        .get(&url)
+        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+        .header("Accept", "application/json, text/plain, */*")
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .header("Referer", "https://claude.ai/settings/usage")
+        .header("Origin", "https://claude.ai")
+        .header("sec-ch-ua", r#""Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24""#)
+        .header("sec-ch-ua-mobile", "?0")
+        .header("sec-ch-ua-platform", r#""macOS""#)
+        .header("Sec-Fetch-Dest", "empty")
+        .header("Sec-Fetch-Mode", "cors")
+        .header("Sec-Fetch-Site", "same-origin")
+        .header("Cookie", &cookie_header)
+        .send()?;
+
+    let status = response.status();
+    tracing::info!("direct_fetch: response status {}", status);
+    if verbose {
+        println!("  → Direct fetch response: HTTP {}", status);
+    }
+
+    let body = response.text()?;
+
+    // Cloudflare challenge pages contain these markers
+    if body.contains("Just a moment") || body.contains("cf-browser-verification") || body.contains("_cf_chl") {
+        tracing::warn!("direct_fetch: Cloudflare challenge detected, browser fallback required");
+        if verbose {
+            println!("  ⚠ Cloudflare challenge detected in response");
+        }
+        anyhow::bail!("cloudflare_challenge: Cloudflare is blocking direct requests");
+    }
+
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        let preview = &body[..body.len().min(300)];
+        tracing::warn!("direct_fetch: auth failure ({}): {}", status, preview);
+        if verbose {
+            println!("  ⚠ Auth failure ({}): {}", status, preview);
+        }
+        anyhow::bail!("auth_error: HTTP {} from usage API", status);
+    }
+
+    if !status.is_success() {
+        let preview = &body[..body.len().min(300)];
+        tracing::warn!("direct_fetch: non-success status {}: {}", status, preview);
+        anyhow::bail!("HTTP {}: {}", status, preview);
+    }
+
+    // If we got HTML back (login redirect, Cloudflare JS challenge), signal fallback
+    if body.trim_start().starts_with('<') {
+        tracing::warn!("direct_fetch: received HTML instead of JSON, browser fallback required");
+        if verbose {
+            println!("  ⚠ Received HTML response instead of JSON (possible auth redirect)");
+        }
+        anyhow::bail!("html_response: got HTML instead of JSON");
+    }
+
+    let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
+        tracing::warn!("direct_fetch: failed to parse JSON: {} | body: {}", e, &body[..body.len().min(200)]);
+        anyhow::anyhow!("Failed to parse JSON response: {}", e)
+    })?;
+
+    tracing::info!("direct_fetch: succeeded");
+    if verbose {
+        println!("  ✓ Direct HTTP fetch succeeded");
+    }
+
+    Ok(json)
 }
 
 /// Extract organization ID from a claude.ai URL
