@@ -7,7 +7,8 @@ use crate::notifications::{
 };
 use crate::state::{LimitType, MonitorState};
 use crate::storage::SessionData;
-use chrono::{DateTime, Utc};
+use crate::time_format;
+use chrono::{DateTime, Local, Utc};
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -22,6 +23,12 @@ struct UsageLimit {
     utilization: f64,
     #[serde(default)]
     resets_at: Option<String>,
+}
+
+fn get_current_time_formatted(tz: &str) -> String {
+    let now = Local::now();
+    time_format::format_datetime_24h(&now, tz)
+        .unwrap_or_else(|_| now.format("%H:%M").to_string())
 }
 
 pub fn run_monitor(foreground: bool) -> anyhow::Result<()> {
@@ -57,13 +64,18 @@ pub fn run_monitor(foreground: bool) -> anyhow::Result<()> {
             let mut state = MonitorState::load_for(&config, instance_name)?;
 
             if foreground && instances.len() > 1 {
-                println!("── {} ──", instance_name);
+                let timestamp = get_current_time_formatted(&config.general.timezone);
+                println!("[{}] ── {} (periodic poll) ──", timestamp, instance_name);
+            } else if foreground {
+                let timestamp = get_current_time_formatted(&config.general.timezone);
+                println!("[{}] 📋 Periodic poll: {}", timestamp, instance_name);
             }
 
-            if let Err(e) = check_usage(&mut fallback_browser, &config, &mut state, instance_name, foreground) {
+            if let Err(e) = check_usage(&mut fallback_browser, &config, &mut state, instance_name, foreground, &config.general.timezone) {
                 tracing::error!("Error checking usage for instance '{}': {}", instance_name, e);
                 if foreground {
-                    eprintln!("❌ Error ({}): {}", instance_name, e);
+                    let timestamp = get_current_time_formatted(&config.general.timezone);
+                    eprintln!("[{}] ❌ Error ({}): {}", timestamp, instance_name, e);
                 }
 
                 // Drop the browser on WebSocket/connection errors so it is recreated next cycle.
@@ -80,7 +92,8 @@ pub fn run_monitor(foreground: bool) -> anyhow::Result<()> {
         }
 
         if foreground {
-            println!("⏰ Next check in {} seconds...\n", config.general.poll_interval_seconds);
+            let timestamp = get_current_time_formatted(&config.general.timezone);
+            println!("[{}] ⏰ Next check in {} seconds...\n", timestamp, config.general.poll_interval_seconds);
         }
 
         std::thread::sleep(poll_interval);
@@ -93,9 +106,11 @@ fn check_usage(
     state: &mut MonitorState,
     instance_name: &str,
     verbose: bool,
+    timezone: &str,
 ) -> anyhow::Result<()> {
     if verbose {
-        println!("📊 Checking usage...");
+        let timestamp = get_current_time_formatted(timezone);
+        println!("[{}] 📊 Checking usage...", timestamp);
     }
     tracing::debug!("Fetching usage data for instance '{}'", instance_name);
 
@@ -122,7 +137,8 @@ fn check_usage(
                     err_msg
                 );
                 if verbose {
-                    println!("  ⚠ Direct fetch blocked, falling back to headless browser...");
+                    let timestamp = get_current_time_formatted(timezone);
+                    println!("[{}]   ⚠ Direct fetch blocked, falling back to headless browser...", timestamp);
                 }
 
                 // Lazily create the fallback browser only when actually needed.
@@ -147,7 +163,8 @@ fn check_usage(
     let usage: UsageResponse = serde_json::from_value(usage_json)?;
 
     if verbose {
-        println!("  ✓ Fetched usage data");
+        let timestamp = get_current_time_formatted(timezone);
+        println!("[{}]   ✓ Fetched usage data", timestamp);
     }
 
     // Create notification sender
@@ -165,6 +182,7 @@ fn check_usage(
         LimitType::SevenDay,
         &usage.seven_day,
         verbose,
+        timezone,
     )?;
 
     // Process 7-day limit
@@ -179,10 +197,12 @@ fn check_usage(
         LimitType::FiveHour,
         &usage.five_hour,
         verbose,
+        timezone,
     )?;
 
     if verbose {
-        println!("  ✓ All checks complete");
+        let timestamp = get_current_time_formatted(timezone);
+        println!("[{}]   ✓ All checks complete", timestamp);
     }
 
     Ok(())
@@ -199,6 +219,7 @@ fn process_limit(
     other_limit_type: LimitType,
     other_limit: &UsageLimit,
     verbose: bool,
+    timezone: &str,
 ) -> anyhow::Result<()> {
     // API returns utilization as percentage already
     let percentage = limit.utilization;
@@ -225,8 +246,10 @@ fn process_limit(
     };
 
     if verbose {
+        let timestamp = get_current_time_formatted(timezone);
         println!(
-            "  {} limit: {:.1}% (resets in {})",
+            "[{}]   {} limit: {:.1}% (resets in {})",
+            timestamp,
             limit_type.as_str(),
             percentage,
             resets_in
@@ -240,7 +263,8 @@ fn process_limit(
         if reset_occurred {
             tracing::info!("{} limit has reset", limit_type.as_str());
             if verbose {
-                println!("  ✨ {} limit has been reset!", limit_type.as_str());
+                let timestamp = get_current_time_formatted(timezone);
+                println!("[{}]   ✨ {} limit has been reset!", timestamp, limit_type.as_str());
             }
 
             // Send reset notification if not already sent
@@ -285,8 +309,10 @@ fn process_limit(
                 );
 
                 if verbose {
+                    let timestamp = get_current_time_formatted(timezone);
                     println!(
-                        "  ⏰ Sent upcoming reset notification ({} minutes until reset)",
+                        "[{}]   ⏰ Sent upcoming reset notification ({} minutes until reset)",
+                        timestamp,
                         minutes_until_reset
                     );
                 }
@@ -348,8 +374,10 @@ fn process_limit(
                 );
 
                 if verbose {
+                    let timestamp = get_current_time_formatted(timezone);
                     println!(
-                        "  💡 Sent capacity warning ({} minutes until reset, {:.0}% remaining)",
+                        "[{}]   💡 Sent capacity warning ({} minutes until reset, {:.0}% remaining)",
+                        timestamp,
                         minutes_until_reset,
                         remaining_capacity
                     );
@@ -412,8 +440,10 @@ fn process_limit(
         );
 
         if verbose {
+            let timestamp = get_current_time_formatted(timezone);
             println!(
-                "  🔔 Sent notification: {}% threshold crossed",
+                "[{}]   🔔 Sent notification: {}% threshold crossed",
+                timestamp,
                 highest_threshold
             );
         }
@@ -443,8 +473,10 @@ fn process_limit(
                 );
 
                 if verbose {
+                    let timestamp = get_current_time_formatted(timezone);
                     println!(
-                        "  ⚡ Sent overage warning: predicted {:.0}% usage",
+                        "[{}]   ⚡ Sent overage warning: predicted {:.0}% usage",
+                        timestamp,
                         pred
                     );
                 }
