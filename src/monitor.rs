@@ -31,6 +31,32 @@ fn get_current_time_formatted(tz: &str) -> String {
         .unwrap_or_else(|_| now.format("%H:%M").to_string())
 }
 
+fn get_current_time_formatted_full(tz: &str) -> String {
+    let now = Local::now();
+    let tz_lower = tz.to_lowercase();
+
+    match tz_lower.as_str() {
+        "local" => {
+            let local_dt = now.with_timezone(&Local);
+            local_dt.format("%H:%M %d/%m/%Y").to_string()
+        }
+        "utc" => {
+            let utc_dt = now.with_timezone(&chrono::Utc);
+            utc_dt.format("%H:%M %d/%m/%Y").to_string()
+        }
+        _ => {
+            // Try to parse as IANA timezone
+            use std::str::FromStr;
+            if let Ok(tz_parsed) = chrono_tz::Tz::from_str(tz) {
+                let converted_dt = now.with_timezone(&tz_parsed);
+                converted_dt.format("%H:%M %d/%m/%Y").to_string()
+            } else {
+                now.format("%H:%M %d/%m/%Y").to_string()
+            }
+        }
+    }
+}
+
 pub fn run_monitor(foreground: bool) -> anyhow::Result<()> {
     if foreground {
         tracing::info!("Starting claude-notify monitor in foreground mode");
@@ -64,11 +90,11 @@ pub fn run_monitor(foreground: bool) -> anyhow::Result<()> {
             let mut state = MonitorState::load_for(&config, instance_name)?;
 
             if foreground && instances.len() > 1 {
-                let timestamp = get_current_time_formatted(&config.general.timezone);
-                println!("[{}] ── {} (periodic poll) ──", timestamp, instance_name);
+                let timestamp = get_current_time_formatted_full(&config.general.timezone);
+                println!("── {} ── {} ──", instance_name, timestamp);
             } else if foreground {
-                let timestamp = get_current_time_formatted(&config.general.timezone);
-                println!("[{}] 📋 Periodic poll: {}", timestamp, instance_name);
+                let timestamp = get_current_time_formatted_full(&config.general.timezone);
+                println!("📋 {} [{}]", instance_name, timestamp);
             }
 
             if let Err(e) = check_usage(&mut fallback_browser, &config, &mut state, instance_name, foreground, &config.general.timezone) {
