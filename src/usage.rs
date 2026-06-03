@@ -1,4 +1,4 @@
-use crate::browser_auth::BrowserAuthenticator;
+use crate::browser_auth::{fetch_usage_direct, BrowserAuthenticator};
 use crate::config::Config;
 use crate::pace;
 use crate::storage::SessionData;
@@ -77,32 +77,36 @@ fn display_instance_usage(config: &Config, instance_name: &str, verbose: bool) -
             .unwrap()
     );
 
-    spinner.set_message("Loading configuration...");
+    spinner.set_message("Fetching usage data...");
     spinner.enable_steady_tick(std::time::Duration::from_millis(80));
 
     // Load session data for this instance
     let session_path = config.session_path_for(instance_name)?;
     let session = SessionData::load(&session_path)?;
 
-    // Convert session data to cookie pairs for injection
-    let cookie_pairs = session.cookie_pairs();
+    let cookie_header = session.cookie_header_string();
+    let cookie_pairs = session.cookie_pairs(); // kept for browser fallback
 
-    spinner.set_message("Launching browser...");
+    // Try direct HTTP fetch first; fall back to headless Chrome only if blocked
+    let usage_json = match fetch_usage_direct(&cookie_header, &session.org_id, verbose) {
+        Ok(json) => json,
+        Err(e) => {
+            let err_msg = e.to_string();
+            let needs_browser = err_msg.starts_with("cloudflare_challenge")
+                || err_msg.starts_with("html_response")
+                || err_msg.starts_with("auth_error");
 
-    // Launch headless Chrome with a fixed per-instance profile dir so that
-    // temporary directories don't accumulate if the process is killed.
-    let profile_dir = config.chrome_profile_path_for(instance_name)?;
-    let browser = BrowserAuthenticator::new_headless(&profile_dir, verbose)?;
-
-    spinner.set_message("Authenticating...");
-
-    // Inject stored cookies
-    browser.inject_cookies(cookie_pairs, verbose)?;
-
-    spinner.set_message("Fetching usage data...");
-
-    // Fetch usage data
-    let usage_json = browser.fetch_usage_api(&session.org_id, verbose)?;
+            if needs_browser {
+                spinner.set_message("Direct fetch blocked, using browser fallback...");
+                let profile_dir = config.chrome_profile_path_for(instance_name)?;
+                let browser = BrowserAuthenticator::new_headless(&profile_dir, verbose)?;
+                browser.inject_cookies(cookie_pairs, verbose)?;
+                browser.fetch_usage_api(&session.org_id, verbose)?
+            } else {
+                return Err(e);
+            }
+        }
+    };
 
     // Parse the response
     let usage: UsageResponse = serde_json::from_value(usage_json)
