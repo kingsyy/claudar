@@ -168,6 +168,29 @@ impl MonitorState {
         let stored_reset_at = state.current_reset_at.unwrap();
         let now = Utc::now();
 
+        // If the API returns a reset time significantly later than what we stored, a new
+        // period has started (5-hour periods shift by ~5 hours; 7-day by ~7 days).
+        // A 30-minute threshold safely ignores normal API timestamp jitter (seconds).
+        //
+        // When this happens we clear all per-period notification state so threshold
+        // notifications fire correctly in the new period.  We also clear `notified_reset`
+        // so the upcoming reset (at `new_reset_at`) will be detected and announced.
+        let new_period_started =
+            new_reset_at > stored_reset_at + chrono::Duration::minutes(30);
+        if new_period_started {
+            tracing::info!(
+                "New period detected for {} limit: stored_reset={}, new_reset={}",
+                limit_type.as_str(),
+                stored_reset_at,
+                new_reset_at
+            );
+            state.notified_thresholds.clear();
+            state.last_overage_warning = None;
+            state.notified_reset = false;
+            state.notified_upcoming_reset = false;
+            state.notified_capacity_warning = false;
+        }
+
         // A reset has occurred if:
         // 1. Current time has passed the stored reset time (now >= stored_reset_at)
         // 2. We haven't already notified about this reset
@@ -369,20 +392,52 @@ mod tests {
     }
 
     #[test]
-    fn test_reset_detection_already_notified() {
+    fn test_reset_detection_already_notified_same_period() {
         let mut state = MonitorState::default();
         let now = Utc::now();
 
         // Set up state where reset time has passed but we already notified
+        // AND the API returns the same reset time (still in the same poll cycle)
         let past_reset = now - Duration::minutes(30);
         state.five_hour.current_reset_at = Some(past_reset);
         state.five_hour.notified_reset = true; // Already notified
+        state.five_hour.notified_thresholds.insert(50);
 
-        let next_reset = now + Duration::hours(4);
+        // API returns same reset time (no period change)
+        let same_reset = past_reset + Duration::seconds(1);
 
-        // Should NOT trigger notification again
-        let reset_occurred = state.check_and_handle_reset(LimitType::FiveHour, next_reset);
-        assert!(!reset_occurred, "Should not trigger reset if already notified");
+        // Should NOT trigger notification again (delta < 30 min, same period)
+        let reset_occurred = state.check_and_handle_reset(LimitType::FiveHour, same_reset);
+        assert!(!reset_occurred, "Should not trigger reset if already notified in same period");
+        assert!(state.five_hour.notified_thresholds.contains(&50), "Thresholds should be preserved within same period");
+    }
+
+    #[test]
+    fn test_new_period_clears_stale_state() {
+        let mut state = MonitorState::default();
+        let now = Utc::now();
+
+        // Simulate state where last period was fully notified (all thresholds, reset sent)
+        let old_reset = now - Duration::hours(3); // 3 hours ago
+        state.five_hour.current_reset_at = Some(old_reset);
+        state.five_hour.notified_reset = true;
+        state.five_hour.notified_upcoming_reset = true;
+        state.five_hour.notified_capacity_warning = true;
+        state.five_hour.notified_thresholds.insert(50);
+        state.five_hour.notified_thresholds.insert(90);
+
+        // API returns new period reset time (5+ hours later — new period started)
+        let new_reset = now + Duration::hours(2);
+
+        // The new period detection should clear stale state
+        let reset_occurred = state.check_and_handle_reset(LimitType::FiveHour, new_reset);
+        // reset_occurred=true because now >= old_reset and notified_reset was cleared
+        assert!(reset_occurred, "Should detect the period crossing");
+        // All per-period state should be cleared
+        assert!(state.five_hour.notified_thresholds.is_empty(), "Thresholds should be cleared for new period");
+        assert!(!state.five_hour.notified_upcoming_reset, "upcoming_reset flag should be cleared");
+        assert!(!state.five_hour.notified_capacity_warning, "capacity_warning flag should be cleared");
+        assert_eq!(state.five_hour.current_reset_at, Some(new_reset));
     }
 
     #[test]
