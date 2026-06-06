@@ -35,8 +35,33 @@ impl SessionData {
         Ok(())
     }
 
-    /// Convert session cookies to name-value pairs for browser injection
+    /// Convert session cookies to name-value pairs for browser injection / direct HTTP fetch.
+    ///
+    /// Prefers the `full_cookie_string` (saved verbatim from the browser during setup) because
+    /// it contains every cookie the browser had, including short-lived ones like `__cf_bm`,
+    /// `intercom-session-*`, `routingHint`, etc.  Falling back to the individual named fields
+    /// covers sessions saved before `full_cookie_string` was introduced.
     pub fn cookie_pairs(&self) -> Vec<(String, String)> {
+        // If we have the full cookie string, parse and return all pairs from it.
+        if let Some(ref full) = self.full_cookie_string {
+            if !full.is_empty() {
+                let pairs: Vec<(String, String)> = full
+                    .split(';')
+                    .filter_map(|kv| {
+                        let kv = kv.trim();
+                        let eq = kv.find('=')?;
+                        let name = kv[..eq].trim().to_string();
+                        let value = kv[eq + 1..].trim().to_string();
+                        if name.is_empty() { None } else { Some((name, value)) }
+                    })
+                    .collect();
+                if !pairs.is_empty() {
+                    return pairs;
+                }
+            }
+        }
+
+        // Fallback: build from individual named fields.
         let mut cookies = vec![("sessionKey".to_string(), self.session_key.clone())];
 
         if let Some(ref cf) = self.cf_clearance {
@@ -56,6 +81,22 @@ impl SessionData {
         }
 
         cookies
+    }
+
+    /// Return the cookie string suitable for use as an HTTP Cookie header.
+    /// Uses `full_cookie_string` directly if available (most complete), otherwise
+    /// assembles from `cookie_pairs()`.
+    pub fn cookie_header_string(&self) -> String {
+        if let Some(ref full) = self.full_cookie_string {
+            if !full.is_empty() {
+                return full.clone();
+            }
+        }
+        self.cookie_pairs()
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<_>>()
+            .join("; ")
     }
 }
 

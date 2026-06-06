@@ -555,17 +555,11 @@ impl BrowserAuthenticator {
 /// specific error prefix ("cloudflare_challenge:" or "html_response:") when
 /// the caller should fall back to headless Chrome instead.
 pub fn fetch_usage_direct(
-    cookies: &[(String, String)],
+    cookie_header: &str,
     org_id: &str,
     verbose: bool,
 ) -> anyhow::Result<serde_json::Value> {
     let url = format!("https://claude.ai/api/organizations/{}/usage", org_id);
-
-    let cookie_header = cookies
-        .iter()
-        .map(|(name, value)| format!("{}={}", name, value))
-        .collect::<Vec<_>>()
-        .join("; ");
 
     tracing::info!("direct_fetch: attempting for org {}", org_id);
     if verbose {
@@ -589,7 +583,7 @@ pub fn fetch_usage_direct(
         .header("Sec-Fetch-Dest", "empty")
         .header("Sec-Fetch-Mode", "cors")
         .header("Sec-Fetch-Site", "same-origin")
-        .header("Cookie", &cookie_header)
+        .header("Cookie", cookie_header)
         .send()?;
 
     let status = response.status();
@@ -633,10 +627,38 @@ pub fn fetch_usage_direct(
         anyhow::bail!("html_response: got HTML instead of JSON");
     }
 
+    // Always log the raw response body at debug level, and in verbose mode too
+    tracing::debug!("direct_fetch: raw response body: {}", &body[..body.len().min(500)]);
+    if verbose {
+        let preview = if body.len() > 400 {
+            format!("{}… ({} bytes)", &body[..400], body.len())
+        } else {
+            body.clone()
+        };
+        println!("  → Raw response body: {}", preview);
+    }
+
     let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
         tracing::warn!("direct_fetch: failed to parse JSON: {} | body: {}", e, &body[..body.len().min(200)]);
         anyhow::anyhow!("Failed to parse JSON response: {}", e)
     })?;
+
+    // Warn if the response looks like an unauthenticated/empty result
+    if let (Some(fh), Some(sd)) = (json.get("five_hour"), json.get("seven_day")) {
+        let fh_util = fh.get("utilization").and_then(|v| v.as_f64()).unwrap_or(-1.0);
+        let sd_util = sd.get("utilization").and_then(|v| v.as_f64()).unwrap_or(-1.0);
+        let fh_resets = fh.get("resets_at").and_then(|v| v.as_str());
+        if fh_util == 0.0 && sd_util == 0.0 && fh_resets.is_none() {
+            tracing::warn!(
+                "direct_fetch: response has zero usage and null reset times — session cookies may be expired (org: {})",
+                org_id
+            );
+            if verbose {
+                println!("  ⚠ WARNING: Got 0% usage with no reset times — cookies may be expired!");
+                println!("  ⚠ Run 'claude-notify setup' to refresh your session.");
+            }
+        }
+    }
 
     tracing::info!("direct_fetch: succeeded");
     if verbose {

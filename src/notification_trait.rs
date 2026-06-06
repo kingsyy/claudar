@@ -1,4 +1,6 @@
-use notify_rust::{Notification, Timeout};
+use notify_rust::Timeout;
+#[cfg(not(target_os = "macos"))]
+use notify_rust::Notification;
 
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
@@ -8,25 +10,48 @@ pub trait NotificationSender: Send + Sync {
     fn send(&self, summary: &str, body: &str, timeout: Timeout, sound: bool) -> anyhow::Result<()>;
 }
 
-/// Real notification sender using notify-rust
+/// Real notification sender.
+///
+/// On macOS, notify-rust defaults to the Finder bundle ID which causes notifications to be
+/// silently swallowed. We use osascript instead, which works reliably from CLI tools.
 pub struct RealNotificationSender;
 
 impl NotificationSender for RealNotificationSender {
     fn send(&self, summary: &str, body: &str, timeout: Timeout, sound: bool) -> anyhow::Result<()> {
-        let mut notification = Notification::new();
-        notification
-            .appname("Claude Notify")
-            .summary(summary)
-            .body(body)
-            .timeout(timeout);
-
         #[cfg(target_os = "macos")]
-        if sound {
-            notification.sound_name("Glass");
+        {
+            let _ = timeout; // osascript doesn't support custom timeouts
+            let safe_summary = summary.replace('\\', "\\\\").replace('"', "\\\"");
+            let safe_body = body.replace('\\', "\\\\").replace('"', "\\\"");
+            let sound_clause = if sound {
+                " sound name \"Glass\""
+            } else {
+                ""
+            };
+            let script = format!(
+                "display notification \"{safe_body}\" with title \"{safe_summary}\"{sound_clause}"
+            );
+            let status = std::process::Command::new("osascript")
+                .arg("-e")
+                .arg(&script)
+                .status()?;
+            if !status.success() {
+                anyhow::bail!("osascript exited with status {status}");
+            }
+            Ok(())
         }
 
-        notification.show()?;
-        Ok(())
+        #[cfg(not(target_os = "macos"))]
+        {
+            let mut notification = Notification::new();
+            notification
+                .appname("Claude Notify")
+                .summary(summary)
+                .body(body)
+                .timeout(timeout);
+            notification.show()?;
+            Ok(())
+        }
     }
 }
 
