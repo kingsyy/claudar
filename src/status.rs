@@ -29,7 +29,7 @@ pub fn run_status(_verbose: bool) -> anyhow::Result<()> {
 
 fn display_version_info() {
     let version = env!("CARGO_PKG_VERSION");
-    let commit = env!("GIT_HASH");
+    let commit = option_env!("GIT_HASH").unwrap_or("unknown");
 
     println!("{}", "Version Info".bold().underline());
     println!();
