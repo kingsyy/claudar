@@ -38,6 +38,10 @@ pub fn handle_config_list() -> Result<()> {
             .map(|(min, pct)| format!("{},{}", min, pct))
             .unwrap_or_else(|| "disabled".to_string()));
     println!();
+    println!("[history]");
+    println!("  enabled      = {}", config.history.enabled);
+    println!("  max_records  = {}", config.history.max_records);
+    println!();
     println!("[instances]");
     if config.instances.is_empty() {
         println!("  (none configured - using single default instance)");
@@ -85,6 +89,8 @@ pub fn handle_config_get(key: &str) -> Result<()> {
                 .map(|(min, pct)| format!("{},{}", min, pct))
                 .unwrap_or_else(|| "disabled".to_string())
         }
+        "history.enabled" => config.history.enabled.to_string(),
+        "history.max_records" => config.history.max_records.to_string(),
         _ => return Err(anyhow!("Unknown config key: {}\n\nAvailable keys:\n  \
             general.poll_interval_seconds\n  \
             general.timezone\n  \
@@ -98,7 +104,9 @@ pub fn handle_config_get(key: &str) -> Result<()> {
             notifications.minutes_before_five_hour_reset\n  \
             notifications.minutes_before_seven_day_reset\n  \
             notifications.capacity_warning_five_hour\n  \
-            notifications.capacity_warning_seven_day", key)),
+            notifications.capacity_warning_seven_day\n  \
+            history.enabled\n  \
+            history.max_records", key)),
     };
 
     println!("{} = {}", key, value);
@@ -171,6 +179,21 @@ pub fn handle_config_set(key: &str, value: &str) -> Result<()> {
             }
             config.notifications.capacity_warning_seven_day = val;
         }
+        "history.enabled" => {
+            config.history.enabled = parse_bool(value)?;
+        }
+        "history.max_records" => {
+            let val: usize = value
+                .parse()
+                .context("Value must be a positive integer (number of records to keep)")?;
+            if val < 1 {
+                return Err(anyhow!(
+                    "max_records must be at least 1. \
+                     (Unlimited retention is not supported to protect disk space.)"
+                ));
+            }
+            config.history.max_records = val;
+        }
         _ => return Err(anyhow!("Unknown config key: {}\n\nAvailable keys:\n  \
             general.poll_interval_seconds\n  \
             general.timezone\n  \
@@ -184,7 +207,9 @@ pub fn handle_config_set(key: &str, value: &str) -> Result<()> {
             notifications.minutes_before_five_hour_reset\n  \
             notifications.minutes_before_seven_day_reset\n  \
             notifications.capacity_warning_five_hour\n  \
-            notifications.capacity_warning_seven_day", key)),
+            notifications.capacity_warning_seven_day\n  \
+            history.enabled\n  \
+            history.max_records", key)),
     }
 
     config.save()?;

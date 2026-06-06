@@ -8,6 +8,32 @@ pub struct Config {
     pub notifications: NotificationsConfig,
     #[serde(default)]
     pub instances: Vec<InstanceConfig>,
+    #[serde(default)]
+    pub history: HistoryConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryConfig {
+    /// Whether to record a usage snapshot after each successful poll (default: false)
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Maximum number of records to retain per instance (default: 2016 ≈ 14 days at 15-min polls)
+    #[serde(default = "default_history_retention")]
+    pub max_records: usize,
+}
+
+fn default_history_retention() -> usize {
+    2016
+}
+
+impl Default for HistoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_records: default_history_retention(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +111,7 @@ impl Default for Config {
                 capacity_warning_seven_day: None,
             },
             instances: Vec::new(),
+            history: HistoryConfig::default(),
         }
     }
 }
@@ -150,6 +177,12 @@ impl Config {
         Ok(state_dir.join(format!("{}.json", name)))
     }
 
+    /// Get the history file path for a given instance name.
+    pub fn history_path_for(&self, name: &str) -> anyhow::Result<PathBuf> {
+        let dir = Self::config_dir()?;
+        Ok(dir.join("history").join(format!("{}.jsonl", name)))
+    }
+
     /// Get the Chrome profile directory for a given instance name.
     ///
     /// Using a fixed path (rather than the random temp dirs headless_chrome creates by default)
@@ -180,6 +213,8 @@ mod tests {
         assert!(config.notifications.minutes_before_five_hour_reset.is_none());
         assert!(config.notifications.capacity_warning_five_hour.is_none());
         assert!(config.instances.is_empty());
+        assert!(!config.history.enabled);
+        assert_eq!(config.history.max_records, 2016);
     }
 
     #[test]
@@ -225,6 +260,45 @@ mod tests {
         assert_eq!(deserialized.general.timezone, config.general.timezone);
         assert_eq!(deserialized.thresholds.five_hour, config.thresholds.five_hour);
         assert_eq!(deserialized.notifications.sound, config.notifications.sound);
+    }
+
+    #[test]
+    fn history_config_defaults() {
+        let config = Config::default();
+        assert!(!config.history.enabled);
+        assert_eq!(config.history.max_records, 2016);
+    }
+
+    #[test]
+    fn history_config_round_trip() {
+        let mut config = Config::default();
+        config.history.enabled = true;
+        config.history.max_records = 500;
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let deserialized: Config = toml::from_str(&serialized).unwrap();
+        assert!(deserialized.history.enabled);
+        assert_eq!(deserialized.history.max_records, 500);
+    }
+
+    #[test]
+    fn history_config_deserializes_without_section() {
+        // Existing configs without [history] section should default correctly
+        let toml_str = r#"
+[general]
+poll_interval_seconds = 900
+timezone = "local"
+
+[thresholds]
+five_hour = [50, 75, 90, 100]
+seven_day = [50, 75, 90, 100]
+
+[notifications]
+sound = true
+persistent = false
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(!config.history.enabled);
+        assert_eq!(config.history.max_records, 2016);
     }
 
     #[test]

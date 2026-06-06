@@ -1,5 +1,6 @@
 use crate::browser_auth::{fetch_usage_direct, BrowserAuthenticator};
 use crate::config::Config;
+use crate::history::{self, HistoryRecord};
 use crate::notification_trait::{NotificationSender, RealNotificationSender};
 use crate::notifications::{
     format_duration, notify_predicted_overage, notify_reset, notify_threshold,
@@ -126,6 +127,29 @@ pub fn run_monitor(foreground: bool) -> anyhow::Result<()> {
     }
 }
 
+/// Compute the linear-extrapolation prediction of usage at end-of-period.
+/// Returns `None` when there is no reset time or less than 10% of the period has elapsed.
+fn compute_predicted_pct(
+    utilization: f64,
+    resets_at: &Option<String>,
+    period_minutes: i64,
+) -> Option<f64> {
+    let resets_at_str = resets_at.as_deref()?;
+    let reset_time = DateTime::parse_from_rfc3339(resets_at_str)
+        .or_else(|_| DateTime::parse_from_rfc3339(&format!("{}Z", resets_at_str)))
+        .ok()?;
+    let reset_time_utc: DateTime<Utc> = reset_time.into();
+    let now = Utc::now();
+    let period_start = reset_time_utc - chrono::Duration::minutes(period_minutes);
+    let elapsed_minutes = now.signed_duration_since(period_start).num_minutes().max(1);
+    let time_pct = (elapsed_minutes as f64 / period_minutes as f64 * 100.0).min(100.0);
+    if time_pct > 10.0 {
+        Some((utilization / time_pct) * 100.0)
+    } else {
+        None
+    }
+}
+
 fn check_usage(
     fallback_browser: &mut Option<BrowserAuthenticator>,
     config: &Config,
@@ -142,10 +166,18 @@ fn check_usage(
 
     let session_path = config.session_path_for(instance_name)?;
     let session = SessionData::load(&session_path)?;
-    let cookie_pairs = session.cookie_pairs();
+    let cookie_header = session.cookie_header_string();
+    let cookie_pairs = session.cookie_pairs(); // kept for browser injection fallback
+
+    if verbose {
+        let n_cookies = cookie_header.split(';').count();
+        let timestamp = get_current_time_formatted(timezone);
+        println!("[{}]   → Using {} cookies for auth", timestamp, n_cookies);
+    }
+    tracing::debug!("direct_fetch: sending {} cookie entries for '{}'", cookie_header.split(';').count(), instance_name);
 
     // Try a direct HTTP request first — no Chrome process, no code-sign clones.
-    let usage_json = match fetch_usage_direct(&cookie_pairs, &session.org_id, verbose) {
+    let usage_json = match fetch_usage_direct(&cookie_header, &session.org_id, verbose) {
         Ok(json) => {
             tracing::info!("monitor: direct fetch succeeded for '{}'", instance_name);
             json
@@ -229,6 +261,29 @@ fn check_usage(
     if verbose {
         let timestamp = get_current_time_formatted(timezone);
         println!("[{}]   ✓ All checks complete", timestamp);
+    }
+
+    // Record history snapshot (opt-in; failure is non-fatal).
+    if config.history.enabled {
+        let record = HistoryRecord {
+            polled_at: Utc::now(),
+            five_hour_pct: usage.five_hour.utilization,
+            five_hour_resets_at: usage.five_hour.resets_at.clone(),
+            seven_day_pct: usage.seven_day.utilization,
+            seven_day_resets_at: usage.seven_day.resets_at.clone(),
+            five_hour_predicted_pct: compute_predicted_pct(
+                usage.five_hour.utilization,
+                &usage.five_hour.resets_at,
+                300,
+            ),
+        };
+        if let Err(e) = history::append_record(config, instance_name, &record) {
+            tracing::warn!(
+                "Failed to write history record for '{}': {}",
+                instance_name,
+                e
+            );
+        }
     }
 
     Ok(())

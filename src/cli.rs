@@ -75,6 +75,56 @@ pub enum Commands {
         #[command(subcommand)]
         action: InstancesAction,
     },
+
+    /// Send test notifications to verify the notification pipeline works
+    #[command(name = "test-notification")]
+    TestNotification,
+
+    /// Show usage history and analytics
+    ///
+    /// Displays historical usage snapshots and analytics views.
+    /// Requires `history.enabled = true` in config (opt-in).
+    ///
+    /// EXAMPLES:
+    ///   claude-notify history
+    ///   claude-notify history --instance work
+    ///   claude-notify history --view timeline
+    ///   claude-notify history --view windows
+    ///   claude-notify history --view daily
+    ///   claude-notify history --view predict
+    ///   claude-notify history --days 3
+    ///   claude-notify history --json
+    History {
+        /// Show history for a specific instance
+        #[arg(long)]
+        instance: Option<String>,
+
+        /// Which analytics view to show: timeline, windows, daily, predict, all
+        #[arg(long, default_value = "all")]
+        view: HistoryView,
+
+        /// How many days of history to include (default: 7)
+        #[arg(long, default_value_t = 7)]
+        days: u32,
+
+        /// Output raw records as JSON (useful for piping/scripting)
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum HistoryView {
+    /// Chronological table of recent polls
+    Timeline,
+    /// One row per detected 5-hour window with peak and cost
+    Windows,
+    /// Average 5-hour usage by hour-of-day (0–23)
+    Daily,
+    /// Cross-limit prediction: windows remaining before 7-day limit
+    Predict,
+    /// Show all four views (default)
+    All,
 }
 
 #[derive(Subcommand, Debug)]
