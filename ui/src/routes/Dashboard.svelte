@@ -71,6 +71,19 @@
     return `${minutes}m`;
   }
 
+  const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
+  const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
+
+  /// Percentage of the reset window that has elapsed, derived from how long until reset.
+  function timeElapsedPct(iso: string | null | undefined, windowMs: number): number | null {
+    if (!iso) return null;
+    const remaining = new Date(iso).getTime() - now;
+    if (remaining <= 0) return 100;
+    const elapsed = windowMs - remaining;
+    if (elapsed <= 0) return 0;
+    return Math.min(100, (elapsed / windowMs) * 100);
+  }
+
   function gaugeColor(pct: number): string {
     if (pct >= 90) return "hsl(0 84% 60%)";
     if (pct >= 70) return "hsl(38 92% 50%)";
@@ -165,7 +178,12 @@
           class="gauge"
           style={`--pct: ${usage.five_hour_pct}; --color: ${gaugeColor(usage.five_hour_pct)}`}
         >
-          <span class="gauge-value">{usage.five_hour_pct.toFixed(0)}%</span>
+          <span class="gauge-value">
+            {usage.five_hour_pct.toFixed(0)}%
+            {#if timeElapsedPct(usage.resets_at, FIVE_HOUR_MS) != null}
+              <span class="gauge-time">{timeElapsedPct(usage.resets_at, FIVE_HOUR_MS)!.toFixed(0)}% elapsed</span>
+            {/if}
+          </span>
         </div>
         <h2>5-hour usage</h2>
         <p class="sub">Resets in {formatCountdown(usage.resets_at)}</p>
@@ -176,7 +194,12 @@
           class="gauge"
           style={`--pct: ${usage.seven_day_pct}; --color: ${gaugeColor(usage.seven_day_pct)}`}
         >
-          <span class="gauge-value">{usage.seven_day_pct.toFixed(0)}%</span>
+          <span class="gauge-value">
+            {usage.seven_day_pct.toFixed(0)}%
+            {#if timeElapsedPct(usage.seven_day_resets_at, SEVEN_DAY_MS) != null}
+              <span class="gauge-time">{timeElapsedPct(usage.seven_day_resets_at, SEVEN_DAY_MS)!.toFixed(0)}% elapsed</span>
+            {/if}
+          </span>
         </div>
         <h2>7-day usage</h2>
         <p class="sub">Resets in {formatCountdown(usage.seven_day_resets_at)}</p>
@@ -311,11 +334,19 @@
     width: 6.5rem;
     height: 6.5rem;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 0.15rem;
     font-size: 1.5rem;
     font-weight: 600;
     color: hsl(var(--foreground));
+  }
+
+  .gauge-time {
+    font-size: 0.65rem;
+    font-weight: 500;
+    color: hsl(var(--muted-foreground));
   }
 
   h2 {
