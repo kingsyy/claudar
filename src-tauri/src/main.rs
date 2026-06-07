@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod chrome_auth;
 mod commands;
 mod monitor_loop;
 
@@ -49,6 +50,7 @@ fn main() {
             commands::add_instance,
             commands::remove_instance,
             commands::start_auth,
+            commands::navigate_auth_window,
             commands::set_autostart,
             commands::get_autostart,
             commands::test_notification,

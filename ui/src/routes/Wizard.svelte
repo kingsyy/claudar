@@ -26,6 +26,7 @@
   let authState = $state<AuthState>("idle");
   let authError = $state<string | null>(null);
   let whyLoginOpen = $state(false);
+  let magicLinkUrl = $state("");
   let unlistenAuthComplete: UnlistenFn | undefined;
   let unlistenAuthError: UnlistenFn | undefined;
 
@@ -65,6 +66,16 @@
     } catch (e) {
       authState = "error";
       authError = String(e);
+    }
+  }
+
+  async function handleMagicLink() {
+    if (!magicLinkUrl) return;
+    try {
+      await invoke("navigate_auth_window", { url: magicLinkUrl });
+      magicLinkUrl = "";
+    } catch (e) {
+      console.error("Magic link error:", e);
     }
   }
 
@@ -177,7 +188,7 @@
       <section class="step">
         <h1>Log in to Claude.ai</h1>
         <p class="lead">
-          A Claude.ai login window will open below. Sign in as you normally would — we'll detect
+          Chrome will open to claude.ai/login. Sign in with Google or email — we'll detect
           when you're logged in and close the window automatically.
         </p>
 
@@ -203,8 +214,32 @@
         {:else if authState === "waiting"}
           <div class="auth-status">
             <span class="pulse" aria-hidden="true"></span>
-            <span>Waiting for login…</span>
+            <span>Waiting for login in Chrome…</span>
           </div>
+          <details style="margin-top: 1rem; padding: 0.75rem; background: #f5f5f5; border-radius: var(--radius);">
+            <summary style="cursor: pointer; font-size: 0.875rem; font-weight: 600;">
+              Got a magic link in your email?
+            </summary>
+            <div style="margin-top: 0.75rem;">
+              <p style="font-size: 0.8rem; color: #666; margin: 0 0 0.5rem 0;">
+                Paste the link here and we'll open it in Chrome:
+              </p>
+              <input
+                type="url"
+                bind:value={magicLinkUrl}
+                placeholder="https://claude.ai/magic-link/..."
+                style="font-size: 0.8rem; padding: 0.5rem;"
+              />
+              <button
+                class="primary"
+                onclick={() => handleMagicLink()}
+                disabled={!magicLinkUrl}
+                style="font-size: 0.8rem; padding: 0.5rem 1rem; margin-top: 0.5rem;"
+              >
+                Open link
+              </button>
+            </div>
+          </details>
         {:else if authState === "success"}
           <div class="auth-status success">Connected ✓</div>
         {:else if authState === "error"}

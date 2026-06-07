@@ -1,15 +1,13 @@
-use crate::monitor_loop;
+use crate::{chrome_auth, monitor_loop};
 use claude_notify_core::{
     config::{Config, InstanceConfig},
     history::{self, HistoryRecord},
     monitor::{poll_instance, UsagePayload},
-    storage::SessionData,
     usage_fetcher::fetch_org_id,
 };
 use chrono::{Duration as ChronoDuration, Utc};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_autostart::ManagerExt;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -157,8 +155,8 @@ struct AuthErrorPayload {
     message: String,
 }
 
-/// Open Claude.ai login in the system browser (avoiding popup blocks).
-/// Shows a helper window while the user authenticates.
+/// Start Chrome-based authentication flow.
+/// Opens Chrome at claude.ai/login and spawns async auth task.
 #[tauri::command]
 pub async fn start_auth(app: AppHandle, instance: Option<String>) -> Result<(), String> {
     let instance_name = instance.unwrap_or_else(|| "default".to_string());
@@ -167,337 +165,99 @@ pub async fn start_auth(app: AppHandle, instance: Option<String>) -> Result<(), 
         let _ = existing.close();
     }
 
-    // Open Claude.ai login in the system browser
-    let login_url = "https://claude.ai/login";
-    open::that(login_url)
-        .map_err(|e| format!("Failed to open browser. Please visit {} manually: {}", login_url, e))?;
-
-    // Show a helper window explaining what to do
-    let html = r#"<!DOCTYPE html>
-<html>
-<head>
-  <title>Claude Notify — Log In</title>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      padding: 20px;
-    }
-    .container {
-      background: white;
-      border-radius: 12px;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-      max-width: 460px;
-      padding: 40px;
-    }
-    h1 {
-      font-size: 28px;
-      margin-bottom: 8px;
-      color: #1a1a1a;
-      font-weight: 600;
-    }
-    .subtitle {
-      color: #666;
-      font-size: 14px;
-      margin-bottom: 24px;
-    }
-    .step {
-      display: flex;
-      gap: 16px;
-      margin-bottom: 20px;
-      padding: 16px;
-      background: #f9f9f9;
-      border-radius: 8px;
-      border-left: 3px solid #667eea;
-    }
-    .step-number {
-      min-width: 32px;
-      width: 32px;
-      height: 32px;
-      background: #667eea;
-      color: white;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 600;
-      font-size: 14px;
-    }
-    .step-content {
-      flex: 1;
-    }
-    .step-content p {
-      color: #333;
-      font-size: 14px;
-      line-height: 1.5;
-      margin: 0;
-    }
-    .step-content strong {
-      color: #1a1a1a;
-    }
-    .buttons {
-      display: flex;
-      gap: 12px;
-      margin-top: 24px;
-    }
-    button {
-      flex: 1;
-      padding: 12px 16px;
-      border: none;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    .btn-primary {
-      background: #667eea;
-      color: white;
-    }
-    .btn-primary:hover {
-      background: #5568d3;
-    }
-    .btn-secondary {
-      background: #f0f0f0;
-      color: #333;
-    }
-    .btn-secondary:hover {
-      background: #e0e0e0;
-    }
-    button:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
-    .spinner {
-      display: inline-block;
-      width: 14px;
-      height: 14px;
-      border: 2px solid #f0f0f0;
-      border-top: 2px solid #667eea;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      margin-right: 8px;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>✓ Log In to Claude.ai</h1>
-    <p class="subtitle">Your browser has opened to claude.ai/login</p>
-
-    <div class="step">
-      <div class="step-number">1</div>
-      <div class="step-content">
-        <p><strong>Sign in using Google or email</strong> in the browser window that just opened.</p>
-      </div>
-    </div>
-
-    <div class="step">
-      <div class="step-number">2</div>
-      <div class="step-content">
-        <p>Once you're logged in, click <strong>"Already logged in"</strong> below.</p>
-      </div>
-    </div>
-
-    <div class="step">
-      <div class="step-number">3</div>
-      <div class="step-content">
-        <p>Claude Notify will verify your session and continue setup.</p>
-      </div>
-    </div>
-
-    <div class="buttons">
-      <button class="btn-primary" onclick="handleCheck()">
-        <span class="spinner"></span> Already logged in
-      </button>
-      <button class="btn-secondary" onclick="window.close()">Cancel</button>
-    </div>
-  </div>
-
-  <script>
-    let isChecking = false;
-
-    async function handleCheck() {
-      if (isChecking) return;
-      isChecking = true;
-
-      const btn = document.querySelector('.btn-primary');
-      btn.disabled = true;
-
-      try {
-        const result = await window.__tauri__.invoke('check_auth_session', { instance: null });
-        // Window will be closed by the backend on success
-      } catch (error) {
-        btn.disabled = false;
-        isChecking = false;
-        alert('Error: ' + error);
-      }
-    }
-
-    // Auto-check every 3 seconds in case user logged in via browser
-    setInterval(async () => {
-      if (isChecking) return;
-      try {
-        await window.__tauri__.invoke('check_auth_session', { instance: null });
-      } catch (e) {
-        // Not logged in yet, continue waiting
-      }
-    }, 3000);
-  </script>
-</body>
-</html>"#;
-
-    let url = WebviewUrl::External(
-        format!("data:text/html,{}", urlencoding::encode(html))
-            .parse::<tauri::Url>()
-            .map_err(|e| e.to_string())?,
-    );
-
+    // Spawn background auth task
     let app_clone = app.clone();
-    let instance_clone = instance_name.clone();
-
-    let window = WebviewWindowBuilder::new(&app, "auth", url)
-        .title("Claude Notify — Log In")
-        .inner_size(500.0, 560.0)
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let app_for_event = app_clone.clone();
-    window.on_window_event(move |event| {
-        if matches!(event, tauri::WindowEvent::Destroyed) {
-            // Silently close
-        }
+    let name_clone = instance_name.clone();
+    tauri::async_runtime::spawn(async move {
+        run_chrome_auth_and_emit(app_clone, name_clone).await;
     });
 
-    let _ = window.show();
-
     Ok(())
 }
 
-/// Check if the user is logged in by attempting to fetch their org ID from Claude.ai.
-#[tauri::command]
-pub async fn check_auth_session(app: AppHandle, instance: Option<String>) -> Result<(), String> {
-    let instance_name = instance.unwrap_or_else(|| "default".to_string());
-
-    // Try to fetch org ID using the session that might exist in the system browser
-    // For now, this will fail because we can't access the system browser's cookies
-    // The user needs to use the CLI: `claude-notify setup` for proper auth
-
-    emit_auth_error(
-        &app,
-        &instance_name,
-        "Please use the command-line setup instead:\n\n  claude-notify setup\n\nThis provides more reliable Google OAuth support.".to_string(),
-    );
-
-    Ok(())
-}
-
-/// Extract cookies from the auth webview, resolve the org id, persist the session,
-/// close the webview, and emit `auth-complete`/`auth-error`.
-async fn complete_auth(app: AppHandle, webview: tauri::WebviewWindow, instance: String) {
-    let cookies = match webview.cookies() {
+/// Run Chrome auth flow and emit completion/error event.
+async fn run_chrome_auth_and_emit(app: AppHandle, instance_name: String) {
+    let config = match Config::load() {
         Ok(c) => c,
         Err(e) => {
-            emit_auth_error(&app, &instance, e.to_string());
+            emit_auth_error(&app, &instance_name, e.to_string());
             return;
         }
     };
 
-    let mut session_key = None;
-    let mut cf_clearance = None;
-    let mut last_active_org = None;
-    let mut anthropic_device_id = None;
-    let mut cf_bm = None;
-    let mut ssid = None;
-    let mut pairs = Vec::new();
-
-    for cookie in &cookies {
-        let name = cookie.name();
-        let value = cookie.value();
-        pairs.push(format!("{}={}", name, value));
-        match name {
-            "sessionKey" => session_key = Some(value.to_string()),
-            "cf_clearance" => cf_clearance = Some(value.to_string()),
-            "lastActiveOrg" => last_active_org = Some(value.to_string()),
-            "anthropic-device-id" => anthropic_device_id = Some(value.to_string()),
-            "__cf_bm" => cf_bm = Some(value.to_string()),
-            "__ssid" => ssid = Some(value.to_string()),
-            _ => {}
-        }
-    }
-
-    let full_cookie_string = pairs.join("; ");
-
-    let session_key = match session_key {
-        Some(key) => key,
-        None => {
-            emit_auth_error(
-                &app,
-                &instance,
-                "No session cookie found — please try logging in again".to_string(),
-            );
-            return;
-        }
-    };
-
-    let org_id = match fetch_org_id(&full_cookie_string).await {
-        Ok(id) => id,
+    let profile_path = match config.chrome_profile_path_for(&instance_name) {
+        Ok(p) => p,
         Err(e) => {
-            emit_auth_error(
-                &app,
-                &instance,
-                format!("Logged in, but couldn't determine your organization: {}", e),
-            );
+            emit_auth_error(&app, &instance_name, e.to_string());
             return;
         }
     };
 
-    let session = SessionData {
-        org_id,
-        session_key,
-        cf_clearance,
-        last_active_org,
-        anthropic_device_id,
-        cf_bm,
-        ssid,
-        full_cookie_string: Some(full_cookie_string),
-    };
+    match chrome_auth::run_chrome_auth(profile_path).await {
+        Ok(mut session) => {
+            match fetch_org_id(
+                session
+                    .full_cookie_string
+                    .as_deref()
+                    .unwrap_or(""),
+            )
+            .await
+            {
+                Ok(org_id) => {
+                    session.org_id = org_id;
+                    let path = match Config::load()
+                        .and_then(|c| c.session_path_for(&instance_name))
+                    {
+                        Ok(p) => p,
+                        Err(e) => {
+                            emit_auth_error(&app, &instance_name, e.to_string());
+                            return;
+                        }
+                    };
 
-    let path = match Config::load()
-        .and_then(|config| config.session_path_for(&instance))
-    {
-        Ok(path) => path,
+                    if let Err(e) = session.save(&path) {
+                        emit_auth_error(&app, &instance_name, e.to_string());
+                        return;
+                    }
+
+                    let _ = app.emit(
+                        "auth-complete",
+                        AuthCompletePayload {
+                            instance: instance_name,
+                        },
+                    );
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                    return;
+                }
+                Err(e) => {
+                    emit_auth_error(
+                        &app,
+                        &instance_name,
+                        format!("Logged in but couldn't fetch org: {}", e),
+                    );
+                    return;
+                }
+            }
+        }
         Err(e) => {
-            emit_auth_error(&app, &instance, e.to_string());
+            emit_auth_error(&app, &instance_name, e.to_string());
             return;
         }
     };
+}
 
-    if let Err(e) = session.save(&path) {
-        emit_auth_error(&app, &instance, e.to_string());
-        return;
-    }
-
-    if let Some(window) = app.get_webview_window("auth") {
-        let _ = window.close();
-    }
-
-    let _ = app.emit("auth-complete", AuthCompletePayload { instance });
+/// Open a magic-link URL in Chrome (the active auth session handles it via CDP).
+#[tauri::command]
+pub async fn navigate_auth_window(_app: AppHandle, url: String) -> Result<(), String> {
+    open::that(&url).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn emit_auth_error(app: &AppHandle, instance: &str, message: String) {
     tracing::warn!("auth: error for '{}': {}", instance, message);
-    if let Some(window) = app.get_webview_window("auth") {
-        let _ = window.close();
-    }
     let _ = app.emit(
         "auth-error",
         AuthErrorPayload {
