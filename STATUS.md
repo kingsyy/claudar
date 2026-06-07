@@ -1,10 +1,10 @@
 ---
 intent: share
-stage: working
+stage: complete
 share_target: maintained
-next: Code-sign/notarize for distribution outside the dev machine; verify Linux/Windows builds
+next: Code-sign/notarize for distribution; or Phase 8 (threshold list editing UI)
 blocker: null
-updated: 2026-06-07
+updated: 2026-06-08
 ---
 
 # Claude Notify — Monitor Claude.ai usage limits with native desktop notifications
@@ -15,14 +15,14 @@ A lightweight Rust daemon that fetches real-time Claude.ai usage data (bypassing
 
 ## Current state
 
-**Mid-rebuild: turning the CLI into a Tauri/Svelte desktop GUI.** The original Rust CLI daemon (monitoring loop, Chrome-based auth, notifications, service install, multi-account support) was refactored into a reusable `claude-notify-core` library (Phase 1), then wrapped in a Tauri 2.0 app with a Svelte 5 + Tailwind/shadcn-svelte frontend (Phase 2 — tray icon, window, sidebar nav scaffold). Phase 3 embedded the monitor loop directly in the Tauri process (background polling tasks, `usage-update`/`auth-required`/`monitor-error` events, tray icon colour, IPC commands). Phase 4 (just completed today) wires the Svelte Dashboard up to all of that: it subscribes to `usage-update`/`monitor-error`, fetches initial state via `get_usage`, and renders a per-instance tab switcher, live 5h/7d circular gauges, reset countdowns (ticking every 30s), a predicted burn-rate stat, and loading/error states.
+**GUI app is functionally complete.** All 7 original build phases are done (Phase 1: workspace refactor, Phase 2: Tauri skeleton, Phase 3: monitor loop integration, Phase 4: Dashboard screen, Phase 5: wizard, Phase 6: History/Accounts/Settings, Phase 7: icons/builds). The Tauri app bundles the monitor loop and runs it as a background tokio task. Screens include Dashboard (5h/7d gauges, reset countdowns, predicted burn), History (SVG chart, 7-day stats), Accounts (multi-account list, add/remove with wizard re-use), Settings (poll interval, thresholds, notifications toggle, autostart). Wizard guides new users through login (in-app webview auth), threshold setup, and autostart toggle.
 
-Phase 5 added the first-run onboarding wizard: a four-step flow (Welcome → in-app Claude.ai login via an embedded Tauri `WebviewWindow` → threshold configuration → done/open-at-login). The new `start_auth` Tauri command opens the login webview, watches for the post-login redirect, extracts session cookies straight from the webview's cookie store, resolves the org id via a new `fetch_org_id` helper, and saves `sessions/{instance}.json` — no Chrome process required. `set_autostart`/`get_autostart` wire the Done step's toggle to `tauri-plugin-autostart`. The same `start_auth` flow also powers a non-blocking re-auth banner shown when the monitor loop emits `auth-required`.
+**Post-phase review completed** — agent-loop run found 2 bugs (fixed during review), locked in 6 UX decisions (CLI deprecation, instance naming, welcome copy, dashboard UX, simultaneous CLI/GUI warning), and identified 1 remaining task: **Phase 8 — threshold list editing.** Settings currently only exposes the 4th (highest) of 4 hardcoded thresholds per limit, which creates non-monotonic configs and surprise notifications from hidden thresholds. Phase 8 will add a proper editable list UI: users can add/delete 1–5 thresholds per limit, kept sorted.
 
-**Phase 6 (just completed)** filled in the remaining three screens, completing the MVP screen set. History renders a dependency-free SVG area chart of `five_hour_pct` over the last 7 days (via the new `get_history` command) with min/max/avg/count stats and an empty state. Accounts lists instances with status, re-uses the Phase 5 `Wizard` for "Add account" (backed by new `add_instance`/`remove_instance` commands — the latter stops the instance's background poll task via a new `MonitorTasks` registry, then deletes its session/state/history files behind a confirm modal). Settings reads/writes polling interval, warning thresholds, a notifications on/off switch, and the open-at-login toggle through `get_config`/`set_config`/`get_autostart`/`set_autostart`, applying changes immediately with toast confirmations.
-
-**Phase 7 (just completed) is the final phase of the GUI build plan** — cross-platform packaging, real icon assets, and polish. Generated a source app icon and ran it through `cargo tauri icon` to produce the full macOS/Linux/Windows icon set (icon.icns, icon.ico, Square*Logo.png, mipmaps). Replaced the runtime-generated solid-colour tray icon blocks with 5 real PNG assets (tray-{green,yellow,orange,red,grey}.png) loaded via `Image::from_bytes` (the `image-png` tauri feature). Added `tauri-plugin-window-state` so the main window remembers its position/size across launches. Configured `tauri.conf.json` bundle targets explicitly (app+dmg / deb+appimage / msi+nsis) and fixed the bundle identifier (it ended in `.app`, which Tauri warns conflicts with the macOS bundle extension — now `com.avr.claude-notify`). Wrote `docs/building.md` documenting Linux/Windows build prerequisites and a CI matrix sketch. `cargo tauri build` produces a working `.app` (verified by launching it directly) — the `.dmg` step fails locally with a Finder AppleEvent timeout, a one-time macOS Automation-permission grant for the terminal, documented in `docs/building.md`.
+`cargo tauri build` produces a working `.app` locally (verified by launching). Code-signing/notarization (for distribution outside the dev machine) is out of scope for this phase but required before real release.
 
 ## Next
 
-- All 7 phases of the GUI build plan are complete (`docs/todo.md`). Remaining for real distribution: code-sign/notarize the macOS build, and actually run the documented Linux/Windows build steps (`docs/building.md`) on those platforms.
+- **Option A:** Run Phase 8 (threshold list editing UI) — well-defined, moderate scope, improves the Settings experience.
+- **Option B:** Code-sign/notarize the macOS `.app` for testable distribution, then run Linux/Windows builds on actual hardware (`docs/building.md` has the steps).
+- **Option C:** Test the current build on real hardware as-is (no code-signing, local distribution only).
