@@ -84,7 +84,7 @@
     try {
       const data = await invoke<HistoryRecord[]>("get_history", {
         instance,
-        since_days: SINCE_DAYS,
+        sinceDays: SINCE_DAYS,
       });
       recordsByInstance = { ...recordsByInstance, [instance]: data };
     } catch (e) {

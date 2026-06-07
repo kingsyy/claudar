@@ -21,13 +21,6 @@ pub struct InstanceInfo {
     pub has_session: bool,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GetHistoryArgs {
-    pub instance: Option<String>,
-    pub since_days: i64,
-}
-
 // ─── Commands ─────────────────────────────────────────────────────────────────
 
 /// Return all configured instances with their session status.
@@ -76,12 +69,15 @@ pub async fn get_usage(instance: Option<String>) -> Result<UsagePayload, String>
 
 /// Return history records for an instance, filtered to the last `since_days` days.
 #[tauri::command]
-pub fn get_history(args: GetHistoryArgs) -> Result<Vec<HistoryRecord>, String> {
+pub fn get_history(
+    instance: Option<String>,
+    since_days: i64,
+) -> Result<Vec<HistoryRecord>, String> {
     let config = Config::load().map_err(|e| e.to_string())?;
-    let name = args.instance.as_deref().unwrap_or("default");
+    let name = instance.as_deref().unwrap_or("default");
     let records = history::load_records(&config, name).map_err(|e| e.to_string())?;
 
-    let cutoff = Utc::now() - ChronoDuration::days(args.since_days);
+    let cutoff = Utc::now() - ChronoDuration::days(since_days);
     Ok(records
         .into_iter()
         .filter(|r| r.polled_at >= cutoff)
