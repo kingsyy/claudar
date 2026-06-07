@@ -2,7 +2,7 @@
 intent: share
 stage: in-progress
 share_target: maintained
-next: Phase 3 — Monitor Loop + Event Bus (wire run_monitor into Tauri task, emit usage-update events)
+next: Phase 4 — Svelte Dashboard Screen (subscribe to usage-update events, render live gauges)
 blocker: null
 updated: 2026-06-07
 ---
