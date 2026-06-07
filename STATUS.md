@@ -1,8 +1,8 @@
 ---
 intent: share
-stage: prototype
+stage: working
 share_target: maintained
-next: Phase 7 — Cross-platform build, icons, and polish
+next: Code-sign/notarize for distribution outside the dev machine; verify Linux/Windows builds
 blocker: null
 updated: 2026-06-07
 ---
@@ -21,8 +21,8 @@ Phase 5 added the first-run onboarding wizard: a four-step flow (Welcome → in-
 
 **Phase 6 (just completed)** filled in the remaining three screens, completing the MVP screen set. History renders a dependency-free SVG area chart of `five_hour_pct` over the last 7 days (via the new `get_history` command) with min/max/avg/count stats and an empty state. Accounts lists instances with status, re-uses the Phase 5 `Wizard` for "Add account" (backed by new `add_instance`/`remove_instance` commands — the latter stops the instance's background poll task via a new `MonitorTasks` registry, then deletes its session/state/history files behind a confirm modal). Settings reads/writes polling interval, warning thresholds, a notifications on/off switch, and the open-at-login toggle through `get_config`/`set_config`/`get_autostart`/`set_autostart`, applying changes immediately with toast confirmations.
 
-**Next up — Phase 6 (History, Accounts, Settings screens)**: wire up the remaining stub routes — time-series history chart, multi-account management (reusing the wizard's auth step for "Add account"), and settings (polling interval, thresholds, notifications, autostart). Full build plan in `docs/todo.md` (phase 7: cross-platform packaging + icons + polish).
+**Phase 7 (just completed) is the final phase of the GUI build plan** — cross-platform packaging, real icon assets, and polish. Generated a source app icon and ran it through `cargo tauri icon` to produce the full macOS/Linux/Windows icon set (icon.icns, icon.ico, Square*Logo.png, mipmaps). Replaced the runtime-generated solid-colour tray icon blocks with 5 real PNG assets (tray-{green,yellow,orange,red,grey}.png) loaded via `Image::from_bytes` (the `image-png` tauri feature). Added `tauri-plugin-window-state` so the main window remembers its position/size across launches. Configured `tauri.conf.json` bundle targets explicitly (app+dmg / deb+appimage / msi+nsis) and fixed the bundle identifier (it ended in `.app`, which Tauri warns conflicts with the macOS bundle extension — now `com.avr.claude-notify`). Wrote `docs/building.md` documenting Linux/Windows build prerequisites and a CI matrix sketch. `cargo tauri build` produces a working `.app` (verified by launching it directly) — the `.dmg` step fails locally with a Finder AppleEvent timeout, a one-time macOS Automation-permission grant for the terminal, documented in `docs/building.md`.
 
 ## Next
 
-- Phase 5 — Onboarding wizard (Welcome / account setup / thresholds / done steps, in-app `start_auth` Chrome window flow) — see `docs/tasks/phase-5-onboarding-wizard.md`
+- All 7 phases of the GUI build plan are complete (`docs/todo.md`). Remaining for real distribution: code-sign/notarize the macOS build, and actually run the documented Linux/Windows build steps (`docs/building.md`) on those platforms.
