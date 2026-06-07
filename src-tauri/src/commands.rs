@@ -1,9 +1,12 @@
+use crate::monitor_loop;
 use claude_notify_core::{
-    config::Config,
+    config::{Config, InstanceConfig},
+    history::{self, HistoryRecord},
     monitor::{poll_instance, UsagePayload},
     storage::SessionData,
     usage_fetcher::fetch_org_id,
 };
+use chrono::{Duration as ChronoDuration, Utc};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::ManagerExt;
@@ -61,6 +64,76 @@ pub async fn get_usage(instance: Option<String>) -> Result<UsagePayload, String>
     poll_instance(&config, name)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Return history records for an instance, filtered to the last `since_days` days.
+#[tauri::command]
+pub fn get_history(instance: Option<String>, since_days: i64) -> Result<Vec<HistoryRecord>, String> {
+    let config = Config::load().map_err(|e| e.to_string())?;
+    let name = instance.as_deref().unwrap_or("default");
+    let records = history::load_records(&config, name).map_err(|e| e.to_string())?;
+
+    let cutoff = Utc::now() - ChronoDuration::days(since_days);
+    Ok(records
+        .into_iter()
+        .filter(|r| r.polled_at >= cutoff)
+        .collect())
+}
+
+// ─── Instance management ──────────────────────────────────────────────────────
+
+/// Add a new named instance to the config and start its background poll task.
+/// The caller is responsible for triggering `start_auth` for the new instance.
+#[tauri::command]
+pub fn add_instance(app: AppHandle, name: String) -> Result<(), String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Instance name cannot be empty".to_string());
+    }
+
+    let mut config = Config::load().map_err(|e| e.to_string())?;
+    if config.effective_instances().iter().any(|i| i.name == name) {
+        return Err(format!("Instance '{}' already exists", name));
+    }
+
+    // Switching from the implicit "default" instance to an explicit list — keep "default" too.
+    if config.instances.is_empty() {
+        config.instances.push(InstanceConfig {
+            name: "default".to_string(),
+        });
+    }
+    config.instances.push(InstanceConfig { name: name.clone() });
+    config.save().map_err(|e| e.to_string())?;
+
+    monitor_loop::spawn_instance_task(app, name);
+
+    Ok(())
+}
+
+/// Stop an instance's monitor task and remove its config entry, session, state,
+/// and history files.
+#[tauri::command]
+pub fn remove_instance(app: AppHandle, instance: String) -> Result<(), String> {
+    let mut config = Config::load().map_err(|e| e.to_string())?;
+
+    monitor_loop::stop_instance_task(&app, &instance);
+
+    config.instances.retain(|i| i.name != instance);
+    config.save().map_err(|e| e.to_string())?;
+
+    for path in [
+        config.session_path_for(&instance),
+        config.state_path_for(&instance),
+        config.history_path_for(&instance),
+    ] {
+        if let Ok(path) = path {
+            if path.exists() {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // ─── Onboarding / Auth ────────────────────────────────────────────────────────

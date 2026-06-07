@@ -22,6 +22,7 @@ fn main() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .manage(monitor_loop::MonitorTasks::default())
         .setup(|app| {
             setup_tray(app)?;
             setup_window(app)?;
@@ -36,6 +37,9 @@ fn main() {
             commands::get_config,
             commands::set_config,
             commands::get_usage,
+            commands::get_history,
+            commands::add_instance,
+            commands::remove_instance,
             commands::start_auth,
             commands::set_autostart,
             commands::get_autostart,

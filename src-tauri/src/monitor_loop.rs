@@ -4,8 +4,15 @@ use claude_notify_core::{
     usage_fetcher::AuthRequiredError,
 };
 use serde::Serialize;
+use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
+
+/// Tracks the running background poll task for each instance, keyed by instance name.
+/// Lets `remove_instance` stop a specific instance's loop without restarting the app.
+#[derive(Default)]
+pub struct MonitorTasks(pub Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>);
 
 /// Colour levels used to encode worst-case usage in the tray icon.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,8 +73,16 @@ pub fn spawn_monitor_tasks(app_handle: AppHandle) {
     );
 
     for instance in instances {
+        spawn_instance_task(app_handle.clone(), instance.name);
+    }
+}
+
+/// Spawn a single background poll task for the given instance and register its
+/// handle in `MonitorTasks` so it can be stopped later (e.g. on instance removal).
+pub fn spawn_instance_task(app_handle: AppHandle, instance_name: String) {
+    let task_handle = {
         let app_handle = app_handle.clone();
-        let instance_name = instance.name.clone();
+        let instance_name = instance_name.clone();
 
         tauri::async_runtime::spawn(async move {
             // Small stagger so multiple instances don't hammer the API simultaneously.
@@ -121,7 +136,25 @@ pub fn spawn_monitor_tasks(app_handle: AppHandle) {
 
                 tokio::time::sleep(interval).await;
             }
-        });
+        })
+    };
+
+    if let Some(state) = app_handle.try_state::<MonitorTasks>() {
+        state
+            .0
+            .lock()
+            .unwrap()
+            .insert(instance_name, task_handle);
+    }
+}
+
+/// Abort the running poll task for the given instance, if any, and stop tracking it.
+pub fn stop_instance_task(app_handle: &AppHandle, instance_name: &str) {
+    if let Some(state) = app_handle.try_state::<MonitorTasks>() {
+        if let Some(handle) = state.0.lock().unwrap().remove(instance_name) {
+            handle.abort();
+            tracing::info!("monitor: stopped task for '{}'", instance_name);
+        }
     }
 }
 
