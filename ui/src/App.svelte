@@ -1,13 +1,30 @@
 <script lang="ts">
+  import { onDestroy, onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import Dashboard from "./routes/Dashboard.svelte";
   import History from "./routes/History.svelte";
   import Accounts from "./routes/Accounts.svelte";
   import Settings from "./routes/Settings.svelte";
+  import Wizard from "./routes/Wizard.svelte";
 
   type Route = "dashboard" | "history" | "accounts" | "settings";
 
+  type InstanceInfo = {
+    name: string;
+    has_session: boolean;
+  };
+
   let currentRoute: Route = $state("dashboard");
+
+  // `null` = still checking; `true` = show wizard; `false` = go straight to the app.
+  let showWizard = $state<boolean | null>(null);
+
+  // Re-auth banner shown when the monitor loop detects an expired session.
+  let reauthInstance = $state<string | null>(null);
+  let reauthing = $state(false);
+  let unlistenAuthRequired: UnlistenFn | undefined;
+  let unlistenAuthComplete: UnlistenFn | undefined;
 
   const navItems: { id: Route; label: string; icon: string }[] = [
     { id: "dashboard", label: "Dashboard", icon: "⬤" },
@@ -22,42 +39,103 @@
   }
 
   testIpc();
+
+  async function checkFirstRun() {
+    try {
+      const instances = await invoke<InstanceInfo[]>("get_instances");
+      showWizard = !instances.some((inst) => inst.has_session);
+    } catch (e) {
+      console.error("get_instances failed", e);
+      showWizard = false;
+    }
+  }
+
+  function finishWizard() {
+    showWizard = false;
+  }
+
+  async function reconnect() {
+    if (!reauthInstance) return;
+    reauthing = true;
+    try {
+      await invoke("start_auth", { instance: reauthInstance });
+    } catch (e) {
+      console.error("start_auth failed", e);
+      reauthing = false;
+    }
+  }
+
+  onMount(async () => {
+    await checkFirstRun();
+
+    unlistenAuthRequired = await listen<{ instance: string }>("auth-required", (event) => {
+      reauthInstance = event.payload.instance;
+      reauthing = false;
+    });
+
+    unlistenAuthComplete = await listen<{ instance: string }>("auth-complete", (event) => {
+      if (event.payload.instance === reauthInstance) {
+        reauthInstance = null;
+        reauthing = false;
+      }
+    });
+  });
+
+  onDestroy(() => {
+    unlistenAuthRequired?.();
+    unlistenAuthComplete?.();
+  });
 </script>
 
-<div class="app-shell">
-  <nav class="sidebar">
-    <div class="sidebar-logo">
-      <span class="logo-mark">◉</span>
-      <span class="logo-text">Claude Notify</span>
-    </div>
-    <ul class="nav-list">
-      {#each navItems as item}
-        <li>
-          <button
-            class="nav-item"
-            class:active={currentRoute === item.id}
-            onclick={() => (currentRoute = item.id)}
-          >
-            <span class="nav-icon" aria-hidden="true">{item.icon}</span>
-            <span class="nav-label">{item.label}</span>
-          </button>
-        </li>
-      {/each}
-    </ul>
-  </nav>
+{#if showWizard === true}
+  <Wizard onComplete={finishWizard} />
+{:else if showWizard === false}
+  <div class="app-shell">
+    <nav class="sidebar">
+      <div class="sidebar-logo">
+        <span class="logo-mark">◉</span>
+        <span class="logo-text">Claude Notify</span>
+      </div>
+      <ul class="nav-list">
+        {#each navItems as item}
+          <li>
+            <button
+              class="nav-item"
+              class:active={currentRoute === item.id}
+              onclick={() => (currentRoute = item.id)}
+            >
+              <span class="nav-icon" aria-hidden="true">{item.icon}</span>
+              <span class="nav-label">{item.label}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    </nav>
 
-  <main class="content">
-    {#if currentRoute === "dashboard"}
-      <Dashboard />
-    {:else if currentRoute === "history"}
-      <History />
-    {:else if currentRoute === "accounts"}
-      <Accounts />
-    {:else if currentRoute === "settings"}
-      <Settings />
-    {/if}
-  </main>
-</div>
+    <div class="main-column">
+      {#if reauthInstance}
+        <div class="reauth-banner" role="alert">
+          <span>Your Claude session has expired — reconnect to keep monitoring.</span>
+          <button class="reauth-action" onclick={reconnect} disabled={reauthing}>
+            {reauthing ? "Connecting…" : "Re-connect"}
+          </button>
+        </div>
+      {/if}
+
+      <main class="content">
+        {#if currentRoute === "dashboard"}
+          <Dashboard />
+        {:else if currentRoute === "history"}
+          <History />
+        {:else if currentRoute === "accounts"}
+          <Accounts />
+        {:else if currentRoute === "settings"}
+          <Settings />
+        {/if}
+      </main>
+    </div>
+  </div>
+{/if}
 
 <style>
   .app-shell {
@@ -131,6 +209,46 @@
     width: 1.25rem;
     text-align: center;
     font-size: 0.75rem;
+  }
+
+  .main-column {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .reauth-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.75rem 1.5rem;
+    background-color: hsl(38 92% 95%);
+    color: hsl(32 81% 29%);
+    border-bottom: 1px solid hsl(38 92% 80%);
+    font-size: 0.85rem;
+  }
+
+  .reauth-action {
+    flex-shrink: 0;
+    padding: 0.4rem 0.9rem;
+    border: none;
+    border-radius: var(--radius);
+    background-color: hsl(32 81% 29%);
+    color: hsl(40 100% 97%);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .reauth-action:hover {
+    opacity: 0.9;
+  }
+
+  .reauth-action:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .content {
