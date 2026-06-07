@@ -1,6 +1,6 @@
 ---
 intent: share
-stage: in-progress
+stage: prototype
 share_target: maintained
 next: Phase 4 — Svelte Dashboard Screen (subscribe to usage-update events, render live gauges)
 blocker: null
@@ -15,12 +15,10 @@ A lightweight Rust daemon that fetches real-time Claude.ai usage data (bypassing
 
 ## Current state
 
-**Works**: Core monitoring loop, browser-based authentication with Chrome, usage API polling, native notifications (macOS/Linux), service installation (launchd/systemd), multi-account support, configurable thresholds, CLI with setup/config/status/usage/run commands. Released on GitHub with pre-built binaries for macOS, Linux, and Windows. Has tests throughout codebase (time_format, config, storage, state, notifications, retry, etc.). Last commit 5 days ago (performance optimization for direct HTTP fetch in usage command).
+**Mid-rebuild: turning the CLI into a Tauri/Svelte desktop GUI.** The original Rust CLI daemon (monitoring loop, Chrome-based auth, notifications, service install, multi-account support) was refactored into a reusable `claude-notify-core` library (Phase 1), then wrapped in a Tauri 2.0 app with a Svelte 5 + Tailwind/shadcn-svelte frontend (Phase 2 — tray icon, window, sidebar nav scaffold). Phase 3 (just completed today) embeds the monitor loop directly in the Tauri process: it spawns one polling task per instance, emits `usage-update`/`auth-required`/`monitor-error` events to the frontend, drives the tray icon colour, and exposes `get_instances`/`get_config`/`set_config`/`get_usage` IPC commands.
 
-**Minor rough edges**: Session cookies stored in plaintext (keychain integration noted as future work). Windows binary exists but platform not fully documented in README. OBSCURA_RESEARCH.md and history tracking features appear in-progress (history.rs, history_cmd.rs untracked).
+**Next up — Phase 4 (Svelte Dashboard screen)**: wire the frontend to subscribe to `usage-update` events and render live 5h/7d usage gauges, reset countdowns, a per-instance tab switcher, and loading/error states. This is the first genuinely usable screen — after it the app works as a monitoring tool end-to-end. Full build plan in `docs/todo.md` / `docs/phases.md` (phases 5-7: onboarding wizard, history/accounts/settings screens, cross-platform packaging).
 
 ## Next
 
-- Monitor GitHub issues and user feedback for stability blockers
-- Finalize and document Windows support if targeting all three platforms
-- Plan keychain integration for secure session storage
+- Phase 4 — Svelte Dashboard screen (subscribe to `usage-update`, render live 5h/7d gauges, reset countdown, per-instance tabs, loading/error states) — see `docs/tasks/phase-4-dashboard.md`
