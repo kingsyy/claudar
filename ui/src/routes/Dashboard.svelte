@@ -22,6 +22,7 @@
   let usageByInstance = $state<Record<string, UsagePayload>>({});
   let errorByInstance = $state<Record<string, string>>({});
   let now = $state(Date.now());
+  let lastUpdateByInstance = $state<Record<string, number>>({});
 
   let unlistenUsage: UnlistenFn | undefined;
   let unlistenError: UnlistenFn | undefined;
@@ -29,12 +30,19 @@
 
   let usage = $derived(selected ? usageByInstance[selected] : undefined);
   let error = $derived(selected ? errorByInstance[selected] : undefined);
+  let lastUpdate = $derived(selected ? lastUpdateByInstance[selected] : undefined);
 
   async function loadInitialUsage(instance: string) {
     if (usageByInstance[instance]) return;
     try {
       const payload = await invoke<UsagePayload>("get_usage", { instance });
       usageByInstance = { ...usageByInstance, [instance]: payload };
+      lastUpdateByInstance = { ...lastUpdateByInstance, [instance]: Date.now() };
+      if (instance in errorByInstance) {
+        const next = { ...errorByInstance };
+        delete next[instance];
+        errorByInstance = next;
+      }
     } catch (e) {
       errorByInstance = { ...errorByInstance, [instance]: String(e) };
     }
@@ -42,7 +50,12 @@
 
   function selectInstance(name: string) {
     selected = name;
-    loadInitialUsage(name);
+    const inst = instances.find(i => i.name === name);
+    if (inst?.has_session) {
+      loadInitialUsage(name);
+    } else {
+      errorByInstance = { ...errorByInstance, [name]: "No session configured — open Settings to sign in" };
+    }
   }
 
   function formatCountdown(iso: string | null | undefined): string {
@@ -64,6 +77,18 @@
     return "hsl(142 71% 45%)";
   }
 
+  function formatTimeSince(timestamp: number | undefined): string {
+    if (!timestamp) return "Never";
+    const diffMs = now - timestamp;
+    if (diffMs < 60_000) return "Just now";
+    const minutes = Math.floor(diffMs / 60_000);
+    if (minutes === 1) return "1 minute ago";
+    if (minutes < 60) return `${minutes} minutes ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours === 1) return "1 hour ago";
+    return `${hours} hours ago`;
+  }
+
   onMount(async () => {
     try {
       instances = await invoke<InstanceInfo[]>("get_instances");
@@ -77,6 +102,7 @@
     unlistenUsage = await listen<UsagePayload>("usage-update", (event) => {
       const payload = event.payload;
       usageByInstance = { ...usageByInstance, [payload.instance]: payload };
+      lastUpdateByInstance = { ...lastUpdateByInstance, [payload.instance]: Date.now() };
       if (payload.instance in errorByInstance) {
         const next = { ...errorByInstance };
         delete next[payload.instance];
@@ -157,11 +183,20 @@
       </div>
     </div>
 
-    <div class="stat-row">
-      <span class="stat-label">Predicted 5-hour burn</span>
-      <span class="stat-value">
-        {usage.predicted_pct != null ? `${usage.predicted_pct.toFixed(0)}%` : "Not enough data yet"}
-      </span>
+    <div class="stats-footer">
+      <div class="stat-row">
+        <span class="stat-label">Expected 5-hour usage at reset</span>
+        <span class="stat-value">
+          {usage.predicted_pct != null ? `${usage.predicted_pct.toFixed(0)}%` : "—"}
+        </span>
+      </div>
+      {#if usage.predicted_pct != null}
+        <p class="stat-hint">Based on your current usage rate</p>
+      {/if}
+      <div class="stat-row">
+        <span class="stat-label">Last updated</span>
+        <span class="stat-value">{formatTimeSince(lastUpdate)}</span>
+      </div>
     </div>
   {/if}
 </div>
@@ -296,10 +331,17 @@
     margin: 0;
   }
 
+  .stats-footer {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+  }
+
   .stat-row {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    justify-content: space-between;
     padding: 0.75rem 1rem;
     background-color: hsl(var(--secondary));
     border-radius: var(--radius);
@@ -313,5 +355,12 @@
   .stat-value {
     font-weight: 600;
     color: hsl(var(--foreground));
+  }
+
+  .stat-hint {
+    margin: -0.5rem 1rem 0;
+    font-size: 0.75rem;
+    color: hsl(var(--muted-foreground));
+    font-style: italic;
   }
 </style>
