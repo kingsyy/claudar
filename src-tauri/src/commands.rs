@@ -287,13 +287,29 @@ pub fn get_autostart(app: AppHandle) -> Result<bool, String> {
 /// Send a test notification to verify notification pipeline works.
 #[tauri::command]
 pub fn test_notification() -> Result<(), String> {
-    use notify_rust::Notification;
+    #[cfg(target_os = "macos")]
+    {
+        let script = r#"display notification "This is a test notification. Your notification settings are working!" with title "Claude Notify Test""#;
+        let status = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .status()
+            .map_err(|e| e.to_string())?;
+        if !status.success() {
+            return Err("Failed to send notification".to_string());
+        }
+        Ok(())
+    }
 
-    Notification::new()
-        .summary("Claude Notify Test")
-        .body("This is a test notification. Your notification settings are working!")
-        .show()
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
+    #[cfg(not(target_os = "macos"))]
+    {
+        use notify_rust::Notification;
+        Notification::new()
+            .appname("Claude Notify")
+            .summary("Claude Notify Test")
+            .body("This is a test notification. Your notification settings are working!")
+            .show()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
 }
