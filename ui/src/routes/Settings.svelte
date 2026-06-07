@@ -23,7 +23,7 @@
   let config = $state<Config | null>(null);
   let loading = $state(true);
   let loadError = $state<string | null>(null);
-  let activeTab = $state<"polling" | "thresholds" | "notifications" | "capacity" | "history" | "startup" | "test">("polling");
+  let activeTab = $state<"general" | "notifications" | "thresholds" | "capacity">("general");
 
   // Form-bound values
   let pollIntervalMinutes = $state(15);
@@ -306,17 +306,10 @@
     <div class="tabs">
       <button
         class="tab-button"
-        class:active={activeTab === "polling"}
-        onclick={() => (activeTab = "polling")}
+        class:active={activeTab === "general"}
+        onclick={() => (activeTab = "general")}
       >
-        Polling & General
-      </button>
-      <button
-        class="tab-button"
-        class:active={activeTab === "thresholds"}
-        onclick={() => (activeTab = "thresholds")}
-      >
-        Thresholds
+        General
       </button>
       <button
         class="tab-button"
@@ -327,36 +320,22 @@
       </button>
       <button
         class="tab-button"
+        class:active={activeTab === "thresholds"}
+        onclick={() => (activeTab = "thresholds")}
+      >
+        Thresholds
+      </button>
+      <button
+        class="tab-button"
         class:active={activeTab === "capacity"}
         onclick={() => (activeTab = "capacity")}
       >
         Capacity Warnings
       </button>
-      <button
-        class="tab-button"
-        class:active={activeTab === "history"}
-        onclick={() => (activeTab = "history")}
-      >
-        History
-      </button>
-      <button
-        class="tab-button"
-        class:active={activeTab === "startup"}
-        onclick={() => (activeTab = "startup")}
-      >
-        Startup
-      </button>
-      <button
-        class="tab-button"
-        class:active={activeTab === "test"}
-        onclick={() => (activeTab = "test")}
-      >
-        Test
-      </button>
     </div>
 
     <div class="tab-content">
-      {#if activeTab === "polling"}
+      {#if activeTab === "general"}
         <section class="card">
           <h2>Polling Interval</h2>
           <div class="field-row">
@@ -388,6 +367,68 @@
             />
           </div>
           <p class="hint">Use "local" or a timezone like America/New_York, Europe/London, etc.</p>
+        </section>
+
+        <section class="card">
+          <h2>Launch Behavior</h2>
+          <div class="toggle-row">
+            <div>
+              <span class="toggle-label">Open at login</span>
+              <p class="hint">Automatically launch Claude Notify when you sign in.</p>
+            </div>
+            <button
+              class="switch"
+              class:on={autostartEnabled}
+              role="switch"
+              aria-checked={autostartEnabled}
+              aria-label="Toggle open at login"
+              onclick={toggleAutostart}
+            >
+              <span class="switch-thumb"></span>
+            </button>
+          </div>
+          {#if autostartError}
+            <p class="field-error">{autostartError}</p>
+          {/if}
+        </section>
+
+        <section class="card">
+          <h2>Usage History</h2>
+          <div class="toggle-row">
+            <div>
+              <span class="toggle-label">Record usage history</span>
+              <p class="hint">Save usage snapshots to analyze trends and patterns.</p>
+            </div>
+            <button
+              class="switch"
+              class:on={historyEnabled}
+              role="switch"
+              aria-checked={historyEnabled}
+              aria-label="Toggle history recording"
+              onclick={toggleHistoryEnabled}
+            >
+              <span class="switch-thumb"></span>
+            </button>
+          </div>
+
+          <div class="field-row">
+            <label for="history-max">Keep last</label>
+            <div class="input-with-suffix">
+              <input
+                id="history-max"
+                type="number"
+                min="1"
+                bind:value={historyMaxRecords}
+                onchange={saveHistoryMaxRecords}
+                disabled={!historyEnabled}
+              />
+              <span class="suffix">records</span>
+            </div>
+          </div>
+          <p class="hint">
+            Default (2016 records) = ~14 days at 15-minute polling. Older records are automatically
+            deleted.
+          </p>
         </section>
       {/if}
 
@@ -552,6 +593,14 @@
             </div>
           </div>
         </section>
+
+        <section class="card">
+          <h2>Test Notifications</h2>
+          <p class="hint">Send a test notification to verify your notification settings work correctly.</p>
+          <button class="test-button" onclick={testNotification} disabled={testingNotification}>
+            {testingNotification ? "Sending…" : "Send Test Notification"}
+          </button>
+        </section>
       {/if}
 
       {#if activeTab === "capacity"}
@@ -624,81 +673,7 @@
         </section>
       {/if}
 
-      {#if activeTab === "history"}
-        <section class="card">
-          <h2>Usage History</h2>
-          <div class="toggle-row">
-            <div>
-              <span class="toggle-label">Record usage history</span>
-              <p class="hint">Save usage snapshots to analyze trends and patterns.</p>
-            </div>
-            <button
-              class="switch"
-              class:on={historyEnabled}
-              role="switch"
-              aria-checked={historyEnabled}
-              aria-label="Toggle history recording"
-              onclick={toggleHistoryEnabled}
-            >
-              <span class="switch-thumb"></span>
-            </button>
-          </div>
 
-          <div class="field-row">
-            <label for="history-max">Keep last</label>
-            <div class="input-with-suffix">
-              <input
-                id="history-max"
-                type="number"
-                min="1"
-                bind:value={historyMaxRecords}
-                onchange={saveHistoryMaxRecords}
-                disabled={!historyEnabled}
-              />
-              <span class="suffix">records</span>
-            </div>
-          </div>
-          <p class="hint">
-            Default (2016 records) = ~14 days at 15-minute polling. Older records are automatically
-            deleted.
-          </p>
-        </section>
-      {/if}
-
-      {#if activeTab === "startup"}
-        <section class="card">
-          <h2>Launch Behavior</h2>
-          <div class="toggle-row">
-            <div>
-              <span class="toggle-label">Open at login</span>
-              <p class="hint">Automatically launch Claude Notify when you sign in.</p>
-            </div>
-            <button
-              class="switch"
-              class:on={autostartEnabled}
-              role="switch"
-              aria-checked={autostartEnabled}
-              aria-label="Toggle open at login"
-              onclick={toggleAutostart}
-            >
-              <span class="switch-thumb"></span>
-            </button>
-          </div>
-          {#if autostartError}
-            <p class="field-error">{autostartError}</p>
-          {/if}
-        </section>
-      {/if}
-
-      {#if activeTab === "test"}
-        <section class="card">
-          <h2>Test Notification</h2>
-          <p class="hint">Send a test notification to verify your notification settings work.</p>
-          <button class="test-button" onclick={testNotification} disabled={testingNotification}>
-            {testingNotification ? "Sending…" : "Send Test Notification"}
-          </button>
-        </section>
-      {/if}
     </div>
   {/if}
 </div>
