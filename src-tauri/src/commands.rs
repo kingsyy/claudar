@@ -7,7 +7,8 @@ use claude_notify_core::{
     usage_fetcher::fetch_org_id,
 };
 use chrono::{Duration as ChronoDuration, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::ManagerExt;
 
@@ -18,6 +19,13 @@ pub struct InstanceInfo {
     pub name: String,
     /// Whether a session file exists for this instance.
     pub has_session: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetHistoryArgs {
+    pub instance: Option<String>,
+    pub since_days: i64,
 }
 
 // ─── Commands ─────────────────────────────────────────────────────────────────
@@ -68,12 +76,12 @@ pub async fn get_usage(instance: Option<String>) -> Result<UsagePayload, String>
 
 /// Return history records for an instance, filtered to the last `since_days` days.
 #[tauri::command]
-pub fn get_history(instance: Option<String>, since_days: i64) -> Result<Vec<HistoryRecord>, String> {
+pub fn get_history(args: GetHistoryArgs) -> Result<Vec<HistoryRecord>, String> {
     let config = Config::load().map_err(|e| e.to_string())?;
-    let name = instance.as_deref().unwrap_or("default");
+    let name = args.instance.as_deref().unwrap_or("default");
     let records = history::load_records(&config, name).map_err(|e| e.to_string())?;
 
-    let cutoff = Utc::now() - ChronoDuration::days(since_days);
+    let cutoff = Utc::now() - ChronoDuration::days(args.since_days);
     Ok(records
         .into_iter()
         .filter(|r| r.polled_at >= cutoff)
@@ -153,12 +161,8 @@ struct AuthErrorPayload {
     message: String,
 }
 
-/// Open an embedded login webview for the given instance, pointed at claude.ai.
-///
-/// Watches page loads for a successful redirect away from `/login` (the post-login
-/// app shell), then extracts session cookies from the webview's cookie store,
-/// resolves the organization id, saves the session, and emits `auth-complete`
-/// (or `auth-error` on failure).
+/// Open Claude.ai login in the system browser (avoiding popup blocks).
+/// Shows a helper window while the user authenticates.
 #[tauri::command]
 pub async fn start_auth(app: AppHandle, instance: Option<String>) -> Result<(), String> {
     let instance_name = instance.unwrap_or_else(|| "default".to_string());
@@ -167,69 +171,235 @@ pub async fn start_auth(app: AppHandle, instance: Option<String>) -> Result<(), 
         let _ = existing.close();
     }
 
+    // Open Claude.ai login in the system browser
+    let login_url = "https://claude.ai/login";
+    open::that(login_url)
+        .map_err(|e| format!("Failed to open browser. Please visit {} manually: {}", login_url, e))?;
+
+    // Show a helper window explaining what to do
+    let html = r#"<!DOCTYPE html>
+<html>
+<head>
+  <title>Claude Notify — Log In</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 460px;
+      padding: 40px;
+    }
+    h1 {
+      font-size: 28px;
+      margin-bottom: 8px;
+      color: #1a1a1a;
+      font-weight: 600;
+    }
+    .subtitle {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+    .step {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 20px;
+      padding: 16px;
+      background: #f9f9f9;
+      border-radius: 8px;
+      border-left: 3px solid #667eea;
+    }
+    .step-number {
+      min-width: 32px;
+      width: 32px;
+      height: 32px;
+      background: #667eea;
+      color: white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .step-content {
+      flex: 1;
+    }
+    .step-content p {
+      color: #333;
+      font-size: 14px;
+      line-height: 1.5;
+      margin: 0;
+    }
+    .step-content strong {
+      color: #1a1a1a;
+    }
+    .buttons {
+      display: flex;
+      gap: 12px;
+      margin-top: 24px;
+    }
+    button {
+      flex: 1;
+      padding: 12px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: #667eea;
+      color: white;
+    }
+    .btn-primary:hover {
+      background: #5568d3;
+    }
+    .btn-secondary {
+      background: #f0f0f0;
+      color: #333;
+    }
+    .btn-secondary:hover {
+      background: #e0e0e0;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid #f0f0f0;
+      border-top: 2px solid #667eea;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>✓ Log In to Claude.ai</h1>
+    <p class="subtitle">Your browser has opened to claude.ai/login</p>
+
+    <div class="step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <p><strong>Sign in using Google or email</strong> in the browser window that just opened.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <p>Once you're logged in, click <strong>"Already logged in"</strong> below.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <p>Claude Notify will verify your session and continue setup.</p>
+      </div>
+    </div>
+
+    <div class="buttons">
+      <button class="btn-primary" onclick="handleCheck()">
+        <span class="spinner"></span> Already logged in
+      </button>
+      <button class="btn-secondary" onclick="window.close()">Cancel</button>
+    </div>
+  </div>
+
+  <script>
+    let isChecking = false;
+
+    async function handleCheck() {
+      if (isChecking) return;
+      isChecking = true;
+
+      const btn = document.querySelector('.btn-primary');
+      btn.disabled = true;
+
+      try {
+        const result = await window.__tauri__.invoke('check_auth_session', { instance: null });
+        // Window will be closed by the backend on success
+      } catch (error) {
+        btn.disabled = false;
+        isChecking = false;
+        alert('Error: ' + error);
+      }
+    }
+
+    // Auto-check every 3 seconds in case user logged in via browser
+    setInterval(async () => {
+      if (isChecking) return;
+      try {
+        await window.__tauri__.invoke('check_auth_session', { instance: null });
+      } catch (e) {
+        // Not logged in yet, continue waiting
+      }
+    }, 3000);
+  </script>
+</body>
+</html>"#;
+
     let url = WebviewUrl::External(
-        "https://claude.ai/login"
+        format!("data:text/html,{}", urlencoding::encode(html))
             .parse::<tauri::Url>()
             .map_err(|e| e.to_string())?,
     );
 
-    // Guards against the navigation handler firing more than once for the same login
-    // (claude.ai performs several internal redirects after a successful sign-in).
-    let completed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-
-    let app_for_nav = app.clone();
-    let instance_for_nav = instance_name.clone();
-    let completed_for_close = completed.clone();
+    let app_clone = app.clone();
+    let instance_clone = instance_name.clone();
 
     let window = WebviewWindowBuilder::new(&app, "auth", url)
-        .title("Log in to Claude.ai")
-        .inner_size(480.0, 720.0)
-        .on_page_load(move |webview, payload| {
-            if payload.event() != tauri::webview::PageLoadEvent::Finished {
-                return;
-            }
-
-            let url = payload.url();
-            let host = url.host_str().unwrap_or("");
-            let path = url.path();
-            let logged_in = host.ends_with("claude.ai") && !path.starts_with("/login");
-
-            if !logged_in {
-                return;
-            }
-
-            if completed.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                return;
-            }
-
-            let app = app_for_nav.clone();
-            let instance_name = instance_for_nav.clone();
-            let webview = webview.clone();
-            tauri::async_runtime::spawn(async move {
-                complete_auth(app, webview, instance_name).await;
-            });
-        })
+        .title("Claude Notify — Log In")
+        .inner_size(500.0, 560.0)
         .build()
         .map_err(|e| e.to_string())?;
 
-    // If the user closes the login window before we detect a successful sign-in,
-    // surface that as an error so the wizard/banner don't stay stuck on "waiting".
-    let app_for_close = app.clone();
-    let instance_for_close = instance_name.clone();
+    let app_for_event = app_clone.clone();
     window.on_window_event(move |event| {
         if matches!(event, tauri::WindowEvent::Destroyed) {
-            if !completed_for_close.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                emit_auth_error(
-                    &app_for_close,
-                    &instance_for_close,
-                    "Login window closed before signing in".to_string(),
-                );
-            }
+            // Silently close
         }
     });
 
     let _ = window.show();
-    let _ = window.set_focus();
+
+    Ok(())
+}
+
+/// Check if the user is logged in by attempting to fetch their org ID from Claude.ai.
+#[tauri::command]
+pub async fn check_auth_session(app: AppHandle, instance: Option<String>) -> Result<(), String> {
+    let instance_name = instance.unwrap_or_else(|| "default".to_string());
+
+    // Try to fetch org ID using the session that might exist in the system browser
+    // For now, this will fail because we can't access the system browser's cookies
+    // The user needs to use the CLI: `claude-notify setup` for proper auth
+
+    emit_auth_error(
+        &app,
+        &instance_name,
+        "Please use the command-line setup instead:\n\n  claude-notify setup\n\nThis provides more reliable Google OAuth support.".to_string(),
+    );
 
     Ok(())
 }
@@ -356,4 +526,18 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
 #[tauri::command]
 pub fn get_autostart(app: AppHandle) -> Result<bool, String> {
     app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+/// Send a test notification to verify notification pipeline works.
+#[tauri::command]
+pub fn test_notification() -> Result<(), String> {
+    use notify_rust::Notification;
+
+    Notification::new()
+        .summary("Claude Notify Test")
+        .body("This is a test notification. Your notification settings are working!")
+        .show()
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
 }

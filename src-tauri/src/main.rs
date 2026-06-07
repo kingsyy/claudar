@@ -51,6 +51,7 @@ fn main() {
             commands::start_auth,
             commands::set_autostart,
             commands::get_autostart,
+            commands::test_notification,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
