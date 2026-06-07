@@ -1,5 +1,5 @@
-use crate::config::Config;
-use crate::time_format;
+use claude_notify_core::config::Config;
+use claude_notify_core::time_format;
 use anyhow::{anyhow, Context, Result};
 
 pub fn handle_config_list() -> Result<()> {
@@ -340,7 +340,7 @@ pub fn handle_instances_add(name: &str) -> Result<()> {
         return Err(anyhow!("Instance '{}' already exists", name));
     }
 
-    config.instances.push(crate::config::InstanceConfig { name: name.to_string() });
+    config.instances.push(claude_notify_core::config::InstanceConfig { name: name.to_string() });
     config.save()?;
 
     println!("✓ Added instance '{}'", name);

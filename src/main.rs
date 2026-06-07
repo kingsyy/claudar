@@ -1,31 +1,20 @@
-mod browser_auth;
 mod cli;
-mod config;
 mod config_cmd;
-mod history;
 mod history_cmd;
-mod monitor;
-mod notification_trait;
-mod notifications;
-mod pace;
-mod retry;
 mod service;
 mod setup;
-mod state;
 mod status;
-mod storage;
-mod time_format;
 mod usage;
 
 use clap::Parser;
 use cli::{Cli, Commands, ConfigAction, InstancesAction};
-use tracing_subscriber;
+use claude_notify_core::{config, monitor, notification_trait};
+use notify_rust::Timeout;
 
-fn main() -> anyhow::Result<()> {
-    // Parse CLI arguments first to get verbose flag
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Initialize logging based on verbose flag
     if cli.verbose {
         tracing_subscriber::fmt()
             .with_env_filter(
@@ -42,49 +31,49 @@ fn main() -> anyhow::Result<()> {
             .init();
     }
 
-    // Route to appropriate command handler
     match cli.command {
         Commands::Setup { instance } => {
             setup::run_setup(cli.verbose, instance)?;
         }
         Commands::Run => {
-            monitor::run_monitor(true)?; // true = foreground mode
+            monitor::run_monitor(true).await?;
         }
         Commands::Usage { instance } => {
-            usage::run_usage(cli.verbose, instance)?;
+            usage::run_usage(cli.verbose, instance).await?;
         }
         Commands::Status => {
             status::run_status(cli.verbose)?;
         }
-        Commands::Config { action } => {
-            match action {
-                ConfigAction::List => {
-                    config_cmd::handle_config_list()?;
-                }
-                ConfigAction::Get { key } => {
-                    config_cmd::handle_config_get(&key)?;
-                }
-                ConfigAction::Set { key, value } => {
-                    config_cmd::handle_config_set(&key, &value)?;
-                }
+        Commands::Config { action } => match action {
+            ConfigAction::List => {
+                config_cmd::handle_config_list()?;
             }
-        }
-        Commands::Instances { action } => {
-            match action {
-                InstancesAction::List => {
-                    config_cmd::handle_instances_list()?;
-                }
-                InstancesAction::Add { name } => {
-                    config_cmd::handle_instances_add(&name)?;
-                }
-                InstancesAction::Remove { name } => {
-                    config_cmd::handle_instances_remove(&name)?;
-                }
+            ConfigAction::Get { key } => {
+                config_cmd::handle_config_get(&key)?;
             }
-        }
-        Commands::History { instance, view, days, json } => {
-            let config = config::Config::load()?;
-            history_cmd::run_history(&config, instance, view, days, json)?;
+            ConfigAction::Set { key, value } => {
+                config_cmd::handle_config_set(&key, &value)?;
+            }
+        },
+        Commands::Instances { action } => match action {
+            InstancesAction::List => {
+                config_cmd::handle_instances_list()?;
+            }
+            InstancesAction::Add { name } => {
+                config_cmd::handle_instances_add(&name)?;
+            }
+            InstancesAction::Remove { name } => {
+                config_cmd::handle_instances_remove(&name)?;
+            }
+        },
+        Commands::History {
+            instance,
+            view,
+            days,
+            json,
+        } => {
+            let cfg = config::Config::load()?;
+            history_cmd::run_history(&cfg, instance, view, days, json)?;
         }
         Commands::SetupService => {
             service::install_service()?;
@@ -100,18 +89,20 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::TestNotification => {
             use notification_trait::{NotificationSender, RealNotificationSender};
-            use notify_rust::Timeout;
 
-            let config = config::Config::load()?;
+            let cfg = config::Config::load()?;
             let sender = RealNotificationSender;
-            let timeout = if config.notifications.persistent {
+            let timeout = if cfg.notifications.persistent {
                 Timeout::Never
             } else {
                 Timeout::Milliseconds(10000)
             };
-            let sound = config.notifications.sound;
+            let sound = cfg.notifications.sound;
 
-            println!("Sending test notifications (sound: {}, persistent: {})...", sound, config.notifications.persistent);
+            println!(
+                "Sending test notifications (sound: {}, persistent: {})...",
+                sound, cfg.notifications.persistent
+            );
 
             sender.send(
                 "[TEST] ⚠️ Claude Usage Alert: 5-hour Limit",

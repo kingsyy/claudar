@@ -1,3 +1,10 @@
+[workspace]
+members = [
+    ".",
+    "crates/claude-notify-core",
+]
+resolver = "2"
+
 [package]
 name = "claude-notify"
 version = "0.3.0"
@@ -10,6 +17,7 @@ keywords = ["claude", "monitoring", "notifications", "usage", "rate-limit"]
 categories = ["command-line-utilities"]
 
 [dependencies]
+claude-notify-core = { path = "crates/claude-notify-core" }
 tokio = { version = "1.42", features = ["full"] }
 reqwest = { version = "0.12", features = ["json", "cookies", "blocking", "rustls-tls", "gzip", "brotli"], default-features = false }
 serde = { version = "1.0", features = ["derive"] }
@@ -25,7 +33,6 @@ dirs = "5.0"
 uuid = { version = "1.11", features = ["serde"] }
 anyhow = "1.0"
 dialoguer = "0.11"
-headless_chrome = "1.0"
 colored = "2.1"
 rand = "0.8"
 indicatif = "0.17"

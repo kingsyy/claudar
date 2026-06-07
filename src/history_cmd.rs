@@ -1,6 +1,6 @@
 use crate::cli::HistoryView;
-use crate::config::Config;
-use crate::history::{self, HistoryRecord, PredictionSource};
+use claude_notify_core::config::Config;
+use claude_notify_core::history::{self, HistoryRecord, PredictionSource};
 use chrono::{DateTime, Local, Utc};
 use colored::Colorize;
 

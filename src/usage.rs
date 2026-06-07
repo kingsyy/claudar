@@ -1,28 +1,13 @@
-use crate::browser_auth::{fetch_usage_direct, BrowserAuthenticator};
-use crate::config::Config;
-use crate::pace;
-use crate::storage::SessionData;
-use crate::time_format;
+use claude_notify_core::config::Config;
+use claude_notify_core::pace;
+use claude_notify_core::storage::SessionData;
+use claude_notify_core::time_format;
+use claude_notify_core::usage_fetcher::{UsageResponse, fetch_usage};
 use chrono::{DateTime, Local, Utc};
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
-use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
-struct UsageResponse {
-    five_hour: UsageLimit,
-    seven_day: UsageLimit,
-}
-
-#[derive(Debug, Deserialize)]
-struct UsageLimit {
-    utilization: f64,
-    #[serde(default)]
-    resets_at: Option<String>,
-}
-
-pub fn run_usage(verbose: bool, instance_filter: Option<String>) -> anyhow::Result<()> {
-    // Load configuration first to get timezone setting
+pub async fn run_usage(verbose: bool, instance_filter: Option<String>) -> anyhow::Result<()> {
     let config = Config::load()?;
 
     let now = Local::now();
@@ -37,12 +22,14 @@ pub fn run_usage(verbose: bool, instance_filter: Option<String>) -> anyhow::Resu
     let instances = config.effective_instances();
     let show_headers = instances.len() > 1;
 
-    // Filter to specific instance if requested
     let instances_to_show: Vec<_> = match &instance_filter {
         Some(name) => {
             let matching: Vec<_> = instances.into_iter().filter(|i| i.name == *name).collect();
             if matching.is_empty() {
-                anyhow::bail!("Instance '{}' not found. Use 'claude-notify instances list' to see configured instances.", name);
+                anyhow::bail!(
+                    "Instance '{}' not found. Use 'claude-notify instances list' to see configured instances.",
+                    name
+                );
             }
             matching
         }
@@ -51,11 +38,15 @@ pub fn run_usage(verbose: bool, instance_filter: Option<String>) -> anyhow::Resu
 
     for (idx, instance) in instances_to_show.iter().enumerate() {
         if show_headers {
-            println!("── {} {}", instance.name.bold(), "─".repeat(48 - instance.name.len()));
+            println!(
+                "── {} {}",
+                instance.name.bold(),
+                "─".repeat(48 - instance.name.len())
+            );
             println!();
         }
 
-        if let Err(e) = display_instance_usage(&config, &instance.name, verbose) {
+        if let Err(e) = display_instance_usage(&config, &instance.name, verbose).await {
             eprintln!("  Error fetching usage for '{}': {}", instance.name, e);
         }
 
@@ -67,72 +58,50 @@ pub fn run_usage(verbose: bool, instance_filter: Option<String>) -> anyhow::Resu
     Ok(())
 }
 
-fn display_instance_usage(config: &Config, instance_name: &str, verbose: bool) -> anyhow::Result<()> {
-    // Create loading spinner
+async fn display_instance_usage(
+    config: &Config,
+    instance_name: &str,
+    _verbose: bool,
+) -> anyhow::Result<()> {
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
         ProgressStyle::default_spinner()
             .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
             .template("{spinner:.cyan} {msg}")
-            .unwrap()
+            .unwrap(),
     );
 
     spinner.set_message("Fetching usage data...");
     spinner.enable_steady_tick(std::time::Duration::from_millis(80));
 
-    // Load session data for this instance
     let session_path = config.session_path_for(instance_name)?;
     let session = SessionData::load(&session_path)?;
-
     let cookie_header = session.cookie_header_string();
-    let cookie_pairs = session.cookie_pairs(); // kept for browser fallback
 
-    // Try direct HTTP fetch first; fall back to headless Chrome only if blocked
-    let usage_json = match fetch_usage_direct(&cookie_header, &session.org_id, verbose) {
-        Ok(json) => json,
-        Err(e) => {
-            let err_msg = e.to_string();
-            let needs_browser = err_msg.starts_with("cloudflare_challenge")
-                || err_msg.starts_with("html_response")
-                || err_msg.starts_with("auth_error");
+    let usage_json = fetch_usage(&cookie_header, &session.org_id).await?;
 
-            if needs_browser {
-                spinner.set_message("Direct fetch blocked, using browser fallback...");
-                let profile_dir = config.chrome_profile_path_for(instance_name)?;
-                let browser = BrowserAuthenticator::new_headless(&profile_dir, verbose)?;
-                browser.inject_cookies(cookie_pairs, verbose)?;
-                browser.fetch_usage_api(&session.org_id, verbose)?
-            } else {
-                return Err(e);
-            }
-        }
-    };
-
-    // Parse the response
     let usage: UsageResponse = serde_json::from_value(usage_json)
         .map_err(|e| anyhow::anyhow!("Failed to parse usage data: {}", e))?;
 
     spinner.finish_and_clear();
 
-    // Display 5-hour limit (5 hours = 300 minutes)
     display_usage_limit(
         "5-Hour Limit",
         usage.five_hour.utilization,
         usage.five_hour.resets_at.as_deref(),
         &config.thresholds.five_hour,
-        300, // 5 hours in minutes
+        300,
         &config.general.timezone,
     )?;
 
     println!();
 
-    // Display 7-day limit (7 days = 10080 minutes)
     display_usage_limit(
         "7-Day Limit",
         usage.seven_day.utilization,
         usage.seven_day.resets_at.as_deref(),
         &config.thresholds.seven_day,
-        10080, // 7 days in minutes
+        10080,
         &config.general.timezone,
     )?;
 
@@ -149,36 +118,30 @@ fn display_usage_limit(
     period_minutes: i64,
     timezone: &str,
 ) -> anyhow::Result<()> {
-    // API returns utilization as percentage already
     let percentage = utilization;
 
-    // Determine color based on thresholds
     let (color, status, emoji) = get_color_and_status(percentage, thresholds);
 
     let name_padded = format!("{:14}", name);
     let token_bar = create_progress_bar(percentage / 100.0);
     let percentage_str = format!("{:5.1}%", percentage).color(color).bold();
 
-    // Parse and format reset time (handle null gracefully)
     match resets_at {
         Some(resets_at_str) => {
             let reset_time = DateTime::parse_from_rfc3339(resets_at_str)
-                .or_else(|_| {
-                    // Try ISO 8601 format without timezone
-                    DateTime::parse_from_rfc3339(&format!("{}Z", resets_at_str))
-                })
+                .or_else(|_| DateTime::parse_from_rfc3339(&format!("{}Z", resets_at_str)))
                 .map_err(|e| anyhow::anyhow!("Failed to parse reset time: {}", e))?;
 
             let now = Utc::now();
             let duration = reset_time.signed_duration_since(now);
 
-            // Calculate time elapsed in the period
             let period_start = reset_time - chrono::Duration::minutes(period_minutes);
             let elapsed_duration = now.signed_duration_since(period_start);
             let elapsed_minutes = elapsed_duration.num_minutes();
-            let time_percentage = (elapsed_minutes as f64 / period_minutes as f64 * 100.0).min(100.0).max(0.0);
+            let time_percentage = (elapsed_minutes as f64 / period_minutes as f64 * 100.0)
+                .min(100.0)
+                .max(0.0);
 
-            // Format relative time
             let relative_time = if duration.num_weeks() > 0 {
                 let weeks = duration.num_weeks();
                 let days = duration.num_days() % 7;
@@ -198,14 +161,19 @@ fn display_usage_limit(
                 "< 1m".to_string()
             };
 
-            // Format absolute time in 24-hour format with configured timezone
             let absolute_time = time_format::format_reset_time_24h(&reset_time, timezone)
-                .unwrap_or_else(|_| reset_time.with_timezone(&Local).format("%b %d, %H:%M").to_string());
+                .unwrap_or_else(|_| {
+                    reset_time
+                        .with_timezone(&Local)
+                        .format("%b %d, %H:%M")
+                        .to_string()
+                });
 
             let time_bar = create_progress_bar(time_percentage / 100.0);
             let time_pct_str = format!("{:5.1}%", time_percentage).bright_black();
 
-            let pace_text = pace::calculate_pace_info(percentage, reset_time.with_timezone(&Utc), period_minutes);
+            let pace_text =
+                pace::calculate_pace_info(percentage, reset_time.with_timezone(&Utc), period_minutes);
             let pace_color = if pace_text.contains("over pace") {
                 colored::Color::Yellow
             } else if pace_text.contains("under pace") {
@@ -230,7 +198,6 @@ fn display_usage_limit(
             );
         }
         None => {
-            // No timing info — show token bar only
             println!(
                 "{}  💬 {}  {}   {}  {}",
                 name_padded.bold(),
@@ -255,11 +222,7 @@ fn create_progress_bar(utilization: f64) -> String {
     let filled = filled.min(bar_width);
     let empty = bar_width - filled;
 
-    format!(
-        "[{}{}]",
-        "█".repeat(filled),
-        "░".repeat(empty)
-    )
+    format!("[{}{}]", "█".repeat(filled), "░".repeat(empty))
 }
 
 #[cfg(test)]
@@ -274,16 +237,12 @@ fn create_overlapping_bar(time_percentage: f64, usage_percentage: f64) -> String
 
     for i in 0..bar_width {
         if i < usage_pos.min(time_pos) {
-            // Both time and usage have passed this point
             bar.push('█');
         } else if i < time_pos {
-            // Only time has passed, usage hasn't reached here yet (under pace)
             bar.push('░');
         } else if i < usage_pos {
-            // Usage has passed but time hasn't (over pace) - show with different char
             bar.push('▓');
         } else {
-            // Neither has reached here yet
             bar.push('░');
         }
     }
@@ -292,8 +251,10 @@ fn create_overlapping_bar(time_percentage: f64, usage_percentage: f64) -> String
     bar
 }
 
-fn get_color_and_status(percentage: f64, thresholds: &[u8]) -> (colored::Color, &'static str, &'static str) {
-    // Find the highest threshold that's been exceeded
+fn get_color_and_status(
+    percentage: f64,
+    thresholds: &[u8],
+) -> (colored::Color, &'static str, &'static str) {
     let mut highest_threshold = 0;
     for &threshold in thresholds {
         if percentage >= threshold as f64 {
@@ -312,8 +273,6 @@ fn get_color_and_status(percentage: f64, thresholds: &[u8]) -> (colored::Color, 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // --- create_progress_bar ---
 
     #[test]
     fn progress_bar_zero() {
@@ -339,21 +298,15 @@ mod tests {
         assert_eq!(bar, "[██████████]");
     }
 
-    // --- create_overlapping_bar ---
-
     #[test]
     fn overlapping_bar_under_pace() {
-        // time=50%, usage=25% => under pace
         let bar = create_overlapping_bar(50.0, 25.0);
-        // 5 positions usage (█), 5 positions time-only (░), 10 empty (░)
         assert_eq!(bar, "[█████░░░░░░░░░░░░░░░]");
     }
 
     #[test]
     fn overlapping_bar_over_pace() {
-        // time=25%, usage=50% => over pace
         let bar = create_overlapping_bar(25.0, 50.0);
-        // 5 positions both (█), 5 positions usage-only (▓), 10 empty (░)
         assert_eq!(bar, "[█████▓▓▓▓▓░░░░░░░░░░]");
     }
 
@@ -374,8 +327,6 @@ mod tests {
         let bar = create_overlapping_bar(100.0, 100.0);
         assert_eq!(bar, "[████████████████████]");
     }
-
-    // --- get_color_and_status ---
 
     #[test]
     fn color_status_below_all_thresholds() {
@@ -407,7 +358,6 @@ mod tests {
 
     #[test]
     fn color_status_custom_thresholds() {
-        // Only threshold at 80 — so 85% should match 80 => range 70..=89 => WARNING
         let (color, status, _) = get_color_and_status(85.0, &[80]);
         assert_eq!(color, colored::Color::Yellow);
         assert_eq!(status, "WARNING");
@@ -415,7 +365,6 @@ mod tests {
 
     #[test]
     fn color_status_empty_thresholds() {
-        // No thresholds exceeded => OK
         let (color, status, _) = get_color_and_status(99.0, &[]);
         assert_eq!(color, colored::Color::Green);
         assert_eq!(status, "OK");

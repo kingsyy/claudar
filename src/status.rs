@@ -1,6 +1,6 @@
-use crate::config::Config;
+use claude_notify_core::config::Config;
+use claude_notify_core::storage::SessionData;
 use crate::service;
-use crate::storage::SessionData;
 use colored::Colorize;
 
 pub fn run_status(_verbose: bool) -> anyhow::Result<()> {
