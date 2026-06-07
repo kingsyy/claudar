@@ -2,6 +2,7 @@
 members = [
     ".",
     "crates/claude-notify-core",
+    "src-tauri",
 ]
 resolver = "2"
 
