@@ -11,11 +11,15 @@
     history: { enabled: boolean; max_records: number };
   };
 
-  let { instance = "default", onComplete }: { instance?: string; onComplete: () => void } =
-    $props();
+  let {
+    instance = "default",
+    onComplete,
+    relogin = false,
+  }: { instance?: string; onComplete: () => void; relogin?: boolean } = $props();
 
   type Step = 1 | 2 | 3 | 4;
-  let step = $state<Step>(1);
+  // Re-login only needs the auth step; full onboarding starts at the intro.
+  let step = $state<Step>(relogin ? 2 : 1);
 
   // Step 1 — collapsible sections
   let howItWorksOpen = $state(false);
@@ -85,7 +89,11 @@
       if (event.payload.instance !== instance) return;
       authState = "success";
       setTimeout(() => {
-        step = 3;
+        if (relogin) {
+          onComplete();
+        } else {
+          step = 3;
+        }
       }, 1000);
     });
 

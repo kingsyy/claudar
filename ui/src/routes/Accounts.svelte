@@ -18,6 +18,8 @@
   let addError = $state<string | null>(null);
   let adding = $state(false);
   let wizardInstance = $state<string | null>(null);
+  // When set, the wizard runs in re-login mode (auth step only) for an existing account.
+  let reloginInstance = $state<string | null>(null);
 
   // "Remove" flow
   let pendingRemoval = $state<string | null>(null);
@@ -69,7 +71,12 @@
 
   async function finishWizard() {
     wizardInstance = null;
+    reloginInstance = null;
     await loadInstances();
+  }
+
+  function startRelogin(name: string) {
+    reloginInstance = name;
   }
 
   function requestRemoval(name: string) {
@@ -102,6 +109,8 @@
 
 {#if wizardInstance}
   <Wizard instance={wizardInstance} onComplete={finishWizard} />
+{:else if reloginInstance}
+  <Wizard instance={reloginInstance} relogin onComplete={finishWizard} />
 {:else}
   <div class="page">
     <div class="header-row">
@@ -158,7 +167,12 @@
                 {inst.has_session ? "Active" : "No session"}
               </span>
             </div>
-            <button class="danger" onclick={() => requestRemoval(inst.name)}>Remove</button>
+            <div class="account-actions">
+              <button class="ghost" onclick={() => startRelogin(inst.name)}>
+                {inst.has_session ? "Re-login" : "Login"}
+              </button>
+              <button class="danger" onclick={() => requestRemoval(inst.name)}>Remove</button>
+            </div>
           </li>
         {/each}
       </ul>
@@ -380,6 +394,11 @@
     display: flex;
     flex-direction: column;
     gap: 0.3rem;
+  }
+
+  .account-actions {
+    display: flex;
+    gap: 0.5rem;
   }
 
   .account-name {
