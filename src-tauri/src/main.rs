@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod monitor_loop;
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -9,13 +10,29 @@ use tauri::{
 };
 
 fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
     tauri::Builder::default()
         .setup(|app| {
             setup_tray(app)?;
             setup_window(app)?;
+
+            // Spawn one background polling task per configured instance.
+            monitor_loop::spawn_monitor_tasks(app.handle().clone());
+
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![commands::ping])
+        .invoke_handler(tauri::generate_handler![
+            commands::get_instances,
+            commands::get_config,
+            commands::set_config,
+            commands::get_usage,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -26,14 +43,16 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
 
-    // Solid grey 16×16 RGBA placeholder — Phase 7 replaces with real icons.
+    // Solid grey 16×16 RGBA placeholder — colour updates live via monitor_loop.
+    // Final icon assets are installed in Phase 7.
     let rgba: Vec<u8> = std::iter::repeat([128u8, 128u8, 128u8, 255u8])
         .take(16 * 16)
         .flatten()
         .collect();
     let icon = tauri::image::Image::new(&rgba, 16, 16);
 
-    let _tray = TrayIconBuilder::new()
+    // ID "tray" is used by monitor_loop::set_tray_icon to locate this handle.
+    let _tray = TrayIconBuilder::with_id("tray")
         .icon(icon)
         .menu(&menu)
         .show_menu_on_left_click(false)
