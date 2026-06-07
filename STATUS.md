@@ -2,7 +2,7 @@
 intent: share
 stage: in-progress
 share_target: maintained
-next: Phase 2 — Tauri App Skeleton (src-tauri/ + Svelte 5 frontend scaffold)
+next: Phase 3 — Monitor Loop + Event Bus (wire run_monitor into Tauri task, emit usage-update events)
 blocker: null
 updated: 2026-06-07
 ---
