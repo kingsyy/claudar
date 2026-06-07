@@ -116,6 +116,10 @@ pub fn add_instance(app: AppHandle, name: String) -> Result<(), String> {
 pub fn remove_instance(app: AppHandle, instance: String) -> Result<(), String> {
     let mut config = Config::load().map_err(|e| e.to_string())?;
 
+    if config.effective_instances().len() <= 1 {
+        return Err("Cannot remove the only configured account".to_string());
+    }
+
     monitor_loop::stop_instance_task(&app, &instance);
 
     config.instances.retain(|i| i.name != instance);

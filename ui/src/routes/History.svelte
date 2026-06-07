@@ -96,7 +96,9 @@
 
   function selectInstance(name: string) {
     selected = name;
-    if (!(name in recordsByInstance)) {
+    if (name in recordsByInstance) {
+      error = null;
+    } else {
       loadHistory(name);
     }
   }
