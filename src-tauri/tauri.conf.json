@@ -14,11 +14,11 @@
       {
         "label": "main",
         "title": "Claude Notify",
-        "width": 900,
-        "height": 600,
-        "minWidth": 700,
-        "minHeight": 500,
-        "visible": false,
+        "width": 1120,
+        "height": 760,
+        "minWidth": 960,
+        "minHeight": 600,
+        "visible": true,
         "resizable": true
       }
     ],
