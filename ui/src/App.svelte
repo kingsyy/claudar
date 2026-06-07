@@ -23,8 +23,10 @@
   // Re-auth banner shown when the monitor loop detects an expired session.
   let reauthInstance = $state<string | null>(null);
   let reauthing = $state(false);
+  let reauthError = $state<string | null>(null);
   let unlistenAuthRequired: UnlistenFn | undefined;
   let unlistenAuthComplete: UnlistenFn | undefined;
+  let unlistenAuthError: UnlistenFn | undefined;
 
   const navItems: { id: Route; label: string; icon: string }[] = [
     { id: "dashboard", label: "Dashboard", icon: "⬤" },
@@ -57,6 +59,7 @@
   async function reconnect() {
     if (!reauthInstance) return;
     reauthing = true;
+    reauthError = null;
     try {
       await invoke("start_auth", { instance: reauthInstance });
     } catch (e) {
@@ -77,13 +80,25 @@
       if (event.payload.instance === reauthInstance) {
         reauthInstance = null;
         reauthing = false;
+        reauthError = null;
       }
     });
+
+    unlistenAuthError = await listen<{ instance: string; message: string }>(
+      "auth-error",
+      (event) => {
+        if (event.payload.instance === reauthInstance) {
+          reauthing = false;
+          reauthError = event.payload.message;
+        }
+      },
+    );
   });
 
   onDestroy(() => {
     unlistenAuthRequired?.();
     unlistenAuthComplete?.();
+    unlistenAuthError?.();
   });
 </script>
 
@@ -115,9 +130,11 @@
     <div class="main-column">
       {#if reauthInstance}
         <div class="reauth-banner" role="alert">
-          <span>Your Claude session has expired — reconnect to keep monitoring.</span>
+          <span>
+            {reauthError ?? "Your Claude session has expired — reconnect to keep monitoring."}
+          </span>
           <button class="reauth-action" onclick={reconnect} disabled={reauthing}>
-            {reauthing ? "Connecting…" : "Re-connect"}
+            {reauthing ? "Connecting…" : reauthError ? "Try again" : "Re-connect"}
           </button>
         </div>
       {/if}
