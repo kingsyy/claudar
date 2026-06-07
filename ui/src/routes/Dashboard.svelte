@@ -127,12 +127,12 @@
     <div class="error-banner" role="alert">⚠ {error}</div>
   {/if}
 
-  {#if !usage}
+  {#if !usage && !error}
     <div class="loading">
       <div class="spinner" aria-hidden="true"></div>
       <p>Waiting for the first usage update…</p>
     </div>
-  {:else}
+  {:else if usage}
     <div class="gauges">
       <div class="gauge-card">
         <div
@@ -268,11 +268,6 @@
       var(--color) calc(var(--pct) * 1%),
       hsl(var(--muted)) calc(var(--pct) * 1%)
     );
-  }
-
-  .gauge::before {
-    content: "";
-    position: absolute;
   }
 
   .gauge-value {
