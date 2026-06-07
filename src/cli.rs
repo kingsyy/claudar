@@ -14,7 +14,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Interactive setup wizard to configure authentication
+    /// [DEPRECATED] Use the GUI app instead for interactive setup
     Setup {
         /// Instance name to set up (e.g., "work", "personal")
         #[arg(long)]

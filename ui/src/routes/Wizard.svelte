@@ -164,11 +164,11 @@
 
     {#if step === 1}
       <section class="step">
-        <h1>Keep an eye on your Claude usage</h1>
+        <h1>Never hit a rate limit by surprise</h1>
         <p class="lead">
-          Claude Notify quietly watches your Claude.ai usage limits in the background — it lives in
-          your menu bar and lets you know before you run out. We never read your messages or
-          conversations, only the usage percentages Claude.ai already shows you.
+          Claude Notify watches your usage in the background and sends you a heads-up before you
+          run out. It sits in your menu bar, checks every few minutes, and only sees the usage
+          percentages — nothing else.
         </p>
 
         <details bind:open={howItWorksOpen}>
