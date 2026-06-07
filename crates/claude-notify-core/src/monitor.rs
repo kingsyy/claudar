@@ -10,7 +10,53 @@ use crate::storage::SessionData;
 use crate::time_format;
 use crate::usage_fetcher::{AuthRequiredError, UsageLimit, UsageResponse, fetch_usage};
 use chrono::{DateTime, Local, Utc};
+use serde::Serialize;
 use std::time::Duration;
+
+/// Usage snapshot emitted as a Tauri `usage-update` event after each successful poll.
+#[derive(Debug, Clone, Serialize)]
+pub struct UsagePayload {
+    pub instance: String,
+    pub five_hour_pct: f64,
+    pub seven_day_pct: f64,
+    /// Five-hour reset timestamp (raw ISO 8601 string from the API).
+    pub resets_at: Option<String>,
+    /// Seven-day reset timestamp.
+    pub seven_day_resets_at: Option<String>,
+    /// Linear-extrapolation of 5-hour usage to end-of-period (`None` if < 10% elapsed).
+    pub predicted_pct: Option<f64>,
+}
+
+/// Run one full poll cycle for a single instance and return a `UsagePayload`.
+///
+/// Loads session cookies, fetches the Claude.ai usage API, fires desktop
+/// notifications for any crossed thresholds, persists state, and always
+/// appends a `HistoryRecord` (regardless of `config.history.enabled`).
+///
+/// Returns `Err` containing `AuthRequiredError` when the session is expired or
+/// Cloudflare-blocked; the caller should emit `auth-required` and skip the cycle.
+pub async fn poll_instance(config: &Config, instance_name: &str) -> anyhow::Result<UsagePayload> {
+    let mut state = MonitorState::load_for(config, instance_name)?;
+    let result = check_usage(config, &mut state, instance_name, false, &config.general.timezone).await;
+    // Always persist state updates, even when a fetch error occurred mid-way.
+    let _ = state.save_for(config, instance_name);
+    let payload = result?;
+
+    // GUI always records history regardless of config.history.enabled.
+    let record = HistoryRecord {
+        polled_at: Utc::now(),
+        five_hour_pct: payload.five_hour_pct,
+        five_hour_resets_at: payload.resets_at.clone(),
+        seven_day_pct: payload.seven_day_pct,
+        seven_day_resets_at: payload.seven_day_resets_at.clone(),
+        five_hour_predicted_pct: payload.predicted_pct,
+    };
+    if let Err(e) = history::append_record(config, instance_name, &record) {
+        tracing::warn!("Failed to write history for '{}': {}", instance_name, e);
+    }
+
+    Ok(payload)
+}
 
 fn get_current_time_formatted(tz: &str) -> String {
     let now = Local::now();
@@ -80,21 +126,24 @@ pub async fn run_monitor(foreground: bool) -> anyhow::Result<()> {
                 tracing::info!("{} [{}]", instance_name, timestamp);
             }
 
-            if let Err(e) = check_usage(&config, &mut state, instance_name, foreground, &config.general.timezone).await {
-                // AuthRequiredError means session expired or Cloudflare blocked — log
-                // and continue the monitor loop rather than crashing.
-                if e.downcast_ref::<AuthRequiredError>().is_some() {
-                    tracing::warn!(
-                        "monitor: auth required for '{}' — run setup to refresh session: {}",
-                        instance_name,
-                        e
-                    );
-                } else {
-                    tracing::error!(
-                        "Error checking usage for instance '{}': {}",
-                        instance_name,
-                        e
-                    );
+            match check_usage(&config, &mut state, instance_name, foreground, &config.general.timezone).await {
+                Ok(_payload) => {}
+                Err(e) => {
+                    // AuthRequiredError means session expired or Cloudflare blocked — log
+                    // and continue the monitor loop rather than crashing.
+                    if e.downcast_ref::<AuthRequiredError>().is_some() {
+                        tracing::warn!(
+                            "monitor: auth required for '{}' — run setup to refresh session: {}",
+                            instance_name,
+                            e
+                        );
+                    } else {
+                        tracing::error!(
+                            "Error checking usage for instance '{}': {}",
+                            instance_name,
+                            e
+                        );
+                    }
                 }
             }
 
@@ -149,7 +198,7 @@ async fn check_usage(
     instance_name: &str,
     verbose: bool,
     timezone: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<UsagePayload> {
     if verbose {
         let timestamp = get_current_time_formatted(timezone);
         tracing::info!("[{}] Checking usage...", timestamp);
@@ -209,6 +258,7 @@ async fn check_usage(
         tracing::info!("[{}] All checks complete", timestamp);
     }
 
+    // CLI path: respect config.history.enabled for history writing.
     if config.history.enabled {
         let record = HistoryRecord {
             polled_at: Utc::now(),
@@ -231,7 +281,20 @@ async fn check_usage(
         }
     }
 
-    Ok(())
+    let predicted_pct = compute_predicted_pct(
+        usage.five_hour.utilization,
+        &usage.five_hour.resets_at,
+        300,
+    );
+
+    Ok(UsagePayload {
+        instance: instance_name.to_string(),
+        five_hour_pct: usage.five_hour.utilization,
+        seven_day_pct: usage.seven_day.utilization,
+        resets_at: usage.five_hour.resets_at.clone(),
+        seven_day_resets_at: usage.seven_day.resets_at.clone(),
+        predicted_pct,
+    })
 }
 
 fn process_limit(
