@@ -30,6 +30,51 @@ pub struct UsageLimit {
     pub resets_at: Option<String>,
 }
 
+/// Fetch the user's organization UUID from the Claude.ai API using session cookies.
+///
+/// Used right after an in-app login (wizard Step 2) to populate `SessionData.org_id`
+/// without requiring the user to find it manually.
+pub async fn fetch_org_id(cookie_header: &str) -> Result<String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+
+    let response = client
+        .get("https://claude.ai/api/organizations")
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        )
+        .header("Accept", "application/json, text/plain, */*")
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .header("Referer", "https://claude.ai/")
+        .header("Origin", "https://claude.ai")
+        .header("Cookie", cookie_header)
+        .send()
+        .await?;
+
+    let status = response.status();
+    let body = response.text().await?;
+
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(anyhow::Error::new(AuthRequiredError {
+            message: format!("HTTP {} — could not fetch organizations", status),
+        }));
+    }
+
+    let orgs: Vec<serde_json::Value> = serde_json::from_str(&body)
+        .map_err(|e| anyhow::anyhow!("failed to parse organizations response: {} | body: {}", e, &body[..body.len().min(300)]))?;
+
+    let org_id = orgs
+        .first()
+        .and_then(|org| org.get("uuid"))
+        .and_then(|uuid| uuid.as_str())
+        .ok_or_else(|| anyhow::anyhow!("no organizations found for this account"))?;
+
+    Ok(org_id.to_string())
+}
+
 /// Fetch usage data from the Claude.ai API using stored session cookies.
 ///
 /// On HTTP 401/403 or a Cloudflare challenge page the error downcasts to

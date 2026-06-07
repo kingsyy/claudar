@@ -1,8 +1,12 @@
 use claude_notify_core::{
     config::Config,
     monitor::{poll_instance, UsagePayload},
+    storage::SessionData,
+    usage_fetcher::fetch_org_id,
 };
 use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_autostart::ManagerExt;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -57,4 +61,205 @@ pub async fn get_usage(instance: Option<String>) -> Result<UsagePayload, String>
     poll_instance(&config, name)
         .await
         .map_err(|e| e.to_string())
+}
+
+// ─── Onboarding / Auth ────────────────────────────────────────────────────────
+
+#[derive(Clone, Serialize)]
+struct AuthCompletePayload {
+    instance: String,
+}
+
+#[derive(Clone, Serialize)]
+struct AuthErrorPayload {
+    instance: String,
+    message: String,
+}
+
+/// Open an embedded login webview for the given instance, pointed at claude.ai.
+///
+/// Watches page loads for a successful redirect away from `/login` (the post-login
+/// app shell), then extracts session cookies from the webview's cookie store,
+/// resolves the organization id, saves the session, and emits `auth-complete`
+/// (or `auth-error` on failure).
+#[tauri::command]
+pub async fn start_auth(app: AppHandle, instance: Option<String>) -> Result<(), String> {
+    let instance_name = instance.unwrap_or_else(|| "default".to_string());
+
+    if let Some(existing) = app.get_webview_window("auth") {
+        let _ = existing.close();
+    }
+
+    let url = WebviewUrl::External(
+        "https://claude.ai/login"
+            .parse::<tauri::Url>()
+            .map_err(|e| e.to_string())?,
+    );
+
+    // Guards against the navigation handler firing more than once for the same login
+    // (claude.ai performs several internal redirects after a successful sign-in).
+    let completed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    let app_for_nav = app.clone();
+    let instance_for_nav = instance_name.clone();
+
+    let window = WebviewWindowBuilder::new(&app, "auth", url)
+        .title("Log in to Claude.ai")
+        .inner_size(480.0, 720.0)
+        .on_page_load(move |webview, payload| {
+            if payload.event() != tauri::webview::PageLoadEvent::Finished {
+                return;
+            }
+
+            let url = payload.url();
+            let host = url.host_str().unwrap_or("");
+            let path = url.path();
+            let logged_in = host.ends_with("claude.ai") && !path.starts_with("/login");
+
+            if !logged_in {
+                return;
+            }
+
+            if completed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+
+            let app = app_for_nav.clone();
+            let instance_name = instance_for_nav.clone();
+            let webview = webview.clone();
+            tauri::async_runtime::spawn(async move {
+                complete_auth(app, webview, instance_name).await;
+            });
+        })
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let _ = window.show();
+    let _ = window.set_focus();
+
+    Ok(())
+}
+
+/// Extract cookies from the auth webview, resolve the org id, persist the session,
+/// close the webview, and emit `auth-complete`/`auth-error`.
+async fn complete_auth(app: AppHandle, webview: tauri::WebviewWindow, instance: String) {
+    let cookies = match webview.cookies() {
+        Ok(c) => c,
+        Err(e) => {
+            emit_auth_error(&app, &instance, e.to_string());
+            return;
+        }
+    };
+
+    let mut session_key = None;
+    let mut cf_clearance = None;
+    let mut last_active_org = None;
+    let mut anthropic_device_id = None;
+    let mut cf_bm = None;
+    let mut ssid = None;
+    let mut pairs = Vec::new();
+
+    for cookie in &cookies {
+        let name = cookie.name();
+        let value = cookie.value();
+        pairs.push(format!("{}={}", name, value));
+        match name {
+            "sessionKey" => session_key = Some(value.to_string()),
+            "cf_clearance" => cf_clearance = Some(value.to_string()),
+            "lastActiveOrg" => last_active_org = Some(value.to_string()),
+            "anthropic-device-id" => anthropic_device_id = Some(value.to_string()),
+            "__cf_bm" => cf_bm = Some(value.to_string()),
+            "__ssid" => ssid = Some(value.to_string()),
+            _ => {}
+        }
+    }
+
+    let full_cookie_string = pairs.join("; ");
+
+    let session_key = match session_key {
+        Some(key) => key,
+        None => {
+            emit_auth_error(
+                &app,
+                &instance,
+                "No session cookie found — please try logging in again".to_string(),
+            );
+            return;
+        }
+    };
+
+    let org_id = match fetch_org_id(&full_cookie_string).await {
+        Ok(id) => id,
+        Err(e) => {
+            emit_auth_error(
+                &app,
+                &instance,
+                format!("Logged in, but couldn't determine your organization: {}", e),
+            );
+            return;
+        }
+    };
+
+    let session = SessionData {
+        org_id,
+        session_key,
+        cf_clearance,
+        last_active_org,
+        anthropic_device_id,
+        cf_bm,
+        ssid,
+        full_cookie_string: Some(full_cookie_string),
+    };
+
+    let path = match Config::load()
+        .and_then(|config| config.session_path_for(&instance))
+    {
+        Ok(path) => path,
+        Err(e) => {
+            emit_auth_error(&app, &instance, e.to_string());
+            return;
+        }
+    };
+
+    if let Err(e) = session.save(&path) {
+        emit_auth_error(&app, &instance, e.to_string());
+        return;
+    }
+
+    if let Some(window) = app.get_webview_window("auth") {
+        let _ = window.close();
+    }
+
+    let _ = app.emit("auth-complete", AuthCompletePayload { instance });
+}
+
+fn emit_auth_error(app: &AppHandle, instance: &str, message: String) {
+    tracing::warn!("auth: error for '{}': {}", instance, message);
+    if let Some(window) = app.get_webview_window("auth") {
+        let _ = window.close();
+    }
+    let _ = app.emit(
+        "auth-error",
+        AuthErrorPayload {
+            instance: instance.to_string(),
+            message,
+        },
+    );
+}
+
+/// Enable or disable launching the app automatically when the user logs in.
+#[tauri::command]
+pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let manager = app.autolaunch();
+    if enabled {
+        manager.enable().map_err(|e| e.to_string())
+    } else {
+        manager.disable().map_err(|e| e.to_string())
+    }
+}
+
+/// Return whether the app is currently registered to launch at login.
+#[tauri::command]
+pub fn get_autostart(app: AppHandle) -> Result<bool, String> {
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
 }

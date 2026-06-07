@@ -18,6 +18,10 @@ fn main() {
         .init();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             setup_tray(app)?;
             setup_window(app)?;
@@ -32,6 +36,9 @@ fn main() {
             commands::get_config,
             commands::set_config,
             commands::get_usage,
+            commands::start_auth,
+            commands::set_autostart,
+            commands::get_autostart,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
