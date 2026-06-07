@@ -37,13 +37,14 @@ impl UsageLevel {
         }
     }
 
-    fn rgba(self) -> [u8; 4] {
+    /// PNG bytes for the tray icon variant matching this level.
+    fn icon_bytes(self) -> &'static [u8] {
         match self {
-            Self::Grey => [128, 128, 128, 255],
-            Self::Green => [0, 180, 0, 255],
-            Self::Yellow => [200, 180, 0, 255],
-            Self::Orange => [220, 120, 0, 255],
-            Self::Red => [220, 0, 0, 255],
+            Self::Grey => include_bytes!("../icons/tray-grey.png"),
+            Self::Green => include_bytes!("../icons/tray-green.png"),
+            Self::Yellow => include_bytes!("../icons/tray-yellow.png"),
+            Self::Orange => include_bytes!("../icons/tray-orange.png"),
+            Self::Red => include_bytes!("../icons/tray-red.png"),
         }
     }
 }
@@ -158,14 +159,15 @@ pub fn stop_instance_task(app_handle: &AppHandle, instance_name: &str) {
     }
 }
 
-/// Replace the tray icon with a solid 16×16 colour block.
+/// Swap the tray icon to the colour variant matching the given usage level.
 fn set_tray_icon(app_handle: &AppHandle, level: UsageLevel) {
-    let color = level.rgba();
-    let rgba: Vec<u8> = std::iter::repeat(color)
-        .take(16 * 16)
-        .flat_map(|c| c)
-        .collect();
-    let icon = tauri::image::Image::new(&rgba, 16, 16);
+    let icon = match tauri::image::Image::from_bytes(level.icon_bytes()) {
+        Ok(icon) => icon,
+        Err(e) => {
+            tracing::warn!("decode tray icon for {:?} failed: {}", level, e);
+            return;
+        }
+    };
 
     if let Some(tray) = app_handle.tray_by_id("tray") {
         if let Err(e) = tray.set_icon(Some(icon)) {

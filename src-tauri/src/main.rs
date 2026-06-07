@@ -22,6 +22,14 @@ fn main() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::SIZE,
+                )
+                .build(),
+        )
         .manage(monitor_loop::MonitorTasks::default())
         .setup(|app| {
             setup_tray(app)?;
@@ -54,13 +62,9 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
 
-    // Solid grey 16×16 RGBA placeholder — colour updates live via monitor_loop.
-    // Final icon assets are installed in Phase 7.
-    let rgba: Vec<u8> = std::iter::repeat([128u8, 128u8, 128u8, 255u8])
-        .take(16 * 16)
-        .flatten()
-        .collect();
-    let icon = tauri::image::Image::new(&rgba, 16, 16);
+    // Start with the grey "no data yet" variant — monitor_loop swaps in the
+    // colour matching current usage once the first poll completes.
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-grey.png"))?;
 
     // ID "tray" is used by monitor_loop::set_tray_icon to locate this handle.
     let _tray = TrayIconBuilder::with_id("tray")
