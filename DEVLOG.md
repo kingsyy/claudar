@@ -1,3 +1,11 @@
+## 2026-06-07 · Phase 4 — Svelte Dashboard screen wired to live usage events
+
+**What:** Replaced the Dashboard stub (`ui/src/routes/Dashboard.svelte`) with the first real screen. On mount it calls `get_instances` to build a per-instance tab switcher, then `get_usage` to seed initial state before the first poll completes, and subscribes to the Tauri `usage-update` / `monitor-error` events (unsubscribing in `onDestroy`). State is kept in two `$state` records keyed by instance name (`usageByInstance`, `errorByInstance`) with a `$derived` view of the selected instance. Renders two CSS conic-gradient circular gauges (5h / 7d %), human-readable reset countdowns derived from `resets_at` / `seven_day_resets_at` (re-rendered every 30s via `setInterval` so they tick down without needing a new poll event), a predicted burn-rate stat from `predicted_pct`, plus loading-spinner and error-banner states.
+
+**Why:** Used plain `$state` records instead of a Svelte store/external module — the data is only consumed by this one screen, and Svelte 5 runes give the same reactivity with less indirection (no premature abstraction). Receiving an `monitor-error` event clears any stale error once a subsequent `usage-update` for that instance succeeds, so the banner doesn't get stuck after a transient failure.
+
+**Next:** Phase 5 — Onboarding wizard (Welcome → account setup → thresholds → done), including the in-app `start_auth` Chrome window flow.
+
 ## 2026-06-07 · Phase 3 — Monitor loop + event bus embedded in Tauri
 
 **What:** Wired the monitoring daemon into the Tauri process. `src-tauri/src/monitor_loop.rs` spawns one tokio task per configured instance (via `tauri::async_runtime::spawn`). Each task calls the new `poll_instance()` in core, emits `usage-update` / `auth-required` / `monitor-error` Tauri events, and updates the tray icon colour (grey/green/yellow/orange/red based on worst-case usage). Added four IPC commands: `get_instances`, `get_config`, `set_config`, `get_usage`. Instance tasks stagger their first poll by a small offset to avoid simultaneous API hits. History JSONL is always written regardless of `config.history.enabled` (GUI always needs data).
