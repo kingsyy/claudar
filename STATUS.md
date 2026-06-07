@@ -1,10 +1,10 @@
 ---
 intent: share
-stage: shared
+stage: in-progress
 share_target: maintained
-next: Monitor stability in production; triage bug reports and feature requests
+next: Phase 2 — Tauri App Skeleton (src-tauri/ + Svelte 5 frontend scaffold)
 blocker: null
-updated: 2026-06-06
+updated: 2026-06-07
 ---
 
 # Claude Notify — Monitor Claude.ai usage limits with native desktop notifications
