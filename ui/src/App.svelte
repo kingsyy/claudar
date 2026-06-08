@@ -20,13 +20,7 @@
   // `null` = still checking; `true` = show wizard; `false` = go straight to the app.
   let showWizard = $state<boolean | null>(null);
 
-  // Re-auth banner shown when the monitor loop detects an expired session.
-  let reauthInstance = $state<string | null>(null);
-  let reauthing = $state(false);
-  let reauthError = $state<string | null>(null);
-  let unlistenAuthRequired: UnlistenFn | undefined;
   let unlistenAuthComplete: UnlistenFn | undefined;
-  let unlistenAuthError: UnlistenFn | undefined;
 
   const navItems: { id: Route; label: string; icon: string }[] = [
     { id: "dashboard", label: "Dashboard", icon: "⬤" },
@@ -56,49 +50,16 @@
     showWizard = false;
   }
 
-  async function reconnect() {
-    if (!reauthInstance) return;
-    reauthing = true;
-    reauthError = null;
-    try {
-      await invoke("start_auth", { instance: reauthInstance });
-    } catch (e) {
-      console.error("start_auth failed", e);
-      reauthing = false;
-    }
-  }
-
   onMount(async () => {
     await checkFirstRun();
 
-    unlistenAuthRequired = await listen<{ instance: string }>("auth-required", (event) => {
-      reauthInstance = event.payload.instance;
-      reauthing = false;
+    unlistenAuthComplete = await listen<{ instance: string }>("auth-complete", () => {
+      checkFirstRun();
     });
-
-    unlistenAuthComplete = await listen<{ instance: string }>("auth-complete", (event) => {
-      if (event.payload.instance === reauthInstance) {
-        reauthInstance = null;
-        reauthing = false;
-        reauthError = null;
-      }
-    });
-
-    unlistenAuthError = await listen<{ instance: string; message: string }>(
-      "auth-error",
-      (event) => {
-        if (event.payload.instance === reauthInstance) {
-          reauthing = false;
-          reauthError = event.payload.message;
-        }
-      },
-    );
   });
 
   onDestroy(() => {
-    unlistenAuthRequired?.();
     unlistenAuthComplete?.();
-    unlistenAuthError?.();
   });
 </script>
 
@@ -128,17 +89,6 @@
     </nav>
 
     <div class="main-column">
-      {#if reauthInstance}
-        <div class="reauth-banner" role="alert">
-          <span>
-            {reauthError ?? "Your Claude session has expired — reconnect to keep monitoring."}
-          </span>
-          <button class="reauth-action" onclick={reconnect} disabled={reauthing}>
-            {reauthing ? "Connecting…" : reauthError ? "Try again" : "Re-connect"}
-          </button>
-        </div>
-      {/if}
-
       <main class="content">
         {#if currentRoute === "dashboard"}
           <Dashboard />
@@ -233,39 +183,6 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
-  }
-
-  .reauth-banner {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 0.75rem 1.5rem;
-    background-color: hsl(38 92% 95%);
-    color: hsl(32 81% 29%);
-    border-bottom: 1px solid hsl(38 92% 80%);
-    font-size: 0.85rem;
-  }
-
-  .reauth-action {
-    flex-shrink: 0;
-    padding: 0.4rem 0.9rem;
-    border: none;
-    border-radius: var(--radius);
-    background-color: hsl(32 81% 29%);
-    color: hsl(40 100% 97%);
-    font-size: 0.8rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .reauth-action:hover {
-    opacity: 0.9;
-  }
-
-  .reauth-action:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
   }
 
   .content {
