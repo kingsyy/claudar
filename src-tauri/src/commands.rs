@@ -200,6 +200,7 @@ async fn run_chrome_auth_and_emit(app: AppHandle, instance_name: String) {
                     .full_cookie_string
                     .as_deref()
                     .unwrap_or(""),
+                session.last_active_org.as_deref(),
             )
             .await
             {

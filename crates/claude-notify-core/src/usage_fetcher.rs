@@ -34,7 +34,14 @@ pub struct UsageLimit {
 ///
 /// Used right after an in-app login (wizard Step 2) to populate `SessionData.org_id`
 /// without requiring the user to find it manually.
-pub async fn fetch_org_id(cookie_header: &str) -> Result<String> {
+///
+/// Account selection matters: `/api/organizations` can return several orgs (e.g. a
+/// personal org plus a Team/Work org, or API-only orgs), and the `/usage` endpoint
+/// returns **403** for any org that isn't the one the chat frontend is scoped to.
+/// We mirror what the browser does: prefer the org named by the `lastActiveOrg`
+/// cookie, then fall back to the first org that advertises a chat capability, then
+/// to the first org of any kind.
+pub async fn fetch_org_id(cookie_header: &str, preferred_org: Option<&str>) -> Result<String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?;
@@ -66,13 +73,91 @@ pub async fn fetch_org_id(cookie_header: &str) -> Result<String> {
     let orgs: Vec<serde_json::Value> = serde_json::from_str(&body)
         .map_err(|e| anyhow::anyhow!("failed to parse organizations response: {} | body: {}", e, &body[..body.len().min(300)]))?;
 
-    let org_id = orgs
-        .first()
-        .and_then(|org| org.get("uuid"))
-        .and_then(|uuid| uuid.as_str())
-        .ok_or_else(|| anyhow::anyhow!("no organizations found for this account"))?;
+    select_org_id(&orgs, preferred_org)
+        .ok_or_else(|| anyhow::anyhow!("no organizations found for this account"))
+}
 
-    Ok(org_id.to_string())
+/// Choose which organization to monitor from the `/api/organizations` response.
+///
+/// Preference order: the `preferred_org` UUID (the `lastActiveOrg` cookie the chat
+/// frontend uses) → the first org advertising a `chat` capability (skips API-only
+/// orgs that 403 on `/usage`) → the first org of any kind.
+fn select_org_id(orgs: &[serde_json::Value], preferred_org: Option<&str>) -> Option<String> {
+    let uuid_of = |org: &serde_json::Value| -> Option<String> {
+        org.get("uuid").and_then(|u| u.as_str()).map(str::to_string)
+    };
+
+    if let Some(pref) = preferred_org.filter(|p| !p.is_empty()) {
+        if let Some(org_id) = orgs.iter().filter_map(uuid_of).find(|u| u == pref) {
+            return Some(org_id);
+        }
+    }
+
+    let has_chat_capability = |org: &serde_json::Value| -> bool {
+        org.get("capabilities")
+            .and_then(|c| c.as_array())
+            .map(|caps| caps.iter().any(|c| c.as_str() == Some("chat")))
+            .unwrap_or(false)
+    };
+    if let Some(org_id) = orgs.iter().find(|o| has_chat_capability(o)).and_then(uuid_of) {
+        return Some(org_id);
+    }
+
+    orgs.first().and_then(uuid_of)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn prefers_last_active_org_cookie() {
+        let orgs = vec![
+            json!({"uuid": "api-org", "capabilities": ["api"]}),
+            json!({"uuid": "chat-org", "capabilities": ["chat"]}),
+        ];
+        assert_eq!(
+            select_org_id(&orgs, Some("api-org")).as_deref(),
+            Some("api-org")
+        );
+    }
+
+    #[test]
+    fn skips_api_only_org_when_no_preference() {
+        let orgs = vec![
+            json!({"uuid": "api-org", "capabilities": ["api"]}),
+            json!({"uuid": "chat-org", "capabilities": ["chat", "claude_pro"]}),
+        ];
+        assert_eq!(
+            select_org_id(&orgs, None).as_deref(),
+            Some("chat-org")
+        );
+    }
+
+    #[test]
+    fn ignores_empty_or_unmatched_preference() {
+        let orgs = vec![
+            json!({"uuid": "api-org", "capabilities": ["api"]}),
+            json!({"uuid": "chat-org", "capabilities": ["chat"]}),
+        ];
+        assert_eq!(select_org_id(&orgs, Some("")).as_deref(), Some("chat-org"));
+        assert_eq!(select_org_id(&orgs, Some("nope")).as_deref(), Some("chat-org"));
+    }
+
+    #[test]
+    fn falls_back_to_first_org_without_capabilities() {
+        let orgs = vec![
+            json!({"uuid": "first"}),
+            json!({"uuid": "second"}),
+        ];
+        assert_eq!(select_org_id(&orgs, None).as_deref(), Some("first"));
+    }
+
+    #[test]
+    fn none_when_empty() {
+        assert_eq!(select_org_id(&[], None), None);
+    }
 }
 
 /// Fetch usage data from the Claude.ai API using stored session cookies.
