@@ -124,7 +124,7 @@ impl Config {
     pub fn config_dir() -> anyhow::Result<PathBuf> {
         let dir = dirs::config_dir()
             .ok_or_else(|| anyhow::anyhow!("Failed to get config directory"))?
-            .join("claude-notify");
+            .join("claudar");
         Ok(dir)
     }
 

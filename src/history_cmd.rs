@@ -1,6 +1,6 @@
 use crate::cli::HistoryView;
-use claude_notify_core::config::Config;
-use claude_notify_core::history::{self, HistoryRecord, PredictionSource};
+use claudar_core::config::Config;
+use claudar_core::history::{self, HistoryRecord, PredictionSource};
 use chrono::{DateTime, Local, Utc};
 use colored::Colorize;
 
@@ -17,7 +17,7 @@ pub fn run_history(
             "ℹ".bright_black()
         );
         println!("Enable it with:");
-        println!("  claude-notify config set history.enabled true");
+        println!("  claudar config set history.enabled true");
         return Ok(());
     }
 
@@ -29,7 +29,7 @@ pub fn run_history(
             let matching: Vec<_> = instances.into_iter().filter(|i| i.name == *name).collect();
             if matching.is_empty() {
                 anyhow::bail!(
-                    "Instance '{}' not found. Use 'claude-notify instances list' to see configured instances.",
+                    "Instance '{}' not found. Use 'claudar instances list' to see configured instances.",
                     name
                 );
             }

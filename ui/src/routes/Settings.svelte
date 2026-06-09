@@ -400,7 +400,7 @@
           <div class="toggle-row">
             <div>
               <span class="toggle-label">Open at login</span>
-              <p class="hint">Automatically launch Claude Notify when you sign in.</p>
+              <p class="hint">Automatically launch Claudar when you sign in.</p>
             </div>
             <button
               class="switch"
@@ -424,7 +424,7 @@
             <div>
               <span class="toggle-label">Show menu bar icon</span>
               <p class="hint">
-                Add a Claude Notify icon to the menu bar. Click it for an at-a-glance
+                Add a Claudar icon to the menu bar. Click it for an at-a-glance
                 dropdown of your 5-hour and 7-day usage and reset times.
               </p>
             </div>

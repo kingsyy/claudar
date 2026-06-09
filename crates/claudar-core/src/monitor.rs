@@ -95,9 +95,9 @@ fn get_current_time_formatted_full(tz: &str) -> String {
 
 pub async fn run_monitor(foreground: bool) -> anyhow::Result<()> {
     if foreground {
-        tracing::info!("Starting claude-notify monitor in foreground mode");
+        tracing::info!("Starting claudar monitor in foreground mode");
     } else {
-        tracing::info!("Starting claude-notify monitor in background mode");
+        tracing::info!("Starting claudar monitor in background mode");
     }
 
     let config = Config::load()?;

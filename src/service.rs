@@ -151,7 +151,7 @@ pub fn stop_service() -> anyhow::Result<()> {
 #[cfg(target_os = "macos")]
 fn get_launchd_plist_path() -> anyhow::Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?;
-    Ok(home.join("Library/LaunchAgents/com.claude-notify.plist"))
+    Ok(home.join("Library/LaunchAgents/com.claudar.plist"))
 }
 
 #[cfg(target_os = "macos")]
@@ -171,7 +171,7 @@ fn install_launchd_service() -> anyhow::Result<()> {
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.claude-notify</string>
+    <string>com.claudar</string>
     <key>ProgramArguments</key>
     <array>
         <string>{}</string>
@@ -182,9 +182,9 @@ fn install_launchd_service() -> anyhow::Result<()> {
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/claude-notify.log</string>
+    <string>/tmp/claudar.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/claude-notify.error.log</string>
+    <string>/tmp/claudar.error.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
@@ -200,7 +200,7 @@ fn install_launchd_service() -> anyhow::Result<()> {
     std::fs::write(&plist_path, plist_content)?;
 
     println!("✓ Service installed at {}", plist_path.display());
-    println!("  Use 'claude-notify start' to start the service");
+    println!("  Use 'claudar start' to start the service");
 
     Ok(())
 }
@@ -229,7 +229,7 @@ fn start_launchd_service() -> anyhow::Result<()> {
 
     if !plist_path.exists() {
         return Err(anyhow::anyhow!(
-            "Service is not installed. Run 'claude-notify setup-service' first."
+            "Service is not installed. Run 'claudar setup-service' first."
         ));
     }
 
@@ -243,8 +243,8 @@ fn start_launchd_service() -> anyhow::Result<()> {
     }
 
     println!("✓ Service started");
-    println!("  Logs: /tmp/claude-notify.log");
-    println!("  Errors: /tmp/claude-notify.error.log");
+    println!("  Logs: /tmp/claudar.log");
+    println!("  Errors: /tmp/claudar.error.log");
 
     Ok(())
 }
@@ -285,13 +285,13 @@ fn is_launchd_service_running() -> anyhow::Result<bool> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.contains("com.claude-notify"))
+    Ok(stdout.contains("com.claudar"))
 }
 
 #[cfg(target_os = "linux")]
 fn get_systemd_unit_path() -> anyhow::Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?;
-    Ok(home.join(".config/systemd/user/claude-notify.service"))
+    Ok(home.join(".config/systemd/user/claudar.service"))
 }
 
 #[cfg(target_os = "linux")]
@@ -331,8 +331,8 @@ WantedBy=default.target
         .output()?;
 
     println!("✓ Service installed at {}", unit_path.display());
-    println!("  Use 'claude-notify start' to start the service");
-    println!("  Use 'systemctl --user enable claude-notify' to enable at boot");
+    println!("  Use 'claudar start' to start the service");
+    println!("  Use 'systemctl --user enable claudar' to enable at boot");
 
     Ok(())
 }
@@ -344,7 +344,7 @@ fn uninstall_systemd_service() -> anyhow::Result<()> {
     // Stop and disable the service first
     let _ = stop_systemd_service();
     let _ = Command::new("systemctl")
-        .args(&["--user", "disable", "claude-notify"])
+        .args(&["--user", "disable", "claudar"])
         .output();
 
     // Remove unit file
@@ -369,12 +369,12 @@ fn start_systemd_service() -> anyhow::Result<()> {
 
     if !unit_path.exists() {
         return Err(anyhow::anyhow!(
-            "Service is not installed. Run 'claude-notify setup-service' first."
+            "Service is not installed. Run 'claudar setup-service' first."
         ));
     }
 
     let output = Command::new("systemctl")
-        .args(&["--user", "start", "claude-notify"])
+        .args(&["--user", "start", "claudar"])
         .output()?;
 
     if !output.status.success() {
@@ -383,8 +383,8 @@ fn start_systemd_service() -> anyhow::Result<()> {
     }
 
     println!("✓ Service started");
-    println!("  Use 'systemctl --user status claude-notify' to check status");
-    println!("  Use 'journalctl --user -u claude-notify -f' to view logs");
+    println!("  Use 'systemctl --user status claudar' to check status");
+    println!("  Use 'journalctl --user -u claudar -f' to view logs");
 
     Ok(())
 }
@@ -398,7 +398,7 @@ fn stop_systemd_service() -> anyhow::Result<()> {
     }
 
     let output = Command::new("systemctl")
-        .args(&["--user", "stop", "claude-notify"])
+        .args(&["--user", "stop", "claudar"])
         .output()?;
 
     if !output.status.success() {
@@ -414,7 +414,7 @@ fn stop_systemd_service() -> anyhow::Result<()> {
 #[cfg(target_os = "linux")]
 fn is_systemd_service_running() -> anyhow::Result<bool> {
     let output = Command::new("systemctl")
-        .args(&["--user", "is-active", "claude-notify"])
+        .args(&["--user", "is-active", "claudar"])
         .output()?;
 
     // is-active returns 0 (success) if the service is active, non-zero otherwise

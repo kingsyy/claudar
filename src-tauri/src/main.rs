@@ -5,7 +5,7 @@ mod commands;
 mod monitor_loop;
 mod tauri_notifier;
 
-use claude_notify_core::config::Config;
+use claudar_core::config::Config;
 use std::collections::HashMap;
 use tauri::{tray::TrayIconBuilder, Manager};
 

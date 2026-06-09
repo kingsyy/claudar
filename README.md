@@ -1,10 +1,10 @@
-# Claude Notify
+# Claudar
 
 A "lightweight" Rust daemon that monitors your Claude.ai usage limits and sends native desktop notifications when approaching rate limits.
 
 ## Why This Tool?
 
-Claude Code's built-in `/usage` command only shows locally tracked usage, which is inaccurate if you use Claude across multiple machines or browser sessions with the same account. Claude Notify fetches your **actual usage data directly from claude.ai** via authenticated browser requests, giving you an accurate, real-time view of your rate limits regardless of how many devices you use.
+Claude Code's built-in `/usage` command only shows locally tracked usage, which is inaccurate if you use Claude across multiple machines or browser sessions with the same account. Claudar fetches your **actual usage data directly from claude.ai** via authenticated browser requests, giving you an accurate, real-time view of your rate limits regardless of how many devices you use.
 
 ## Features
 
@@ -18,14 +18,14 @@ Claude Code's built-in `/usage` command only shows locally tracked usage, which 
 
 ## Download & Install (Recommended)
 
-1. Go to [Releases](https://github.com/kingsyy/claude-notify/releases) and download the file for your system.
-2. macOS: open `claude-notify-macos.dmg`, then run `claude-notify` from the window that opens.
-3. Linux: run `chmod +x claude-notify-linux`, then run `./claude-notify-linux`.
-4. Windows: download `claude-notify-windows.exe` and run it from a terminal.
+1. Go to [Releases](https://github.com/kingsyy/claudar/releases) and download the file for your system.
+2. macOS: open `claudar-macos.dmg`, then run `claudar` from the window that opens.
+3. Linux: run `chmod +x claudar-linux`, then run `./claudar-linux`.
+4. Windows: download `claudar-windows.exe` and run it from a terminal.
 5. Run the setup wizard:
 
 ```bash
-claude-notify setup
+claudar setup
 ```
 
 ## Build from Source
@@ -39,8 +39,8 @@ claude-notify setup
 
 ```bash
 # Clone the repository
-git clone https://github.com/kingsyy/claude-notify.git
-cd claude-notify
+git clone https://github.com/kingsyy/claudar.git
+cd claudar
 
 # Build the project
 cargo build --release
@@ -53,14 +53,14 @@ cargo install --path .
 
 ```bash
 # 1. Run the setup wizard
-claude-notify setup
+claudar setup
 
 # 2. Check your current usage
-claude-notify usage
+claudar usage
 
 # 3. Install as background service (optional)
-claude-notify setup-service
-claude-notify start
+claudar setup-service
+claudar start
 ```
 
 ## Setup
@@ -68,7 +68,7 @@ claude-notify start
 Run the interactive setup wizard:
 
 ```bash
-claude-notify setup
+claudar setup
 ```
 
 The setup wizard will:
@@ -85,60 +85,60 @@ The setup wizard will:
 
 ```bash
 # View current Claude API usage with progress bars
-claude-notify usage
+claudar usage
 
 # View with verbose debug output
-claude-notify usage --verbose
+claudar usage --verbose
 ```
 
 ### Check Service Status
 
 ```bash
 # View service status, configuration, and session info
-claude-notify status
+claudar status
 ```
 
 ### Monitor in Foreground
 
 ```bash
 # Run monitor in foreground (shows logs, press Ctrl+C to stop)
-claude-notify run
+claudar run
 
 # Run with verbose output
-claude-notify run --verbose
+claudar run --verbose
 ```
 
 ### Install as Background Service
 
 ```bash
 # Install as system service (launchd on macOS, systemd on Linux)
-claude-notify setup-service
+claudar setup-service
 
 # Start the background service
-claude-notify start
+claudar start
 
 # Stop the background service
-claude-notify stop
+claudar stop
 
 # Uninstall the service
-claude-notify uninstall-service
+claudar uninstall-service
 ```
 
-**Note**: After installing as a service, it will automatically start monitoring in the background. On macOS, logs are written to `/tmp/claude-notify.log` and `/tmp/claude-notify.error.log`.
+**Note**: After installing as a service, it will automatically start monitoring in the background. On macOS, logs are written to `/tmp/claudar.log` and `/tmp/claudar.error.log`.
 
 ### Manage Configuration
 
 ```bash
 # List all configuration values
-claude-notify config list
+claudar config list
 
 # Get a specific configuration value
-claude-notify config get general.poll_interval_seconds
+claudar config get general.poll_interval_seconds
 
 # Set a configuration value
-claude-notify config set general.poll_interval_seconds 600      # Poll every 10 minutes
-claude-notify config set thresholds.five_hour 50,75,90,95       # Custom thresholds
-claude-notify config set notifications.sound false              # Disable sounds
+claudar config set general.poll_interval_seconds 600      # Poll every 10 minutes
+claudar config set thresholds.five_hour 50,75,90,95       # Custom thresholds
+claudar config set notifications.sound false              # Disable sounds
 ```
 
 **Available configuration keys:**
@@ -156,43 +156,43 @@ claude-notify config set notifications.sound false              # Disable sounds
 
 **Note**: After changing configuration, restart the service if running in the background:
 ```bash
-claude-notify stop
-claude-notify start
+claudar stop
+claudar start
 ```
 
 ### Multiple Accounts
 
-Monitor multiple Claude accounts simultaneously (e.g., work and personal). Each instance has its own session credentials and notification state, stored separately under `~/.config/claude-notify/sessions/` and `~/.config/claude-notify/state/`.
+Monitor multiple Claude accounts simultaneously (e.g., work and personal). Each instance has its own session credentials and notification state, stored separately under `~/.config/claudar/sessions/` and `~/.config/claudar/state/`.
 
 ```bash
 # Add instances
-claude-notify instances add work
-claude-notify instances add personal
+claudar instances add work
+claudar instances add personal
 
 # List configured instances
-claude-notify instances list
+claudar instances list
 
 # Set up each instance (opens Chrome for login)
-claude-notify setup --instance work
-claude-notify setup --instance personal
+claudar setup --instance work
+claudar setup --instance personal
 
 # View usage for all instances at once
-claude-notify usage
+claudar usage
 
 # View usage for a specific instance
-claude-notify usage --instance work
+claudar usage --instance work
 
 # Remove an instance (deletes its session and state files)
-claude-notify instances remove work
+claudar instances remove work
 ```
 
-When running as a background service or in foreground mode (`claude-notify run`), all configured instances are monitored in each polling cycle. Notifications include the instance name as a prefix so you can tell which account they refer to.
+When running as a background service or in foreground mode (`claudar run`), all configured instances are monitored in each polling cycle. Notifications include the instance name as a prefix so you can tell which account they refer to.
 
 If no instances are configured, a single "default" instance is used automatically — no changes needed for single-account setups.
 
 ## Configuration
 
-Configuration is stored at: `~/.config/claude-notify/config.toml`
+Configuration is stored at: `~/.config/claudar/config.toml`
 
 Default settings:
 ```toml
@@ -212,8 +212,8 @@ notify_predicted_overage = true
 notify_resets = true
 ```
 
-Session data is stored at: `~/.config/claude-notify/sessions/`
-Monitor state is stored at: `~/.config/claude-notify/state/`
+Session data is stored at: `~/.config/claudar/sessions/`
+Monitor state is stored at: `~/.config/claudar/state/`
 
 ## How It Works
 
@@ -246,7 +246,7 @@ The monitor maintains state to avoid duplicate notifications and automatically c
 
 ## Security
 
-Session cookies are stored in plaintext JSON files in `~/.config/claude-notify/sessions/`. These files contain authentication tokens that grant access to your Claude.ai account. Ensure appropriate file permissions are set on this directory.
+Session cookies are stored in plaintext JSON files in `~/.config/claudar/sessions/`. These files contain authentication tokens that grant access to your Claude.ai account. Ensure appropriate file permissions are set on this directory.
 
 ## Troubleshooting
 
@@ -259,7 +259,7 @@ Session cookies are stored in plaintext JSON files in `~/.config/claude-notify/s
 - Ensure you have an active Claude.ai account
 
 ### Cookies expire
-- Re-run `claude-notify setup` to refresh your session
+- Re-run `claudar setup` to refresh your session
 
 ## Development
 

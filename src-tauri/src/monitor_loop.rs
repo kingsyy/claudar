@@ -1,5 +1,5 @@
 use crate::tauri_notifier::TauriNotificationSender;
-use claude_notify_core::{
+use claudar_core::{
     config::Config,
     monitor::{poll_instance, UsagePayload},
     usage_fetcher::AuthRequiredError,
@@ -235,7 +235,7 @@ pub fn build_tray_menu<R: Runtime, M: Manager<R>>(
     menu.append(&MenuItem::with_id(
         manager,
         "tray_header",
-        "Claude Notify",
+        "Claudar",
         false,
         None::<&str>,
     )?)?;

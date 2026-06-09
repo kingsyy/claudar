@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Claude Notify",
+  "productName": "Claudar",
   "version": "0.1.0",
-  "identifier": "com.avr.claude-notify",
+  "identifier": "com.avr.claudar",
   "build": {
     "frontendDist": "../ui/dist",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Claude Notify",
+        "title": "Claudar",
         "width": 1120,
         "height": 760,
         "minWidth": 960,

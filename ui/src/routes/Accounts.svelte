@@ -116,7 +116,7 @@
     <div class="header-row">
       <div>
         <h1>Accounts</h1>
-        <p class="subtitle">Manage the Claude.ai accounts Claude Notify monitors.</p>
+        <p class="subtitle">Manage the Claude.ai accounts Claudar monitors.</p>
       </div>
       <button class="primary" onclick={startAddAccount} disabled={addingName}>
         + Add account

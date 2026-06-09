@@ -1,8 +1,8 @@
 [package]
-name = "claude-notify-app"
+name = "claudar-app"
 version = "0.1.0"
 edition = "2021"
-description = "Claude Notify — desktop GUI for monitoring Claude.ai usage limits"
+description = "Claudar — desktop GUI for monitoring Claude.ai usage limits"
 license = "MIT"
 
 [build-dependencies]
@@ -15,7 +15,7 @@ tauri-plugin-notification = "2"
 tauri-plugin-window-state = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-claude-notify-core = { path = "../crates/claude-notify-core" }
+claudar-core = { path = "../crates/claudar-core" }
 tokio = { version = "1.42", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"

@@ -17,7 +17,7 @@ pub struct SessionData {
 impl SessionData {
     pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
         if !path.exists() {
-            anyhow::bail!("Session file not found. Please run 'claude-notify setup' first.");
+            anyhow::bail!("Session file not found. Please run 'claudar setup' first.");
         }
 
         let content = std::fs::read_to_string(path)?;
@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn load_nonexistent_file_errors() {
-        let path = PathBuf::from("/tmp/nonexistent-claude-notify-test.json");
+        let path = PathBuf::from("/tmp/nonexistent-claudar-test.json");
         assert!(SessionData::load(&path).is_err());
     }
 }

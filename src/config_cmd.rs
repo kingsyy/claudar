@@ -1,5 +1,5 @@
-use claude_notify_core::config::Config;
-use claude_notify_core::time_format;
+use claudar_core::config::Config;
+use claudar_core::time_format;
 use anyhow::{anyhow, Context, Result};
 
 pub fn handle_config_list() -> Result<()> {
@@ -215,7 +215,7 @@ pub fn handle_config_set(key: &str, value: &str) -> Result<()> {
     config.save()?;
     println!("✓ Updated {} = {}", key, value);
     println!("\nNote: If the monitor service is running, restart it for changes to take effect:");
-    println!("  claude-notify stop && claude-notify start");
+    println!("  claudar stop && claudar start");
 
     Ok(())
 }
@@ -308,8 +308,8 @@ pub fn handle_instances_list() -> Result<()> {
     if config.instances.is_empty() {
         println!("No instances configured (using single default instance).");
         println!("\nTo add instances:");
-        println!("  claude-notify instances add personal");
-        println!("  claude-notify instances add work");
+        println!("  claudar instances add personal");
+        println!("  claudar instances add work");
         return Ok(());
     }
 
@@ -340,12 +340,12 @@ pub fn handle_instances_add(name: &str) -> Result<()> {
         return Err(anyhow!("Instance '{}' already exists", name));
     }
 
-    config.instances.push(claude_notify_core::config::InstanceConfig { name: name.to_string() });
+    config.instances.push(claudar_core::config::InstanceConfig { name: name.to_string() });
     config.save()?;
 
     println!("✓ Added instance '{}'", name);
     println!("\nNext step: Run setup for this instance:");
-    println!("  claude-notify setup --instance {}", name);
+    println!("  claudar setup --instance {}", name);
 
     Ok(())
 }

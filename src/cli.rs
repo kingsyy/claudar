@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(name = "claude-notify")]
+#[command(name = "claudar")]
 #[command(about = "Monitor Claude Code usage and get notifications", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
@@ -44,10 +44,10 @@ pub enum Commands {
         - Thresholds for 5-hour and 7-day limits\n\
         - Notification preferences (sound, persistence, types)\n\n\
         EXAMPLES:\n  \
-        claude-notify config list\n  \
-        claude-notify config get general.poll_interval_seconds\n  \
-        claude-notify config set thresholds.five_hour 50,75,90,95\n  \
-        claude-notify config set notifications.sound false")]
+        claudar config list\n  \
+        claudar config get general.poll_interval_seconds\n  \
+        claudar config set thresholds.five_hour 50,75,90,95\n  \
+        claudar config set notifications.sound false")]
     Config {
         #[command(subcommand)]
         action: ConfigAction,
@@ -86,14 +86,14 @@ pub enum Commands {
     /// Requires `history.enabled = true` in config (opt-in).
     ///
     /// EXAMPLES:
-    ///   claude-notify history
-    ///   claude-notify history --instance work
-    ///   claude-notify history --view timeline
-    ///   claude-notify history --view windows
-    ///   claude-notify history --view daily
-    ///   claude-notify history --view predict
-    ///   claude-notify history --days 3
-    ///   claude-notify history --json
+    ///   claudar history
+    ///   claudar history --instance work
+    ///   claudar history --view timeline
+    ///   claudar history --view windows
+    ///   claudar history --view daily
+    ///   claudar history --view predict
+    ///   claudar history --days 3
+    ///   claudar history --json
     History {
         /// Show history for a specific instance
         #[arg(long)]
@@ -179,7 +179,7 @@ pub enum ConfigAction {
         notifications.minutes_before_five_hour_reset     - Alert X min before 5-hour reset (default: disabled)\n  \
         notifications.minutes_before_seven_day_reset     - Alert X min before 7-day reset (default: disabled)\n\n\
         EXAMPLE:\n  \
-        claude-notify config get general.poll_interval_seconds")]
+        claudar config get general.poll_interval_seconds")]
     Get {
         /// Configuration key (e.g., "general.poll_interval_seconds")
         key: String,
@@ -203,12 +203,12 @@ pub enum ConfigAction {
         Thresholds:  50,70,90 (comma-separated, no spaces)\n  \
         Booleans:    true/false, yes/no, 1/0, on/off\n\n\
         EXAMPLES:\n  \
-        claude-notify config set general.poll_interval_seconds 600\n  \
-        claude-notify config set thresholds.five_hour 50,75,90,95\n  \
-        claude-notify config set notifications.sound false\n  \
-        claude-notify config set notifications.minutes_before_five_hour_reset 30\n\n\
+        claudar config set general.poll_interval_seconds 600\n  \
+        claudar config set thresholds.five_hour 50,75,90,95\n  \
+        claudar config set notifications.sound false\n  \
+        claudar config set notifications.minutes_before_five_hour_reset 30\n\n\
         NOTE: Restart the service after changing config:\n  \
-        claude-notify stop && claude-notify start")]
+        claudar stop && claudar start")]
     Set {
         /// Configuration key (e.g., "general.poll_interval_seconds")
         key: String,

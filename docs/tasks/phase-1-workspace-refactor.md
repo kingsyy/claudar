@@ -4,12 +4,12 @@
 
 ## Goal
 
-Convert the project to a Cargo workspace with a `claude-notify-core` library crate, and — as part of that refactor — replace the `headless_chrome` usage in the polling path with plain `reqwest` calls. The `headless_chrome` crate is removed from the project entirely. The CLI keeps working identically. This unblocks the Tauri app from sharing all core logic without carrying in a browser dependency.
+Convert the project to a Cargo workspace with a `claudar-core` library crate, and — as part of that refactor — replace the `headless_chrome` usage in the polling path with plain `reqwest` calls. The `headless_chrome` crate is removed from the project entirely. The CLI keeps working identically. This unblocks the Tauri app from sharing all core logic without carrying in a browser dependency.
 
 ## In scope
 
-- Add a top-level `Cargo.toml` declaring a workspace with members: `crates/claude-notify-core`, the CLI bin (root `src/` or `crates/claude-notify-cli`), and a stub `src-tauri/` placeholder (added properly in Phase 2)
-- Create `crates/claude-notify-core/` as a `lib` crate; move all existing `src/` modules into it
+- Add a top-level `Cargo.toml` declaring a workspace with members: `crates/claudar-core`, the CLI bin (root `src/` or `crates/claudar-cli`), and a stub `src-tauri/` placeholder (added properly in Phase 2)
+- Create `crates/claudar-core/` as a `lib` crate; move all existing `src/` modules into it
 - Replace `browser_auth.rs`'s polling logic with a new `usage_fetcher.rs` (or equivalent) that uses `reqwest` to call the Claude.ai usage endpoint directly with the session cookies loaded from `sessions/{instance}.json`
   - The cookie file format stays the same; only the transport changes (reqwest, not a Chrome tab)
   - On HTTP 401 or a Cloudflare challenge response, return an `AuthRequired` error variant instead of crashing
@@ -43,10 +43,10 @@ Session cookies are read from `sessions/{instance}.json` on each fetch (or cache
 
 - [ ] `cargo build` at workspace root succeeds; no `headless_chrome` in the dependency tree (`cargo tree | grep headless` returns nothing)
 - [ ] `cargo test` passes all existing tests
-- [ ] `claude-notify monitor` fetches real usage data via `reqwest` and fires notifications as before
-- [ ] `claude-notify usage` displays correct data (same output as before the refactor)
+- [ ] `claudar monitor` fetches real usage data via `reqwest` and fires notifications as before
+- [ ] `claudar usage` displays correct data (same output as before the refactor)
 - [ ] A 401 or blocked response from the API produces a log warning rather than a panic or crash
-- [ ] No `eprintln!`/`println!` remain in `claude-notify-core`
+- [ ] No `eprintln!`/`println!` remain in `claudar-core`
 
 ## Design references
 

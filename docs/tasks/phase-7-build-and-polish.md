@@ -17,7 +17,7 @@ Produce an installable, distributable app. Tray icon colour variants are wired u
 - **macOS build verified locally**: `cargo tauri build` produces a `.dmg` that installs and runs correctly on the developer's machine
 - **Linux/Windows build documented**: CI matrix or manual cross-compile steps written up in `docs/building.md` (or `CONTRIBUTING.md`); not required to run in CI this phase
 - **Window behaviour polish**: confirm window remembers its last position and size across launches (Tauri window state plugin, or `tauri.conf.json` `saveWindowState` if supported)
-- **App name and bundle identifier** set correctly in `tauri.conf.json` (`claude-notify`, reverse-DNS bundle ID)
+- **App name and bundle identifier** set correctly in `tauri.conf.json` (`claudar`, reverse-DNS bundle ID)
 - **`cargo tauri build` with `--release`** produces a working binary with no debug assertions
 
 ## Out of scope

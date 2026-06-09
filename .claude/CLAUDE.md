@@ -1,4 +1,4 @@
-# Claude Notify - Developer Guide
+# Claudar - Developer Guide
 
 ## Project Overview
 
@@ -34,9 +34,9 @@ src/
 
 ## Data Storage
 
-- Config: `~/.config/claude-notify/config.toml`
-- Sessions: `~/.config/claude-notify/sessions/{instance}.json`
-- State: `~/.config/claude-notify/state/{instance}.json`
+- Config: `~/.config/claudar/config.toml`
+- Sessions: `~/.config/claudar/sessions/{instance}.json`
+- State: `~/.config/claudar/state/{instance}.json`
 
 ## Building & Testing
 

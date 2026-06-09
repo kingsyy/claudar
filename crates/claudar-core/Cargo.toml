@@ -1,8 +1,8 @@
 [package]
-name = "claude-notify-core"
+name = "claudar-core"
 version = "0.3.0"
 edition = "2021"
-description = "Core library for claude-notify: monitoring, usage fetching, config, and notifications"
+description = "Core library for claudar: monitoring, usage fetching, config, and notifications"
 license = "MIT"
 
 [dependencies]

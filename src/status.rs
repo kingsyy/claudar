@@ -1,10 +1,10 @@
-use claude_notify_core::config::Config;
-use claude_notify_core::storage::SessionData;
+use claudar_core::config::Config;
+use claudar_core::storage::SessionData;
 use crate::service;
 use colored::Colorize;
 
 pub fn run_status(_verbose: bool) -> anyhow::Result<()> {
-    println!("\n{}", "Claude Notify Status".bold());
+    println!("\n{}", "Claudar Status".bold());
     println!("{}", "━".repeat(50));
     println!();
 
@@ -53,10 +53,10 @@ fn display_service_status() -> anyhow::Result<()> {
         println!("  Status:     {} {}", "●".green(), "Running".green().bold());
     } else if installed {
         println!("  Status:     {} {}", "○".yellow(), "Stopped".yellow());
-        println!("  {}  Run 'claude-notify start' to start the service", "💡".bright_blue());
+        println!("  {}  Run 'claudar start' to start the service", "💡".bright_blue());
     } else {
         println!("  Status:     {} {}", "○".bright_black(), "Not installed".bright_black());
-        println!("  {}  Run 'claude-notify setup-service' to install", "💡".bright_blue());
+        println!("  {}  Run 'claudar setup-service' to install", "💡".bright_blue());
     }
 
     if installed {
@@ -108,7 +108,7 @@ fn display_configuration() -> anyhow::Result<()> {
     println!("    Resets:               {}", format_bool(config.notifications.notify_resets));
 
     println!();
-    println!("  {}  Use 'claude-notify config' to modify settings", "💡".bright_blue());
+    println!("  {}  Use 'claudar config' to modify settings", "💡".bright_blue());
 
     Ok(())
 }
@@ -140,9 +140,9 @@ fn display_session_info() -> anyhow::Result<()> {
             }
             Err(_) => {
                 let setup_hint = if show_labels {
-                    format!("claude-notify setup --instance {}", instance.name)
+                    format!("claudar setup --instance {}", instance.name)
                 } else {
-                    "claude-notify setup".to_string()
+                    "claudar setup".to_string()
                 };
                 println!("{}Status:          {} {}", indent, "✗".red(), "Not authenticated".red());
                 println!("{}{}  Run '{}' to authenticate", indent, "💡".bright_blue(), setup_hint);

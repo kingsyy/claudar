@@ -6,9 +6,9 @@
 
 | Component | Responsibility |
 |-----------|---------------|
-| `claude-notify-core` (Rust lib) | All existing logic: monitor loop, usage fetcher (reqwest), config, history, storage, notifications, state |
-| `claude-notify` (CLI bin) | Existing CLI surface — kept for power users and debugging; thin shell over core |
-| `claude-notify-app` (Tauri bin) | Tauri entry point: starts webview, registers commands, spawns monitor task, manages tray |
+| `claudar-core` (Rust lib) | All existing logic: monitor loop, usage fetcher (reqwest), config, history, storage, notifications, state |
+| `claudar` (CLI bin) | Existing CLI surface — kept for power users and debugging; thin shell over core |
+| `claudar-app` (Tauri bin) | Tauri entry point: starts webview, registers commands, spawns monitor task, manages tray |
 | Svelte 5 frontend | All UI: onboarding wizard, dashboard, history, settings, accounts |
 | System tray | TrayIcon with status icon + context menu (Show Window, Open at Login toggle, Quit) |
 
@@ -17,7 +17,7 @@
 ## Process Model
 
 ```
-claude-notify-app (single OS process)
+claudar-app (single OS process)
 ├── main thread: Tauri event loop
 │   ├── WebviewWindow "main"   ←→  Svelte frontend
 │   └── TrayIcon
@@ -139,10 +139,10 @@ Svelte History view mounts
 ## Cargo Workspace Layout
 
 ```
-claude-notify/
+claudar/
 ├── Cargo.toml                  # [workspace] members = [...]
 ├── crates/
-│   └── claude-notify-core/     # lib crate — all existing src/ modules
+│   └── claudar-core/     # lib crate — all existing src/ modules
 │       ├── Cargo.toml
 │       └── src/
 │           ├── lib.rs
@@ -156,7 +156,7 @@ claude-notify/
 │   └── main.rs
 ├── Cargo.toml                  # existing bin manifest → points to core lib
 └── src-tauri/                  # NEW: Tauri app
-    ├── Cargo.toml              # depends on claude-notify-core
+    ├── Cargo.toml              # depends on claudar-core
     ├── src/
     │   ├── main.rs             # Tauri entry, register commands, spawn monitor task
     │   └── commands.rs         # all #[tauri::command] fns

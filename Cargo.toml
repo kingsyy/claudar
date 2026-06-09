@@ -1,24 +1,24 @@
 [workspace]
 members = [
     ".",
-    "crates/claude-notify-core",
+    "crates/claudar-core",
     "src-tauri",
 ]
 resolver = "2"
 
 [package]
-name = "claude-notify"
+name = "claudar"
 version = "0.3.0"
 edition = "2021"
 description = "Monitor your Claude.ai usage limits and get native desktop notifications before hitting rate limits"
 license = "MIT"
-repository = "https://github.com/kingsyy/claude-notify"
+repository = "https://github.com/kingsyy/claudar"
 authors = ["kingsyy"]
 keywords = ["claude", "monitoring", "notifications", "usage", "rate-limit"]
 categories = ["command-line-utilities"]
 
 [dependencies]
-claude-notify-core = { path = "crates/claude-notify-core" }
+claudar-core = { path = "crates/claudar-core" }
 tokio = { version = "1.42", features = ["full"] }
 reqwest = { version = "0.12", features = ["json", "cookies", "rustls-tls", "gzip", "brotli"], default-features = false }
 serde = { version = "1.0", features = ["derive"] }

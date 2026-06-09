@@ -1,6 +1,6 @@
 # Phase 2 — Tauri App Skeleton
 
-**Depends on:** Phase 1 (workspace with `claude-notify-core` lib in place)
+**Depends on:** Phase 1 (workspace with `claudar-core` lib in place)
 
 ## Goal
 
@@ -9,7 +9,7 @@ Stand up the Tauri 2.0 application shell and the Svelte 5 frontend scaffold — 
 ## In scope
 
 - `src-tauri/` Tauri 2.0 application:
-  - `Cargo.toml` depending on `claude-notify-core`
+  - `Cargo.toml` depending on `claudar-core`
   - `main.rs` setting up the Tauri builder, registering the tray icon, and opening the main window
   - `tauri.conf.json` with window config (title, size, hidden titlebar or native as appropriate)
   - Tray icon with context menu: "Show Window" / "Hide Window" and "Quit" items

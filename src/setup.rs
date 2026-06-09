@@ -2,7 +2,7 @@
 /// (Phase 5). The CLI `setup` command is deprecated.
 ///
 /// To authenticate manually, create a session file at
-/// `~/.config/claude-notify/sessions/default.json` with the following structure:
+/// `~/.config/claudar/sessions/default.json` with the following structure:
 ///
 /// ```json
 /// {
@@ -22,7 +22,7 @@ pub fn run_setup(_verbose: bool, _instance_name: Option<String>) -> anyhow::Resu
     println!("The interactive setup wizard will be available in the GUI app (coming soon).");
     println!();
     println!("To set up manually, create a session file at:");
-    println!("  ~/.config/claude-notify/sessions/default.json");
+    println!("  ~/.config/claudar/sessions/default.json");
     println!();
     println!("Required fields:");
     println!("  org_id            — your Anthropic organization UUID");

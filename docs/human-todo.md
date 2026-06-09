@@ -1,4 +1,4 @@
-# Human to-do — Claude Notify GUI
+# Human to-do — Claudar GUI
 
 Tasks only you can do — external setup, credentials, platform config, decisions. agent-loop
 cannot do these. Clear the blocking ones before running the phase they gate.
@@ -23,7 +23,7 @@ cannot do these. Clear the blocking ones before running the phase they gate.
 
 ## Decisions you'll need to make
 
-- [ ] **CLI `setup` command**: with the new GUI, the old `claude-notify setup` command (which launched a visible Chrome window) is no longer needed by GUI users. Options: (a) remove it from the CLI, (b) keep it but mark it deprecated, (c) keep it working as-is. Which do you prefer?
+- [ ] **CLI `setup` command**: with the new GUI, the old `claudar setup` command (which launched a visible Chrome window) is no longer needed by GUI users. Options: (a) remove it from the CLI, (b) keep it but mark it deprecated, (c) keep it working as-is. Which do you prefer?
 - [ ] **Instance name for the default account**: the CLI uses `"default"` internally — confirm this carries forward as the display name in the wizard, or choose something friendlier (e.g. "My Claude account").
 - [ ] **Simultaneous CLI + GUI use**: running both the CLI daemon and the GUI app would double-notify. Do you want the GUI to detect and warn the user if a launchd service is already running, or just document it?
 - [ ] **Welcome copy**: the Step 1 headline and explanation in the wizard are placeholder language in the task file. If you have a preferred tone or specific wording, share it before Phase 5 runs — otherwise agent-loop will write reasonable copy and you can edit it after.

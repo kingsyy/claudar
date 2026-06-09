@@ -64,11 +64,11 @@
 
 ### Workspace: Cargo workspace with shared core library
 
-**Decided:** Extract `claude-notify-core` as a library crate; CLI and Tauri app both depend on it
+**Decided:** Extract `claudar-core` as a library crate; CLI and Tauri app both depend on it
 
 | Option | Pros | Cons |
 |--------|------|------|
-| **Cargo workspace + lib crate** ✅ | Clean separation, both CLI and GUI share logic, no duplication | Upfront refactor — move `src/` to `crates/claude-notify-core/src/` |
+| **Cargo workspace + lib crate** ✅ | Clean separation, both CLI and GUI share logic, no duplication | Upfront refactor — move `src/` to `crates/claudar-core/src/` |
 | Feature flags on single crate | Less refactor | Conditional compilation complexity, hard to maintain |
 | Fork/separate repo | Independent | Diverges immediately, loses shared history |
 
@@ -88,7 +88,7 @@
 | Homebrew service | Familiar to devs | GUI users don't use Homebrew |
 
 **Why:** Gives users a toggle in the UI. Works on all three target platforms. Official Tauri plugin — maintained by the Tauri team.  
-**Implication:** On macOS, test that `tauri-plugin-autostart` LaunchAgent doesn't conflict with any existing `claude-notify` launchd service the user may have installed via the CLI.
+**Implication:** On macOS, test that `tauri-plugin-autostart` LaunchAgent doesn't conflict with any existing `claudar` launchd service the user may have installed via the CLI.
 
 ---
 
@@ -118,7 +118,7 @@
 | **In-app wizard** ✅ | Discoverable, no terminal needed, guided Chrome auth | Wizard must handle Chrome window opening visibly |
 | CLI `setup` command only | Already exists | Not discoverable from a GUI install |
 
-**Why:** Users who install the GUI app will not run `claude-notify setup` in a terminal. The wizard must work standalone.  
+**Why:** Users who install the GUI app will not run `claudar setup` in a terminal. The wizard must work standalone.  
 **Implication:** During auth step, Chrome opens as a visible window outside the Tauri app. The wizard shows a "waiting for login…" state with a spinner. This is intentional and expected (same mechanism as current `setup` command).
 
 ---
@@ -134,7 +134,7 @@
 | headless Chrome | Scriptable | Requires Chrome; accumulates code-signing clones on macOS (known bug) |
 
 **Why:** The user already confirmed that usage data fetches without issues — Cloudflare is lenient once valid session cookies exist. The OS webview is a real browser (not headless) and passes fingerprinting. Eliminating the `headless_chrome` crate shrinks the binary, removes the macOS clone-accumulation bug entirely, and means users do not need Chrome installed.  
-**Implication:** `browser_auth.rs` is split: the auth path becomes a Tauri `WebviewWindow` + cookie-extraction flow (lives in `src-tauri/`); the polling path becomes plain `reqwest` calls in `claude-notify-core`. The `headless_chrome` dependency is removed from the project entirely.
+**Implication:** `browser_auth.rs` is split: the auth path becomes a Tauri `WebviewWindow` + cookie-extraction flow (lives in `src-tauri/`); the polling path becomes plain `reqwest` calls in `claudar-core`. The `headless_chrome` dependency is removed from the project entirely.
 
 ---
 

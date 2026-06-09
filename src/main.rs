@@ -8,7 +8,7 @@ mod usage;
 
 use clap::Parser;
 use cli::{Cli, Commands, ConfigAction, InstancesAction};
-use claude_notify_core::{config, monitor, notification_trait};
+use claudar_core::{config, monitor, notification_trait};
 use notify_rust::Timeout;
 
 #[tokio::main]

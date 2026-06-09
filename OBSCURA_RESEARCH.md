@@ -1,6 +1,6 @@
 # Obscura Research: A Lightweight Alternative to Headless Chrome
 
-This document explores using [Obscura](https://github.com/h4ckf0r0day/obscura) (and other alternatives) as a replacement for `headless_chrome` in `claude-notify` to solve the process-bloat and macOS binary cloning issues.
+This document explores using [Obscura](https://github.com/h4ckf0r0day/obscura) (and other alternatives) as a replacement for `headless_chrome` in `claudar` to solve the process-bloat and macOS binary cloning issues.
 
 ## 1. What is Obscura?
 
@@ -21,7 +21,7 @@ Obscura is a Rust-native headless browser engine. Unlike `headless_chrome` (whic
 
 ## 2. The "Not Headless" Problem
 
-The current `claude-notify` flow relies on manual login via a visible Chrome window to capture cookies:
+The current `claudar` flow relies on manual login via a visible Chrome window to capture cookies:
 ```rust
 // src/browser_auth.rs
 pub fn login(&self, _email: &str) -> anyhow::Result<(String, Vec<(String, String)>)> {
@@ -39,7 +39,7 @@ Since Obscura is headless-only, it **cannot perform the initial login step** dir
 
 ### Solution A: Hybrid Approach (Recommended)
 Use Google Chrome *only* for the one-time `setup` command, and use Obscura for the background `monitor` service.
-- **Setup:** User runs `claude-notify setup`. The app launches real Chrome, user logs in, app saves cookies to `sessions/*.json`.
+- **Setup:** User runs `claudar setup`. The app launches real Chrome, user logs in, app saves cookies to `sessions/*.json`.
 - **Monitor:** The background daemon (Launchd/Systemd) uses Obscura. It injects the saved cookies into Obscura's V8 context and fetches the JSON.
 - **Benefit:** Stops 100% of background process bloat and clone accumulation.
 

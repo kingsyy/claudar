@@ -45,7 +45,7 @@ impl NotificationSender for RealNotificationSender {
         {
             let mut notification = Notification::new();
             notification
-                .appname("Claude Notify")
+                .appname("Claudar")
                 .summary(summary)
                 .body(body)
                 .timeout(timeout);

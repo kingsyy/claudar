@@ -1,8 +1,8 @@
-use claude_notify_core::config::Config;
-use claude_notify_core::pace;
-use claude_notify_core::storage::SessionData;
-use claude_notify_core::time_format;
-use claude_notify_core::usage_fetcher::{UsageResponse, fetch_usage};
+use claudar_core::config::Config;
+use claudar_core::pace;
+use claudar_core::storage::SessionData;
+use claudar_core::time_format;
+use claudar_core::usage_fetcher::{UsageResponse, fetch_usage};
 use chrono::{DateTime, Local, Utc};
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -27,7 +27,7 @@ pub async fn run_usage(verbose: bool, instance_filter: Option<String>) -> anyhow
             let matching: Vec<_> = instances.into_iter().filter(|i| i.name == *name).collect();
             if matching.is_empty() {
                 anyhow::bail!(
-                    "Instance '{}' not found. Use 'claude-notify instances list' to see configured instances.",
+                    "Instance '{}' not found. Use 'claudar instances list' to see configured instances.",
                     name
                 );
             }

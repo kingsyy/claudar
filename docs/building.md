@@ -1,4 +1,4 @@
-# Building Claude Notify
+# Building Claudar
 
 The GUI app is a Tauri 2.0 application (`src-tauri/`) with a Svelte frontend (`ui/`). Producing
 an installable build means running `cargo tauri build`, which compiles the Rust binary, bundles
@@ -23,8 +23,8 @@ cargo tauri build
 
 This produces, under `src-tauri/target/release/bundle/`:
 
-- `macos/Claude Notify.app` — the application bundle
-- `dmg/Claude Notify_<version>_<arch>.dmg` — the disk-image installer
+- `macos/Claudar.app` — the application bundle
+- `dmg/Claudar_<version>_<arch>.dmg` — the disk-image installer
 
 Open the `.dmg`, drag the app into `/Applications`, and launch it. No code signing or
 notarization is configured (out of scope for this phase) — Gatekeeper will warn on first launch;
@@ -59,8 +59,8 @@ cargo tauri build
 
 Output, under `src-tauri/target/release/bundle/`:
 
-- `appimage/claude-notify_<version>_<arch>.AppImage` — portable, run directly with `chmod +x` then execute
-- `deb/claude-notify_<version>_<arch>.deb` — install with `sudo dpkg -i <file>.deb`
+- `appimage/claudar_<version>_<arch>.AppImage` — portable, run directly with `chmod +x` then execute
+- `deb/claudar_<version>_<arch>.deb` — install with `sudo dpkg -i <file>.deb`
 
 ### CI matrix sketch
 
@@ -101,8 +101,8 @@ cargo tauri build
 
 Output, under `src-tauri\target\release\bundle\`:
 
-- `nsis\Claude Notify_<version>_<arch>-setup.exe` — NSIS installer (`.exe`)
-- `msi\Claude Notify_<version>_<arch>.msi` — MSI installer
+- `nsis\Claudar_<version>_<arch>-setup.exe` — NSIS installer (`.exe`)
+- `msi\Claudar_<version>_<arch>.msi` — MSI installer
 
 ### CI matrix sketch
 

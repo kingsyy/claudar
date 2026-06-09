@@ -1,5 +1,5 @@
 use crate::{chrome_auth, monitor_loop, tauri_notifier::TauriNotificationSender};
-use claude_notify_core::{
+use claudar_core::{
     config::{Config, InstanceConfig},
     history::{self, HistoryRecord},
     monitor::{poll_instance, UsagePayload},
@@ -303,12 +303,12 @@ pub fn set_tray_visible(app: AppHandle, visible: bool) -> Result<(), String> {
 /// Send a test notification to verify notification pipeline works.
 #[tauri::command]
 pub fn test_notification(app: AppHandle) -> Result<(), String> {
-    use claude_notify_core::notification_trait::NotificationSender;
+    use claudar_core::notification_trait::NotificationSender;
     use notify_rust::Timeout;
     let sender = TauriNotificationSender { app };
     sender
         .send(
-            "Claude Notify Test",
+            "Claudar Test",
             "This is a test notification. Your notification settings are working!",
             Timeout::Milliseconds(10000),
             true,

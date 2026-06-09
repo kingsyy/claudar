@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use claude_notify_core::storage::SessionData;
+use claudar_core::storage::SessionData;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use tokio_tungstenite::tungstenite::Message;

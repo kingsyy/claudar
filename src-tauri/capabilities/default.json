@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for claude-notify-app",
+  "description": "Default capability for claudar-app",
   "windows": ["main"],
   "permissions": [
     "core:default",

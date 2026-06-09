@@ -1,4 +1,4 @@
-use claude_notify_core::notification_trait::NotificationSender;
+use claudar_core::notification_trait::NotificationSender;
 use notify_rust::Timeout;
 use tauri::{AppHandle, Runtime};
 

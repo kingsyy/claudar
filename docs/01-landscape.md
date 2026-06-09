@@ -85,8 +85,8 @@ Embedded chosen: the daemon's whole purpose is to send notifications — those w
 
 | Approach | Pros | Cons |
 |----------|------|------|
-| **Cargo workspace: `claude-notify-core` lib + `claude-notify` CLI bin + `claude-notify-app` Tauri bin** | Clean separation, both CLI and GUI share core logic | More upfront refactor |
+| **Cargo workspace: `claudar-core` lib + `claudar` CLI bin + `claudar-app` Tauri bin** | Clean separation, both CLI and GUI share core logic | More upfront refactor |
 | Single crate with feature flags | Less refactor | Messy, feature-flag hell |
 | Separate repo | Independent versioning | Loses shared history, diverges |
 
-Workspace approach chosen. The bulk of existing `src/` becomes `crates/claude-notify-core/src/` (a library). CLI `main.rs` and Tauri `src-tauri/main.rs` each pull from it.
+Workspace approach chosen. The bulk of existing `src/` becomes `crates/claudar-core/src/` (a library). CLI `main.rs` and Tauri `src-tauri/main.rs` each pull from it.

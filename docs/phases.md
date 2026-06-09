@@ -1,8 +1,8 @@
-# Phases — Claude Notify GUI
+# Phases — Claudar GUI
 
 | Phase | Builds | Delivers | Depends on |
 |-------|--------|----------|-----------|
-| **1** | Cargo workspace refactor: `claude-notify-core` lib + CLI bin restructured | CLI still works; core logic is a reusable library | — |
+| **1** | Cargo workspace refactor: `claudar-core` lib + CLI bin restructured | CLI still works; core logic is a reusable library | — |
 | **2** | Tauri app skeleton: `src-tauri/`, `ui/` scaffold, tray icon, window show/hide | App launches, grey tray icon visible, window toggles | Phase 1 |
 | **3** | Monitor loop embedded + event bus + history writer | Real usage data, tray icon colour, native notifications — all from within the Tauri process | Phase 2 |
 | **4** | Svelte Dashboard screen | Live 5h/7d gauges and reset countdown visible in the window; first usable screen | Phase 3 |

@@ -8,7 +8,7 @@ Embed the monitoring daemon inside the Tauri process. The monitor loop polls Cla
 
 ## In scope
 
-- Add `history.rs` to `claude-notify-core`: a `HistoryRecord` struct (timestamp, instance, five_hour_pct, seven_day_pct) and append/load functions over a per-instance JSONL file at `sessions/{instance}.jsonl`
+- Add `history.rs` to `claudar-core`: a `HistoryRecord` struct (timestamp, instance, five_hour_pct, seven_day_pct) and append/load functions over a per-instance JSONL file at `sessions/{instance}.jsonl`
 - In `src-tauri/main.rs`: after the Tauri builder, spawn one `monitor_loop` tokio task per configured instance, passing an `AppHandle` for event emission
 - Each poll cycle in the monitor loop:
   1. `UsageFetcher::fetch()` — `reqwest` call with saved cookies (from Phase 1)

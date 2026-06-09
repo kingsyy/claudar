@@ -166,7 +166,7 @@
       <section class="step">
         <h1>Never hit a rate limit by surprise</h1>
         <p class="lead">
-          Claude Notify watches your usage in the background and sends you a heads-up before you
+          Claudar watches your usage in the background and sends you a heads-up before you
           run out. It sits in your menu bar, checks every few minutes, and only sees the usage
           percentages — nothing else.
         </p>
@@ -174,7 +174,7 @@
         <details bind:open={howItWorksOpen}>
           <summary>How does this work?</summary>
           <p>
-            Claude Notify logs into Claude.ai on your behalf using your browser session, then checks
+            Claudar logs into Claude.ai on your behalf using your browser session, then checks
             your usage number every so often. That's it — no messages, no content, just a
             percentage.
           </p>
@@ -184,7 +184,7 @@
           <summary>Where is my data?</summary>
           <p>
             Your session cookies are stored locally on this device, at
-            <code>~/.config/claude-notify/sessions/</code>. They're never uploaded or shared.
+            <code>~/.config/claudar/sessions/</code>. They're never uploaded or shared.
             Usage numbers are also stored locally at the same path so we can show you a history
             chart. Nothing leaves your device.
           </p>
@@ -207,7 +207,7 @@
             <div class="sheet-content">
               <h2>Why do I need to log in?</h2>
               <p>
-                Claude Notify needs your session cookie to check your usage — the same token your
+                Claudar needs your session cookie to check your usage — the same token your
                 browser already uses when you visit claude.ai. It's read-only: we can't send
                 messages or change your account. You can revoke access at any time by logging out
                 of Claude.ai.

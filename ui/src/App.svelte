@@ -70,7 +70,7 @@
     <nav class="sidebar">
       <div class="sidebar-logo">
         <span class="logo-mark">◉</span>
-        <span class="logo-text">Claude Notify</span>
+        <span class="logo-text">Claudar</span>
       </div>
       <ul class="nav-list">
         {#each navItems as item}

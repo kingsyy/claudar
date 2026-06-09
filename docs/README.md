@@ -1,6 +1,6 @@
-# Claude Notify — GUI
+# Claudar — GUI
 
-A Tauri 2.0 desktop app that wraps the existing `claude-notify` daemon with a full GUI: onboarding wizard, live usage dashboard, history chart, account management, and settings — plus a system tray icon for at-a-glance status. The existing CLI and daemon remain intact for power users.
+A Tauri 2.0 desktop app that wraps the existing `claudar` daemon with a full GUI: onboarding wizard, live usage dashboard, history chart, account management, and settings — plus a system tray icon for at-a-glance status. The existing CLI and daemon remain intact for power users.
 
 ## Table of Contents
 
@@ -44,7 +44,7 @@ A Tauri 2.0 desktop app that wraps the existing `claude-notify` daemon with a fu
 
 ```
 Tauri 2.0
-  Rust backend: claude-notify-core (existing modules, extracted as lib crate)
+  Rust backend: claudar-core (existing modules, extracted as lib crate)
   Frontend: Svelte 5 + Vite + shadcn-svelte + LayerChart
   Tray: TrayIconBuilder (Rust)
   Autostart: tauri-plugin-autostart

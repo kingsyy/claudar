@@ -19,7 +19,7 @@ Check on launch whether any instance has a valid session file. If none, render t
 - Warm, plain-language headline: something like "Keep an eye on your Claude usage" (not technical)
 - 2–3 sentence explanation: what the app watches, that it runs quietly in the menu bar, that no messages or content are ever read — only usage percentages
 - A collapsible "How does this work?" section with a short paragraph: it logs into Claude.ai on your behalf using your browser session, checks a usage number periodically, and that's it
-- A collapsible "Where is my data?" section: session cookies stored locally at `~/.config/claude-notify/sessions/`, never uploaded, never shared. Usage numbers stored locally at the same path for the history chart. Nothing leaves the device.
+- A collapsible "Where is my data?" section: session cookies stored locally at `~/.config/claudar/sessions/`, never uploaded, never shared. Usage numbers stored locally at the same path for the history chart. Nothing leaves the device.
 - Primary button: "Get started"
 
 **Step 2 — Connect your account**

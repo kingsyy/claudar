@@ -1,4 +1,4 @@
-# Build plan — Claude Notify GUI
+# Build plan — Claudar GUI
 
 - [x] [Phase 1 — Cargo Workspace Refactor](tasks/phase-1-workspace-refactor.md)
 - [x] [Phase 2 — Tauri App Skeleton](tasks/phase-2-tauri-skeleton.md)
