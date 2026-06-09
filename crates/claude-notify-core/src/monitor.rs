@@ -35,9 +35,13 @@ pub struct UsagePayload {
 ///
 /// Returns `Err` containing `AuthRequiredError` when the session is expired or
 /// Cloudflare-blocked; the caller should emit `auth-required` and skip the cycle.
-pub async fn poll_instance(config: &Config, instance_name: &str) -> anyhow::Result<UsagePayload> {
+pub async fn poll_instance(
+    config: &Config,
+    instance_name: &str,
+    sender: &dyn NotificationSender,
+) -> anyhow::Result<UsagePayload> {
     let mut state = MonitorState::load_for(config, instance_name)?;
-    let result = check_usage(config, &mut state, instance_name, false, &config.general.timezone).await;
+    let result = check_usage(config, &mut state, instance_name, false, &config.general.timezone, sender).await;
     // Always persist state updates, even when a fetch error occurred mid-way.
     let _ = state.save_for(config, instance_name);
     let payload = result?;
@@ -98,6 +102,7 @@ pub async fn run_monitor(foreground: bool) -> anyhow::Result<()> {
 
     let config = Config::load()?;
     let instances = config.effective_instances();
+    let sender = RealNotificationSender;
 
     if foreground && instances.len() > 1 {
         tracing::info!(
@@ -126,7 +131,7 @@ pub async fn run_monitor(foreground: bool) -> anyhow::Result<()> {
                 tracing::info!("{} [{}]", instance_name, timestamp);
             }
 
-            match check_usage(&config, &mut state, instance_name, foreground, &config.general.timezone).await {
+            match check_usage(&config, &mut state, instance_name, foreground, &config.general.timezone, &sender).await {
                 Ok(_payload) => {}
                 Err(e) => {
                     // AuthRequiredError means session expired or Cloudflare blocked — log
@@ -198,6 +203,7 @@ async fn check_usage(
     instance_name: &str,
     verbose: bool,
     timezone: &str,
+    sender: &dyn NotificationSender,
 ) -> anyhow::Result<UsagePayload> {
     if verbose {
         let timestamp = get_current_time_formatted(timezone);
@@ -223,10 +229,8 @@ async fn check_usage(
         tracing::info!("[{}] Fetched usage data", timestamp);
     }
 
-    let notification_sender = RealNotificationSender;
-
     process_limit(
-        &notification_sender,
+        sender,
         config,
         state,
         instance_name,
@@ -240,7 +244,7 @@ async fn check_usage(
     )?;
 
     process_limit(
-        &notification_sender,
+        sender,
         config,
         state,
         instance_name,

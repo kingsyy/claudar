@@ -1,4 +1,4 @@
-use crate::{chrome_auth, monitor_loop};
+use crate::{chrome_auth, monitor_loop, tauri_notifier::TauriNotificationSender};
 use claude_notify_core::{
     config::{Config, InstanceConfig},
     history::{self, HistoryRecord},
@@ -57,10 +57,11 @@ pub fn set_config(_instance: Option<String>, config: Config) -> Result<(), Strin
 /// On-demand usage fetch for a single instance (bypasses the background loop).
 /// Fires desktop notifications and writes a history record just like the loop does.
 #[tauri::command]
-pub async fn get_usage(instance: Option<String>) -> Result<UsagePayload, String> {
+pub async fn get_usage(app: AppHandle, instance: Option<String>) -> Result<UsagePayload, String> {
     let config = Config::load().map_err(|e| e.to_string())?;
     let name = instance.as_deref().unwrap_or("default");
-    poll_instance(&config, name)
+    let sender = TauriNotificationSender { app };
+    poll_instance(&config, name, &sender)
         .await
         .map_err(|e| e.to_string())
 }
@@ -285,32 +286,32 @@ pub fn get_autostart(app: AppHandle) -> Result<bool, String> {
     app.autolaunch().is_enabled().map_err(|e| e.to_string())
 }
 
+/// Show or hide the menu-bar / system-tray icon at runtime to match the
+/// `general.show_tray_icon` setting. Persisting the config is the caller's job.
+#[tauri::command]
+pub fn set_tray_visible(app: AppHandle, visible: bool) -> Result<(), String> {
+    if let Some(tray) = app.tray_by_id("tray") {
+        tray.set_visible(visible).map_err(|e| e.to_string())?;
+        if visible {
+            // Make sure a freshly-shown icon carries the latest usage rows.
+            monitor_loop::refresh_tray_menu(&app);
+        }
+    }
+    Ok(())
+}
+
 /// Send a test notification to verify notification pipeline works.
 #[tauri::command]
-pub fn test_notification() -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        let script = r#"display notification "This is a test notification. Your notification settings are working!" with title "Claude Notify Test""#;
-        let status = std::process::Command::new("osascript")
-            .arg("-e")
-            .arg(script)
-            .status()
-            .map_err(|e| e.to_string())?;
-        if !status.success() {
-            return Err("Failed to send notification".to_string());
-        }
-        Ok(())
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        use notify_rust::Notification;
-        Notification::new()
-            .appname("Claude Notify")
-            .summary("Claude Notify Test")
-            .body("This is a test notification. Your notification settings are working!")
-            .show()
-            .map_err(|e| e.to_string())?;
-        Ok(())
-    }
+pub fn test_notification(app: AppHandle) -> Result<(), String> {
+    use claude_notify_core::notification_trait::NotificationSender;
+    use notify_rust::Timeout;
+    let sender = TauriNotificationSender { app };
+    sender
+        .send(
+            "Claude Notify Test",
+            "This is a test notification. Your notification settings are working!",
+            Timeout::Milliseconds(10000),
+            true,
+        )
+        .map_err(|e| e.to_string())
 }

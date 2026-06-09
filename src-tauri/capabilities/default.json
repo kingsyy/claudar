@@ -4,6 +4,7 @@
   "description": "Default capability for claude-notify-app",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "notification:default"
   ]
 }

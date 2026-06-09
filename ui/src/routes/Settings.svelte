@@ -3,7 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
 
   type Config = {
-    general: { poll_interval_seconds: number; timezone: string };
+    general: { poll_interval_seconds: number; timezone: string; show_tray_icon: boolean };
     thresholds: { five_hour: number[]; seven_day: number[] };
     notifications: {
       sound: boolean;
@@ -28,6 +28,7 @@
   // Form-bound values
   let pollIntervalMinutes = $state(15);
   let timezone = $state("local");
+  let trayIconEnabled = $state(false);
   let fiveHourThresholdStr = $state("50,75,90,100");
   let sevenDayThresholdStr = $state("50,75,90,100");
 
@@ -45,7 +46,18 @@
   let capacityWarningSevenDayPercent = $state<string>("");
 
   let historyEnabled = $state(false);
-  let historyMaxRecords = $state(2016);
+  let historyDays = $state(14);
+
+  const BYTES_PER_RECORD = 200;
+
+  function recordsFromDays(days: number): number {
+    return Math.max(1, Math.round(days * ((24 * 60) / pollIntervalMinutes)));
+  }
+
+  function formatSize(bytes: number): string {
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
 
   let autostartEnabled = $state(false);
   let autostartError = $state<string | null>(null);
@@ -72,6 +84,7 @@
 
       pollIntervalMinutes = Math.round(config.general.poll_interval_seconds / 60);
       timezone = config.general.timezone;
+      trayIconEnabled = config.general.show_tray_icon;
       fiveHourThresholdStr = config.thresholds.five_hour.join(",");
       sevenDayThresholdStr = config.thresholds.seven_day.join(",");
 
@@ -93,7 +106,7 @@
       }
 
       historyEnabled = config.history.enabled;
-      historyMaxRecords = config.history.max_records;
+      historyDays = Math.max(1, Math.round(config.history.max_records / ((24 * 60) / Math.round(config.general.poll_interval_seconds / 60))));
     } catch (e) {
       loadError = String(e);
     } finally {
@@ -134,6 +147,19 @@
     persist((c) => {
       c.general.timezone = timezone;
     }, "Timezone updated");
+  }
+
+  async function toggleTrayIcon() {
+    trayIconEnabled = !trayIconEnabled;
+    // Apply live first so the icon appears/disappears immediately, then persist.
+    try {
+      await invoke("set_tray_visible", { visible: trayIconEnabled });
+    } catch (e) {
+      showToast(String(e), "error");
+    }
+    persist((c) => {
+      c.general.show_tray_icon = trayIconEnabled;
+    }, trayIconEnabled ? "Menu bar icon enabled" : "Menu bar icon disabled");
   }
 
   function parseCsvThresholds(csv: string): number[] | null {
@@ -253,11 +279,11 @@
     }, historyEnabled ? "History recording enabled" : "History recording disabled");
   }
 
-  function saveHistoryMaxRecords() {
-    const records = Math.max(1, Math.round(historyMaxRecords));
-    historyMaxRecords = records;
+  function saveHistoryDays() {
+    const days = Math.max(1, Math.round(historyDays));
+    historyDays = days;
     persist((c) => {
-      c.history.max_records = records;
+      c.history.max_records = recordsFromDays(days);
     }, "History retention updated");
   }
 
@@ -330,7 +356,7 @@
         class:active={activeTab === "capacity"}
         onclick={() => (activeTab = "capacity")}
       >
-        Capacity Warnings
+        Unused Capacity
       </button>
     </div>
 
@@ -393,6 +419,29 @@
         </section>
 
         <section class="card">
+          <h2>Menu Bar</h2>
+          <div class="toggle-row">
+            <div>
+              <span class="toggle-label">Show menu bar icon</span>
+              <p class="hint">
+                Add a Claude Notify icon to the menu bar. Click it for an at-a-glance
+                dropdown of your 5-hour and 7-day usage and reset times.
+              </p>
+            </div>
+            <button
+              class="switch"
+              class:on={trayIconEnabled}
+              role="switch"
+              aria-checked={trayIconEnabled}
+              aria-label="Toggle menu bar icon"
+              onclick={toggleTrayIcon}
+            >
+              <span class="switch-thumb"></span>
+            </button>
+          </div>
+        </section>
+
+        <section class="card">
           <h2>Usage History</h2>
           <div class="toggle-row">
             <div>
@@ -412,22 +461,34 @@
           </div>
 
           <div class="field-row">
-            <label for="history-max">Keep last</label>
+            <label for="history-days">Keep history for</label>
             <div class="input-with-suffix">
               <input
-                id="history-max"
+                id="history-days"
                 type="number"
                 min="1"
-                bind:value={historyMaxRecords}
-                onchange={saveHistoryMaxRecords}
+                max="365"
+                bind:value={historyDays}
+                onchange={saveHistoryDays}
                 disabled={!historyEnabled}
               />
-              <span class="suffix">records</span>
+              <span class="suffix">days</span>
             </div>
           </div>
-          <p class="hint">
-            Default (2016 records) = ~14 days at 15-minute polling. Older records are automatically
-            deleted.
+          <div class="history-presets">
+            {#each [7, 14, 30, 90] as days}
+              <button
+                class="preset-chip"
+                class:selected={historyDays === days}
+                disabled={!historyEnabled}
+                onclick={() => { historyDays = days; saveHistoryDays(); }}
+              >
+                {days === 7 ? "1 week" : days === 14 ? "2 weeks" : days === 30 ? "1 month" : "3 months"}
+              </button>
+            {/each}
+          </div>
+          <p class="hint storage-hint">
+            ≈ {recordsFromDays(historyDays).toLocaleString()} records · ~{formatSize(recordsFromDays(historyDays) * BYTES_PER_RECORD)} · older records deleted automatically
           </p>
         </section>
       {/if}
@@ -605,71 +666,81 @@
 
       {#if activeTab === "capacity"}
         <section class="card">
-          <h2>5-Hour Capacity Warning</h2>
-          <p class="hint">Alert if time is running out AND you have limited capacity left.</p>
+          <h2>5-Hour Window</h2>
+          <p class="hint">
+            Send a one-time alert when the 5-hour reset is approaching <strong>and</strong> you
+            still have a lot of tokens left — a nudge to use your remaining capacity before the
+            window resets.
+          </p>
           <div class="field-row">
-            <label for="cap-5h-minutes">When less than</label>
+            <label for="cap-5h-minutes">Reset is less than</label>
             <div class="input-with-suffix">
               <input
                 id="cap-5h-minutes"
                 type="number"
                 min="1"
-                placeholder="Leave empty to disable"
+                placeholder="e.g. 30"
                 bind:value={capacityWarningFiveHourMinutes}
                 onchange={saveCapacityWarningFiveHour}
               />
-              <span class="suffix">minutes remain</span>
+              <span class="suffix">minutes away</span>
             </div>
           </div>
           <div class="field-row">
-            <label for="cap-5h-percent">And capacity is at most</label>
+            <label for="cap-5h-percent">And at least</label>
             <div class="input-with-suffix">
               <input
                 id="cap-5h-percent"
                 type="number"
                 min="0"
                 max="100"
-                placeholder="Leave empty to disable"
+                placeholder="e.g. 40"
                 bind:value={capacityWarningFiveHourPercent}
                 onchange={saveCapacityWarningFiveHour}
               />
-              <span class="suffix">%</span>
+              <span class="suffix">% of tokens are still unused</span>
             </div>
           </div>
+          <p class="hint">Leave either field blank to disable this alert.</p>
         </section>
 
         <section class="card">
-          <h2>7-Day Capacity Warning</h2>
-          <p class="hint">Alert if time is running out AND you have limited capacity left.</p>
+          <h2>7-Day Window</h2>
+          <p class="hint">
+            Send a one-time alert when the 7-day reset is approaching <strong>and</strong> you
+            still have a lot of tokens left — a nudge to use your remaining capacity before the
+            window resets.
+          </p>
           <div class="field-row">
-            <label for="cap-7d-minutes">When less than</label>
+            <label for="cap-7d-minutes">Reset is less than</label>
             <div class="input-with-suffix">
               <input
                 id="cap-7d-minutes"
                 type="number"
                 min="1"
-                placeholder="Leave empty to disable"
+                placeholder="e.g. 60"
                 bind:value={capacityWarningSevenDayMinutes}
                 onchange={saveCapacityWarningSevenDay}
               />
-              <span class="suffix">minutes remain</span>
+              <span class="suffix">minutes away</span>
             </div>
           </div>
           <div class="field-row">
-            <label for="cap-7d-percent">And capacity is at most</label>
+            <label for="cap-7d-percent">And at least</label>
             <div class="input-with-suffix">
               <input
                 id="cap-7d-percent"
                 type="number"
                 min="0"
                 max="100"
-                placeholder="Leave empty to disable"
+                placeholder="e.g. 40"
                 bind:value={capacityWarningSevenDayPercent}
                 onchange={saveCapacityWarningSevenDay}
               />
-              <span class="suffix">%</span>
+              <span class="suffix">% of tokens are still unused</span>
             </div>
           </div>
+          <p class="hint">Leave either field blank to disable this alert.</p>
         </section>
       {/if}
 
@@ -946,5 +1017,43 @@
 
   .toast.error {
     background-color: hsl(0 70% 45%);
+  }
+
+  .history-presets {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    margin: 0.25rem 0 0.5rem;
+  }
+
+  .preset-chip {
+    padding: 0.25rem 0.65rem;
+    border: 1px solid hsl(214.3 31.8% 85%);
+    border-radius: 999px;
+    background: none;
+    font-size: 0.775rem;
+    color: hsl(215.4 16.3% 46.9%);
+    cursor: pointer;
+    transition: all 0.12s;
+  }
+
+  .preset-chip:hover:not(:disabled) {
+    border-color: hsl(222.2 84% 4.9%);
+    color: hsl(222.2 84% 4.9%);
+  }
+
+  .preset-chip.selected {
+    background-color: hsl(222.2 84% 4.9%);
+    border-color: hsl(222.2 84% 4.9%);
+    color: hsl(210 40% 98%);
+  }
+
+  .preset-chip:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .storage-hint {
+    font-variant-numeric: tabular-nums;
   }
 </style>

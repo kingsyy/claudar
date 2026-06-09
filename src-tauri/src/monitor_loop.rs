@@ -1,18 +1,25 @@
+use crate::tauri_notifier::TauriNotificationSender;
 use claude_notify_core::{
     config::Config,
-    monitor::poll_instance,
+    monitor::{poll_instance, UsagePayload},
     usage_fetcher::AuthRequiredError,
 };
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 /// Tracks the running background poll task for each instance, keyed by instance name.
 /// Lets `remove_instance` stop a specific instance's loop without restarting the app.
 #[derive(Default)]
 pub struct MonitorTasks(pub Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>);
+
+/// Latest successful usage snapshot per instance, used to render the tray menu.
+#[derive(Default)]
+pub struct TrayUsage(pub Mutex<HashMap<String, UsagePayload>>);
 
 /// Colour levels used to encode worst-case usage in the tray icon.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,11 +97,13 @@ pub fn spawn_instance_task(app_handle: AppHandle, instance_name: String) {
             let idx = instance_name.len() as u64 % 5;
             tokio::time::sleep(Duration::from_secs(idx)).await;
 
+            let sender = TauriNotificationSender { app: app_handle.clone() };
+
             loop {
                 let config = Config::load().unwrap_or_default();
                 let interval = Duration::from_secs(config.general.poll_interval_seconds);
 
-                match poll_instance(&config, &instance_name).await {
+                match poll_instance(&config, &instance_name, &sender).await {
                     Ok(payload) => {
                         tracing::info!(
                             "poll: {} — 5h={:.1}% 7d={:.1}%",
@@ -113,6 +122,16 @@ pub fn spawn_instance_task(app_handle: AppHandle, instance_name: String) {
                             payload.five_hour_pct.max(payload.seven_day_pct),
                         );
                         set_tray_icon(&app_handle, level);
+
+                        // Record the snapshot and refresh the tray dropdown.
+                        if let Some(state) = app_handle.try_state::<TrayUsage>() {
+                            state
+                                .0
+                                .lock()
+                                .unwrap()
+                                .insert(instance_name.clone(), payload.clone());
+                        }
+                        refresh_tray_menu(&app_handle);
                     }
                     Err(e) => {
                         if e.downcast_ref::<AuthRequiredError>().is_some() {
@@ -172,6 +191,147 @@ fn set_tray_icon(app_handle: &AppHandle, level: UsageLevel) {
     if let Some(tray) = app_handle.tray_by_id("tray") {
         if let Err(e) = tray.set_icon(Some(icon)) {
             tracing::warn!("set_tray_icon failed: {}", e);
+        }
+    }
+}
+
+/// Format a reset timestamp as a short "in 2h 13m" relative string for the tray menu.
+fn format_resets_in(resets_at: Option<&str>) -> String {
+    let Some(raw) = resets_at else {
+        return "—".to_string();
+    };
+    let parsed = DateTime::parse_from_rfc3339(raw)
+        .or_else(|_| DateTime::parse_from_rfc3339(&format!("{}Z", raw)));
+    let Ok(reset) = parsed else {
+        return "—".to_string();
+    };
+
+    let dur = reset.with_timezone(&Utc).signed_duration_since(Utc::now());
+    if dur.num_seconds() <= 0 {
+        "now".to_string()
+    } else if dur.num_days() > 0 {
+        format!("in {}d {}h", dur.num_days(), dur.num_hours() % 24)
+    } else if dur.num_hours() > 0 {
+        format!("in {}h {}m", dur.num_hours(), dur.num_minutes() % 60)
+    } else {
+        format!("in {}m", dur.num_minutes().max(1))
+    }
+}
+
+/// Build the tray dropdown menu from the latest per-instance usage snapshots.
+///
+/// Usage rows are disabled (display-only). The actionable items reuse the ids
+/// `show` and `quit`, which the tray's `on_menu_event` handler (set up in
+/// `main::setup_tray`) routes — so this menu can be swapped in at any time.
+pub fn build_tray_menu<R: Runtime, M: Manager<R>>(
+    manager: &M,
+    usage: &HashMap<String, UsagePayload>,
+) -> tauri::Result<Menu<R>> {
+    let config = Config::load().unwrap_or_default();
+    let instances = config.effective_instances();
+    let show_names = instances.len() > 1;
+
+    let menu = Menu::new(manager)?;
+    menu.append(&MenuItem::with_id(
+        manager,
+        "tray_header",
+        "Claude Notify",
+        false,
+        None::<&str>,
+    )?)?;
+    menu.append(&PredefinedMenuItem::separator(manager)?)?;
+
+    let rendered = instances
+        .iter()
+        .filter_map(|inst| usage.get(&inst.name).map(|p| (inst, p)))
+        .count();
+
+    if rendered == 0 {
+        menu.append(&MenuItem::with_id(
+            manager,
+            "tray_waiting",
+            "Fetching usage…",
+            false,
+            None::<&str>,
+        )?)?;
+    } else {
+        for inst in &instances {
+            let Some(p) = usage.get(&inst.name) else {
+                continue;
+            };
+            if show_names {
+                menu.append(&MenuItem::with_id(
+                    manager,
+                    format!("tray_name_{}", inst.name),
+                    &inst.name,
+                    false,
+                    None::<&str>,
+                )?)?;
+            }
+            menu.append(&MenuItem::with_id(
+                manager,
+                format!("tray_5h_{}", inst.name),
+                format!(
+                    "  5-hour  {:>5.1}%  ·  resets {}",
+                    p.five_hour_pct,
+                    format_resets_in(p.resets_at.as_deref())
+                ),
+                false,
+                None::<&str>,
+            )?)?;
+            menu.append(&MenuItem::with_id(
+                manager,
+                format!("tray_7d_{}", inst.name),
+                format!(
+                    "  7-day   {:>5.1}%  ·  resets {}",
+                    p.seven_day_pct,
+                    format_resets_in(p.seven_day_resets_at.as_deref())
+                ),
+                false,
+                None::<&str>,
+            )?)?;
+        }
+    }
+
+    menu.append(&PredefinedMenuItem::separator(manager)?)?;
+    menu.append(&MenuItem::with_id(
+        manager,
+        "show",
+        "Open Dashboard",
+        true,
+        None::<&str>,
+    )?)?;
+    menu.append(&MenuItem::with_id(
+        manager,
+        "quit",
+        "Quit",
+        true,
+        None::<&str>,
+    )?)?;
+
+    Ok(menu)
+}
+
+/// Rebuild the tray menu from the stored snapshots and swap it onto the live tray.
+/// No-op (with a warning) if the tray or state is unavailable.
+pub fn refresh_tray_menu(app_handle: &AppHandle) {
+    let Some(state) = app_handle.try_state::<TrayUsage>() else {
+        return;
+    };
+    let menu = {
+        let usage = state.0.lock().unwrap();
+        build_tray_menu(app_handle, &usage)
+    };
+    let menu = match menu {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!("build_tray_menu failed: {}", e);
+            return;
+        }
+    };
+    if let Some(tray) = app_handle.tray_by_id("tray") {
+        if let Err(e) = tray.set_menu(Some(menu)) {
+            tracing::warn!("set_menu failed: {}", e);
         }
     }
 }

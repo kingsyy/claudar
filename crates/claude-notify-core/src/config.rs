@@ -46,6 +46,9 @@ pub struct GeneralConfig {
     pub poll_interval_seconds: u64,
     #[serde(default = "default_timezone")]
     pub timezone: String,
+    /// Show a menu-bar / system-tray icon with at-a-glance usage (default: false).
+    #[serde(default)]
+    pub show_tray_icon: bool,
 }
 
 fn default_timezone() -> String {
@@ -94,6 +97,7 @@ impl Default for Config {
             general: GeneralConfig {
                 poll_interval_seconds: 900, // 15 minutes
                 timezone: "local".to_string(),
+                show_tray_icon: false,
             },
             thresholds: ThresholdsConfig {
                 five_hour: vec![50, 75, 90, 100],
