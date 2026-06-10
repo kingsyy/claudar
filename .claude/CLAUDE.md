@@ -58,7 +58,7 @@ cargo check              # Type-check without building
 
 ## Notes
 
-- Session cookies are stored in plaintext (system keychain integration planned)
+- Session files are encrypted at rest (AES-256-GCM, see `crates/claudar-core/src/crypto.rs`); the key lives in the OS keychain, with a `0600` key-file fallback if no keychain backend is available
 - The `NotificationSender` trait allows mocking notifications in tests
 - Service installation supports macOS (launchd) and Linux (systemd)
 - The `build.rs` embeds the git commit hash for version display

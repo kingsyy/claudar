@@ -1,4 +1,5 @@
 pub mod config;
+pub mod crypto;
 pub mod history;
 pub mod monitor;
 pub mod notification_trait;

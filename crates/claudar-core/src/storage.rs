@@ -1,5 +1,6 @@
+use crate::crypto;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionData {
@@ -21,8 +22,21 @@ impl SessionData {
         }
 
         let content = std::fs::read_to_string(path)?;
-        let session: SessionData = serde_json::from_str(&content)?;
-        Ok(session)
+        let value: serde_json::Value = serde_json::from_str(&content)?;
+
+        if value.get("ciphertext").is_some() {
+            let envelope: crypto::Envelope = serde_json::from_value(value)?;
+            let key = crypto::get_or_create_key(fallback_dir(path))?;
+            let plaintext = crypto::decrypt(&envelope, &key)?;
+            let session: SessionData = serde_json::from_slice(&plaintext)?;
+            Ok(session)
+        } else {
+            // Legacy plaintext session file: load it as-is, then transparently
+            // migrate it to the encrypted format on disk.
+            let session: SessionData = serde_json::from_value(value)?;
+            session.save(path)?;
+            Ok(session)
+        }
     }
 
     pub fn save(&self, path: &PathBuf) -> anyhow::Result<()> {
@@ -30,8 +44,18 @@ impl SessionData {
             std::fs::create_dir_all(parent)?;
         }
 
-        let content = serde_json::to_string_pretty(self)?;
+        let plaintext = serde_json::to_vec(self)?;
+        let key = crypto::get_or_create_key(fallback_dir(path))?;
+        let envelope = crypto::encrypt(&plaintext, &key)?;
+        let content = serde_json::to_string_pretty(&envelope)?;
         std::fs::write(path, content)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+
         Ok(())
     }
 
@@ -100,6 +124,12 @@ impl SessionData {
     }
 }
 
+/// Directory used to store the fallback encryption key when the OS keychain
+/// is unavailable, alongside the session file itself.
+fn fallback_dir(session_path: &Path) -> &Path {
+    session_path.parent().unwrap_or_else(|| Path::new("."))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +188,60 @@ mod tests {
     #[test]
     fn load_nonexistent_file_errors() {
         let path = PathBuf::from("/tmp/nonexistent-claudar-test.json");
+        assert!(SessionData::load(&path).is_err());
+    }
+
+    #[test]
+    fn save_writes_encrypted_envelope() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test-session.json");
+
+        make_session(true).save(&path).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(value.get("ciphertext").is_some());
+        assert!(value.get("session_key").is_none());
+    }
+
+    #[test]
+    fn load_legacy_plaintext_session_migrates_to_encrypted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy-session.json");
+
+        let session = make_session(true);
+        std::fs::write(&path, serde_json::to_string_pretty(&session).unwrap()).unwrap();
+
+        let loaded = SessionData::load(&path).unwrap();
+        assert_eq!(loaded.org_id, session.org_id);
+        assert_eq!(loaded.session_key, session.session_key);
+        assert_eq!(loaded.cf_clearance, session.cf_clearance);
+
+        // The file should now be re-saved as an encrypted envelope.
+        let content = std::fs::read_to_string(&path).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(value.get("ciphertext").is_some());
+    }
+
+    #[test]
+    fn load_tampered_ciphertext_errors() {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tampered-session.json");
+
+        make_session(true).save(&path).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        let ciphertext = value["ciphertext"].as_str().unwrap();
+        let mut bytes = STANDARD.decode(ciphertext).unwrap();
+        bytes[0] ^= 0xFF;
+        value["ciphertext"] = serde_json::Value::String(STANDARD.encode(bytes));
+
+        std::fs::write(&path, serde_json::to_string(&value).unwrap()).unwrap();
+
         assert!(SessionData::load(&path).is_err());
     }
 }
