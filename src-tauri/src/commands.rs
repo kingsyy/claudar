@@ -6,9 +6,14 @@ use claudar_core::{
     usage_fetcher::fetch_org_id,
 };
 use chrono::{Duration as ChronoDuration, Utc};
+use futures::{SinkExt, StreamExt};
 use serde::Serialize;
+use serde_json::json;
+use std::collections::HashMap;
+use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_autostart::ManagerExt;
+use tokio_tungstenite::tungstenite::Message;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -18,6 +23,13 @@ pub struct InstanceInfo {
     /// Whether a session file exists for this instance.
     pub has_session: bool,
 }
+
+/// Remote-debugging port of each instance's *currently running* auth Chrome,
+/// keyed by instance name. Lets `navigate_auth_window` drive the same browser
+/// the login flow is watching (e.g. to open a pasted magic link). Entries exist
+/// only while `run_chrome_auth_and_emit` is running for that instance.
+#[derive(Default)]
+pub struct AuthPorts(pub Mutex<HashMap<String, u16>>);
 
 // ─── Commands ─────────────────────────────────────────────────────────────────
 
@@ -194,7 +206,26 @@ async fn run_chrome_auth_and_emit(app: AppHandle, instance_name: String) {
         }
     };
 
-    match chrome_auth::run_chrome_auth(profile_path).await {
+    // Reserve the debug port up front and publish it so `navigate_auth_window`
+    // can reach this Chrome; deregister on every exit path via the guard.
+    let debug_port = match chrome_auth::find_free_port() {
+        Ok(p) => p,
+        Err(e) => {
+            emit_auth_error(&app, &instance_name, e.to_string());
+            return;
+        }
+    };
+    app.state::<AuthPorts>()
+        .0
+        .lock()
+        .unwrap()
+        .insert(instance_name.clone(), debug_port);
+    let _port_guard = AuthPortGuard {
+        app: app.clone(),
+        instance: instance_name.clone(),
+    };
+
+    match chrome_auth::run_chrome_auth(profile_path, debug_port).await {
         Ok(mut session) => {
             match fetch_org_id(
                 session
@@ -251,10 +282,62 @@ async fn run_chrome_auth_and_emit(app: AppHandle, instance_name: String) {
     };
 }
 
-/// Open a magic-link URL in Chrome (the active auth session handles it via CDP).
+/// Removes an instance's auth port from `AuthPorts` when the auth task ends,
+/// however it exits (success, error, or early return).
+struct AuthPortGuard {
+    app: AppHandle,
+    instance: String,
+}
+
+impl Drop for AuthPortGuard {
+    fn drop(&mut self) {
+        if let Some(state) = self.app.try_state::<AuthPorts>() {
+            state.0.lock().unwrap().remove(&self.instance);
+        }
+    }
+}
+
+/// Open a magic-link URL in the *Claudar-controlled* Chrome (not the user's
+/// default browser) by driving it over CDP. The login flow's cookie poll then
+/// picks up the resulting `sessionKey`.
 #[tauri::command]
-pub async fn navigate_auth_window(_app: AppHandle, url: String) -> Result<(), String> {
-    open::that(&url).map_err(|e| e.to_string())?;
+pub async fn navigate_auth_window(
+    app: AppHandle,
+    instance: Option<String>,
+    url: String,
+) -> Result<(), String> {
+    let instance_name = instance.unwrap_or_else(|| "default".to_string());
+
+    let port = app
+        .state::<AuthPorts>()
+        .0
+        .lock()
+        .unwrap()
+        .get(&instance_name)
+        .copied();
+    let port = port.ok_or("No active login window — click 'Open login window' first.")?;
+
+    let ws_url = chrome_auth::get_page_ws_url(port)
+        .await
+        .map_err(|e| e.to_string())?;
+    let (ws_stream, _) = tokio_tungstenite::connect_async(&ws_url)
+        .await
+        .map_err(|e| format!("CDP connect failed: {}", e))?;
+    let (mut ws_write, _ws_read) = ws_stream.split();
+
+    ws_write
+        .send(Message::Text(
+            json!({"id": 1, "method": "Page.enable", "params": {}}).to_string(),
+        ))
+        .await
+        .map_err(|e| e.to_string())?;
+    ws_write
+        .send(Message::Text(
+            json!({"id": 2, "method": "Page.navigate", "params": {"url": url}}).to_string(),
+        ))
+        .await
+        .map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -305,13 +388,18 @@ pub fn set_tray_visible(app: AppHandle, visible: bool) -> Result<(), String> {
 pub fn test_notification(app: AppHandle) -> Result<(), String> {
     use claudar_core::notification_trait::NotificationSender;
     use notify_rust::Timeout;
+    let config = Config::load().map_err(|e| e.to_string())?;
+    let sound = config
+        .notifications
+        .sound
+        .then_some(config.notifications.sound_name.as_str());
     let sender = TauriNotificationSender { app };
     sender
         .send(
             "Claudar Test",
             "This is a test notification. Your notification settings are working!",
             Timeout::Milliseconds(10000),
-            true,
+            sound,
         )
         .map_err(|e| e.to_string())
 }

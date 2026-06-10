@@ -33,6 +33,7 @@ fn main() {
         )
         .manage(monitor_loop::MonitorTasks::default())
         .manage(monitor_loop::TrayUsage::default())
+        .manage(commands::AuthPorts::default())
         .setup(|app| {
             setup_tray(app)?;
             setup_window(app)?;

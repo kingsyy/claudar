@@ -76,7 +76,7 @@
   async function handleMagicLink() {
     if (!magicLinkUrl) return;
     try {
-      await invoke("navigate_auth_window", { url: magicLinkUrl });
+      await invoke("navigate_auth_window", { instance, url: magicLinkUrl });
       magicLinkUrl = "";
     } catch (e) {
       console.error("Magic link error:", e);
@@ -224,13 +224,17 @@
             <span class="pulse" aria-hidden="true"></span>
             <span>Waiting for login in Chrome…</span>
           </div>
-          <details style="margin-top: 1rem; padding: 0.75rem; background: #f5f5f5; border-radius: var(--radius);">
+          <p class="hint" style="margin-top: 0.75rem;">
+            Logging in with email? Just type the code from your email into the Chrome window —
+            we'll detect it automatically.
+          </p>
+          <details style="margin-top: 0.5rem; padding: 0.75rem; background: #f5f5f5; border-radius: var(--radius);">
             <summary style="cursor: pointer; font-size: 0.875rem; font-weight: 600;">
-              Got a magic link in your email?
+              Prefer the magic link?
             </summary>
             <div style="margin-top: 0.75rem;">
               <p style="font-size: 0.8rem; color: #666; margin: 0 0 0.5rem 0;">
-                Paste the link here and we'll open it in Chrome:
+                Paste the link from your email here and we'll open it in the Chrome window:
               </p>
               <input
                 type="url"

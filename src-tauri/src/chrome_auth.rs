@@ -51,13 +51,13 @@ fn find_chrome() -> Result<PathBuf> {
     ))
 }
 
-fn find_free_port() -> Result<u16> {
+pub(crate) fn find_free_port() -> Result<u16> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     Ok(listener.local_addr()?.port())
 }
 
 /// Poll /json/list to get the WebSocket URL for the first page target.
-async fn get_page_ws_url(port: u16) -> Result<String> {
+pub(crate) async fn get_page_ws_url(port: u16) -> Result<String> {
     let client = reqwest::Client::new();
     let url = format!("http://127.0.0.1:{}/json/list", port);
 
@@ -94,9 +94,25 @@ async fn get_page_ws_url(port: u16) -> Result<String> {
     Err(anyhow!("Chrome page did not load within 30 seconds."))
 }
 
-pub async fn run_chrome_auth(profile_path: PathBuf) -> Result<SessionData> {
+/// Pull every claude.ai/anthropic.com cookie out of a `Network.getAllCookies`
+/// CDP response into `(name, value)` pairs.
+fn extract_cookies(response: &Value) -> Vec<(String, String)> {
+    let mut cookies = Vec::new();
+    if let Some(arr) = response.pointer("/result/cookies").and_then(|c| c.as_array()) {
+        for c in arr {
+            let domain = c.get("domain").and_then(|d| d.as_str()).unwrap_or("");
+            if domain.contains("claude.ai") || domain.contains("anthropic.com") {
+                let name = c.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                let value = c.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                cookies.push((name, value));
+            }
+        }
+    }
+    cookies
+}
+
+pub async fn run_chrome_auth(profile_path: PathBuf, debug_port: u16) -> Result<SessionData> {
     let chrome_bin = find_chrome()?;
-    let debug_port = find_free_port()?;
 
     if profile_path.exists() {
         std::fs::remove_dir_all(&profile_path)?;
@@ -105,13 +121,16 @@ pub async fn run_chrome_auth(profile_path: PathBuf) -> Result<SessionData> {
 
     let profile_arg = profile_path.to_str().unwrap_or_default();
 
+    // `--app` opens a clean, chromeless login window (no tabs/address bar) that
+    // reads as part of Claudar; Google OAuth popups still open as their own
+    // window. Instance separation comes from `--user-data-dir`.
     let mut child = tokio::process::Command::new(&chrome_bin)
         .arg(format!("--remote-debugging-port={}", debug_port))
         .arg(format!("--user-data-dir={}", profile_arg))
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
-        .arg("--new-instance")
-        .arg("https://claude.ai/login")
+        .arg("--window-size=480,720")
+        .arg("--app=https://claude.ai/login")
         .spawn()
         .map_err(|e| anyhow!("Failed to spawn Chrome: {}", e))?;
 
@@ -123,39 +142,23 @@ pub async fn run_chrome_auth(profile_path: PathBuf) -> Result<SessionData> {
 
     let (mut ws_write, mut ws_read) = ws_stream.split();
 
-    for (id, method) in [(1u64, "Runtime.enable"), (2, "Network.enable"), (3, "Page.enable")] {
-        let msg = json!({"id": id, "method": method, "params": {}});
-        ws_write.send(Message::Text(msg.to_string())).await?;
-    }
+    // `Network.getAllCookies` requires the Network domain enabled.
+    ws_write
+        .send(Message::Text(
+            json!({"id": 1, "method": "Network.enable", "params": {}}).to_string(),
+        ))
+        .await?;
 
-    // Drain the 3 domain-enable acks before polling
-    let mut acks = 0u32;
-    let enable_deadline = tokio::time::sleep(std::time::Duration::from_secs(5));
-    tokio::pin!(enable_deadline);
-    loop {
-        tokio::select! {
-            _ = &mut enable_deadline => break,
-            msg = ws_read.next() => {
-                if let Some(Ok(Message::Text(text))) = msg {
-                    if let Ok(v) = serde_json::from_str::<Value>(&text) {
-                        if let Some(id) = v.get("id").and_then(|i| i.as_u64()) {
-                            if id == 1 || id == 2 || id == 3 {
-                                acks += 1;
-                                if acks >= 3 { break; }
-                            }
-                        }
-                    }
-                } else if msg.is_none() { break; }
-            }
-        }
-    }
-
-    // Poll window.location.href every 500 ms until the user leaves /login
+    // Detection = cookie polling. Every login path — Google OAuth popup, an
+    // emailed code typed in-window, or a pasted magic link — ends with the
+    // `sessionKey` cookie existing for claude.ai. Poll `Network.getAllCookies`
+    // until it appears; the same response carries the full jar we extract. This
+    // is flow-agnostic: it doesn't matter which page/popup/redirect set it.
     let start = std::time::Instant::now();
     let max_wait = std::time::Duration::from_secs(600);
     let mut poll_id = 10u64;
     let mut poll_interval = tokio::time::interval(std::time::Duration::from_millis(500));
-    let mut logged_in = false;
+    let mut cookies: Vec<(String, String)> = Vec::new();
 
     'login: loop {
         if start.elapsed() > max_wait {
@@ -165,11 +168,7 @@ pub async fn run_chrome_auth(profile_path: PathBuf) -> Result<SessionData> {
 
         tokio::select! {
             _ = poll_interval.tick() => {
-                let msg = json!({
-                    "id": poll_id,
-                    "method": "Runtime.evaluate",
-                    "params": {"expression": "window.location.href"}
-                });
+                let msg = json!({"id": poll_id, "method": "Network.getAllCookies", "params": {}});
                 if ws_write.send(Message::Text(msg.to_string())).await.is_err() {
                     break 'login;
                 }
@@ -179,12 +178,11 @@ pub async fn run_chrome_auth(profile_path: PathBuf) -> Result<SessionData> {
                 match ws_msg {
                     Some(Ok(Message::Text(text))) => {
                         if let Ok(v) = serde_json::from_str::<Value>(&text) {
-                            if let Some(url) = v
-                                .pointer("/result/result/value")
-                                .and_then(|u| u.as_str())
-                            {
-                                if url.contains("claude.ai") && !url.contains("/login") {
-                                    logged_in = true;
+                            // Only inspect getAllCookies responses (id >= 10).
+                            if v.get("id").and_then(|i| i.as_u64()).map_or(false, |id| id >= 10) {
+                                let found = extract_cookies(&v);
+                                if found.iter().any(|(k, val)| k == "sessionKey" && !val.is_empty()) {
+                                    cookies = found;
                                     break 'login;
                                 }
                             }
@@ -198,56 +196,11 @@ pub async fn run_chrome_auth(profile_path: PathBuf) -> Result<SessionData> {
         }
     }
 
-    if !logged_in {
-        let _ = child.kill().await;
+    let _ = child.kill().await;
+
+    if cookies.is_empty() {
         return Err(anyhow!("Login not completed"));
     }
-
-    // Extract cookies
-    let msg = json!({"id": 999, "method": "Network.getAllCookies", "params": {}});
-    ws_write.send(Message::Text(msg.to_string())).await?;
-
-    let mut cookies: Vec<(String, String)> = Vec::new();
-    let cookie_deadline = tokio::time::sleep(std::time::Duration::from_secs(10));
-    tokio::pin!(cookie_deadline);
-
-    'cookies: loop {
-        tokio::select! {
-            _ = &mut cookie_deadline => {
-                tracing::warn!("auth: cookie extraction timed out");
-                break;
-            }
-            msg = ws_read.next() => {
-                match msg {
-                    Some(Ok(Message::Text(text))) => {
-                        if let Ok(v) = serde_json::from_str::<Value>(&text) {
-                            if v.get("id").and_then(|i| i.as_u64()) == Some(999) {
-                                if let Some(arr) = v.pointer("/result/cookies").and_then(|c| c.as_array()) {
-                                    for c in arr {
-                                        let domain = c.get("domain").and_then(|d| d.as_str()).unwrap_or("");
-                                        if domain.contains("claude.ai") || domain.contains("anthropic.com") {
-                                            let name = c.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
-                                            let value = c.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                            cookies.push((name, value));
-                                        }
-                                    }
-                                    break 'cookies;
-                                } else {
-                                    tracing::error!("auth: getAllCookies response missing cookies field");
-                                    break 'cookies;
-                                }
-                            }
-                        }
-                    }
-                    Some(Err(e)) => { tracing::error!("auth: CDP error reading cookies: {}", e); break 'cookies; }
-                    None => { tracing::warn!("auth: CDP connection closed before cookies received"); break 'cookies; }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    let _ = child.kill().await;
 
     let full_cookie_string = cookies.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("; ");
 
