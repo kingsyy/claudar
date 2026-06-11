@@ -7,6 +7,7 @@
     thresholds: { five_hour: number[]; seven_day: number[] };
     notifications: {
       sound: boolean;
+      sound_name: string;
       persistent: boolean;
       notify_threshold_crossings: boolean;
       notify_predicted_overage: boolean;
@@ -32,7 +33,13 @@
   let fiveHourThresholdStr = $state("50,75,90,100");
   let sevenDayThresholdStr = $state("50,75,90,100");
 
+  const SOUND_OPTIONS = [
+    "Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero",
+    "Morse", "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink",
+  ];
+
   let soundEnabled = $state(true);
+  let soundName = $state("Glass");
   let persistentEnabled = $state(false);
   let notifyThresholdCrossings = $state(true);
   let notifyPredictedOverage = $state(true);
@@ -89,6 +96,7 @@
       sevenDayThresholdStr = config.thresholds.seven_day.join(",");
 
       soundEnabled = config.notifications.sound;
+      soundName = config.notifications.sound_name;
       persistentEnabled = config.notifications.persistent;
       notifyThresholdCrossings = config.notifications.notify_threshold_crossings;
       notifyPredictedOverage = config.notifications.notify_predicted_overage;
@@ -198,6 +206,12 @@
     persist((c) => {
       c.notifications.sound = soundEnabled;
     }, soundEnabled ? "Notification sounds enabled" : "Notification sounds disabled");
+  }
+
+  function saveSoundName() {
+    persist((c) => {
+      c.notifications.sound_name = soundName;
+    }, "Notification sound updated");
   }
 
   function togglePersistent() {
@@ -533,7 +547,16 @@
 
       {#if activeTab === "notifications"}
         <section class="card">
-          <h2>Notification Behavior</h2>
+          <h2>Test Notifications</h2>
+          <p class="hint">Send a test notification using your current settings below — useful while you tune sound and alert preferences.</p>
+          <button class="test-button" onclick={testNotification} disabled={testingNotification}>
+            {testingNotification ? "Sending…" : "Send Test Notification"}
+          </button>
+        </section>
+
+        <section class="card">
+          <h2>Sound &amp; Display</h2>
+          <p class="hint">Applies to every notification Claudar sends, regardless of which alert types below are enabled.</p>
           <div class="toggle-row">
             <div>
               <span class="toggle-label">Sound</span>
@@ -550,6 +573,21 @@
               <span class="switch-thumb"></span>
             </button>
           </div>
+
+          <div class="field-row">
+            <label for="sound-name">Sound</label>
+            <select
+              id="sound-name"
+              bind:value={soundName}
+              onchange={saveSoundName}
+              disabled={!soundEnabled}
+            >
+              {#each SOUND_OPTIONS as name}
+                <option value={name}>{name}</option>
+              {/each}
+            </select>
+          </div>
+          <p class="hint">Choose which system sound plays. Send a test notification above to preview it.</p>
 
           <div class="toggle-row">
             <div>
@@ -571,6 +609,7 @@
 
         <section class="card">
           <h2>Alert Types</h2>
+          <p class="hint">Turn individual kinds of alerts on or off. Each uses the sound and display settings above.</p>
           <div class="toggle-row">
             <div>
               <span class="toggle-label">Threshold crossing alerts</span>
@@ -604,11 +643,14 @@
               <span class="switch-thumb"></span>
             </button>
           </div>
+        </section>
 
+        <section class="card">
+          <h2>Reset Notifications</h2>
           <div class="toggle-row">
             <div>
-              <span class="toggle-label">Reset notifications</span>
-              <p class="hint">Notify when your usage limits reset.</p>
+              <span class="toggle-label">Notify when limits reset</span>
+              <p class="hint">Send an alert the moment your 5-hour or 7-day limit resets.</p>
             </div>
             <button
               class="switch"
@@ -621,12 +663,15 @@
               <span class="switch-thumb"></span>
             </button>
           </div>
-        </section>
 
-        <section class="card">
-          <h2>Pre-Reset Reminders</h2>
+          <h3>Pre-Reset Reminders</h3>
+          <p class="hint">
+            Get a heads-up shortly before a reset happens, so you can plan token-intensive work.
+            These reminders are part of reset notifications above — turn that off and these are
+            disabled too.
+          </p>
           <div class="field-row">
-            <label for="before-five-hour">Alert X minutes before 5-hour resets</label>
+            <label for="before-five-hour" class:label-disabled={!notifyResets}>Alert X minutes before 5-hour resets</label>
             <div class="input-with-suffix">
               <input
                 id="before-five-hour"
@@ -635,12 +680,13 @@
                 placeholder="Leave empty to disable"
                 bind:value={minutesBeforeFiveHourReset}
                 onchange={saveMinutesBeforeFiveHourReset}
+                disabled={!notifyResets}
               />
               <span class="suffix">min</span>
             </div>
           </div>
           <div class="field-row">
-            <label for="before-seven-day">Alert X minutes before 7-day resets</label>
+            <label for="before-seven-day" class:label-disabled={!notifyResets}>Alert X minutes before 7-day resets</label>
             <div class="input-with-suffix">
               <input
                 id="before-seven-day"
@@ -649,18 +695,11 @@
                 placeholder="Leave empty to disable"
                 bind:value={minutesBeforeSevenDayReset}
                 onchange={saveMinutesBeforeSevenDayReset}
+                disabled={!notifyResets}
               />
               <span class="suffix">min</span>
             </div>
           </div>
-        </section>
-
-        <section class="card">
-          <h2>Test Notifications</h2>
-          <p class="hint">Send a test notification to verify your notification settings work correctly.</p>
-          <button class="test-button" onclick={testNotification} disabled={testingNotification}>
-            {testingNotification ? "Sending…" : "Send Test Notification"}
-          </button>
         </section>
       {/if}
 
@@ -775,6 +814,15 @@
     color: hsl(222.2 84% 4.9%);
   }
 
+  h3 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin: 1rem 0 0.25rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid hsl(214.3 31.8% 91.4%);
+    color: hsl(222.2 84% 4.9%);
+  }
+
   .subtitle {
     color: hsl(215.4 16.3% 46.9%);
     font-size: 0.875rem;
@@ -850,7 +898,12 @@
     flex-shrink: 0;
   }
 
-  .field-row input {
+  .field-row label.label-disabled {
+    color: hsl(215.4 16.3% 46.9%);
+  }
+
+  .field-row input,
+  .field-row select {
     padding: 0.4rem 0.6rem;
     border: 1px solid hsl(214.3 31.8% 91.4%);
     border-radius: var(--radius);
@@ -858,7 +911,8 @@
     font-family: inherit;
   }
 
-  .field-row input:disabled {
+  .field-row input:disabled,
+  .field-row select:disabled {
     background-color: hsl(214.3 31.8% 97%);
     color: hsl(215.4 16.3% 46.9%);
     cursor: not-allowed;

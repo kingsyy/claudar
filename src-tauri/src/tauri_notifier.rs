@@ -7,13 +7,16 @@ pub struct TauriNotificationSender<R: Runtime> {
 }
 
 impl<R: Runtime> NotificationSender for TauriNotificationSender<R> {
-    fn send(&self, summary: &str, body: &str, timeout: Timeout, sound: bool) -> anyhow::Result<()> {
+    fn send(&self, summary: &str, body: &str, timeout: Timeout, sound: Option<&str>) -> anyhow::Result<()> {
         #[cfg(target_os = "macos")]
         {
             let _ = (&self.app, timeout);
             let safe_summary = summary.replace('\\', "\\\\").replace('"', "\\\"");
             let safe_body = body.replace('\\', "\\\\").replace('"', "\\\"");
-            let sound_clause = if sound { " sound name \"Glass\"" } else { "" };
+            let sound_clause = match sound {
+                Some(name) => format!(" sound name \"{}\"", name.replace('\\', "\\\\").replace('"', "\\\"")),
+                None => String::new(),
+            };
             let script = format!(
                 "display notification \"{safe_body}\" with title \"{safe_summary}\"{sound_clause}"
             );
@@ -32,8 +35,8 @@ impl<R: Runtime> NotificationSender for TauriNotificationSender<R> {
             use tauri_plugin_notification::NotificationExt;
             let _ = timeout;
             let mut builder = self.app.notification().builder().title(summary).body(body);
-            if sound {
-                builder = builder.sound("Glass");
+            if let Some(name) = sound {
+                builder = builder.sound(name);
             }
             builder.show().map_err(|e| anyhow::anyhow!("notification: {e}"))
         }

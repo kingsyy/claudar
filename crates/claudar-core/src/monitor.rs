@@ -366,7 +366,7 @@ fn process_limit(
             LimitType::SevenDay => config.notifications.minutes_before_seven_day_reset,
         };
 
-        if let Some(notification_minutes) = minutes_before_reset {
+        if let Some(notification_minutes) = minutes_before_reset.filter(|_| config.notifications.notify_resets) {
             let now = Utc::now();
             let time_until_reset = reset_time.signed_duration_since(now);
             let minutes_until_reset = time_until_reset.num_minutes();
@@ -491,7 +491,14 @@ fn process_limit(
             reset_time_utc,
             period_minutes,
         )?;
-        state.mark_threshold_notified(limit_type, highest_threshold);
+        // Mark *every* crossed band as notified, not just the highest. A single
+        // poll can jump past several thresholds (e.g. 0% → 80% crosses 50 and
+        // 75); we send one notification for the highest, but if we only marked
+        // that one the lower bands would still count as "uncrossed" and re-fire
+        // a spurious notification on the next identical poll.
+        for &threshold in &crossed_thresholds {
+            state.mark_threshold_notified(limit_type, threshold);
+        }
         tracing::info!(
             "Sent threshold notification for {} limit at {}%",
             limit_type.as_str(),
@@ -524,4 +531,181 @@ fn process_limit(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::notification_trait::MockNotificationSender;
+    use chrono::Duration;
+
+    /// RFC3339 reset timestamp `minutes` from now (UTC, with offset).
+    fn reset_in(minutes: i64) -> Option<String> {
+        Some((Utc::now() + Duration::minutes(minutes)).to_rfc3339())
+    }
+
+    fn limit(util: f64, minutes: i64) -> UsageLimit {
+        UsageLimit { utilization: util, resets_at: reset_in(minutes) }
+    }
+
+    // ---- compute_predicted_pct -------------------------------------------
+
+    #[test]
+    fn predicted_pct_none_without_reset_time() {
+        assert_eq!(compute_predicted_pct(80.0, &None, 300), None);
+    }
+
+    #[test]
+    fn predicted_pct_none_with_unparseable_reset() {
+        assert_eq!(
+            compute_predicted_pct(80.0, &Some("not-a-date".to_string()), 300),
+            None
+        );
+    }
+
+    #[test]
+    fn predicted_pct_none_when_under_ten_percent_elapsed() {
+        // Reset 290 min out of a 300 min period → only ~10 min (3.3%) elapsed.
+        let resets_at = reset_in(290);
+        assert_eq!(compute_predicted_pct(2.0, &resets_at, 300), None);
+    }
+
+    #[test]
+    fn predicted_pct_linear_extrapolation_at_midpoint() {
+        // 50% of the period elapsed, 30% used → linear projection ~60%.
+        let resets_at = reset_in(150);
+        let pred = compute_predicted_pct(30.0, &resets_at, 300).expect("should predict");
+        assert!((pred - 60.0).abs() < 2.0, "expected ~60, got {pred}");
+    }
+
+    #[test]
+    fn predicted_pct_parses_naive_timestamp_via_z_fallback() {
+        // Claude.ai sometimes returns timestamps without an offset; the code
+        // retries parsing with a trailing `Z`. Build a naive UTC string.
+        let naive = (Utc::now() + Duration::minutes(150))
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        let pred = compute_predicted_pct(30.0, &Some(naive), 300).expect("should predict");
+        assert!((pred - 60.0).abs() < 2.0, "expected ~60, got {pred}");
+    }
+
+    // ---- process_limit ----------------------------------------------------
+
+    fn process_five_hour(
+        sender: &MockNotificationSender,
+        config: &Config,
+        state: &mut MonitorState,
+        limit: &UsageLimit,
+    ) {
+        let other = UsageLimit { utilization: 0.0, resets_at: reset_in(10080) };
+        process_limit(
+            sender,
+            config,
+            state,
+            "default",
+            LimitType::FiveHour,
+            limit,
+            300,
+            LimitType::SevenDay,
+            &other,
+            false,
+            "UTC",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn threshold_crossing_notifies_once_and_does_not_refire() {
+        // Regression test: jumping to 80% crosses the 50 and 75 thresholds.
+        // We expect exactly ONE notification, and a second identical poll must
+        // NOT produce another. (Previously only the highest threshold was
+        // marked notified, so the lower band re-fired on the next poll.)
+        let config = Config::default();
+        let sender = MockNotificationSender::new();
+        let mut state = MonitorState::default();
+        // Reset 50 min out → ~83% of the period elapsed, so 80% used projects to
+        // ~96% (no overage warning) and we isolate the threshold-dedup behaviour.
+        let l = limit(80.0, 50);
+
+        process_five_hour(&sender, &config, &mut state, &l);
+        assert_eq!(sender.count(), 1, "should notify once on the crossing poll");
+
+        process_five_hour(&sender, &config, &mut state, &l);
+        assert_eq!(
+            sender.count(),
+            1,
+            "an identical follow-up poll must not re-notify a lower band"
+        );
+
+        // Both crossed bands should be recorded as notified.
+        assert!(state.is_threshold_notified(LimitType::FiveHour, 50));
+        assert!(state.is_threshold_notified(LimitType::FiveHour, 75));
+    }
+
+    #[test]
+    fn threshold_not_notified_below_lowest_band() {
+        let config = Config::default();
+        let sender = MockNotificationSender::new();
+        let mut state = MonitorState::default();
+        let l = limit(10.0, 200);
+
+        process_five_hour(&sender, &config, &mut state, &l);
+        assert_eq!(sender.count(), 0, "10% is below the 50 threshold");
+    }
+
+    #[test]
+    fn threshold_notifications_respect_disabled_flag() {
+        let mut config = Config::default();
+        config.notifications.notify_threshold_crossings = false;
+        let sender = MockNotificationSender::new();
+        let mut state = MonitorState::default();
+
+        process_five_hour(&sender, &config, &mut state, &limit(80.0, 50));
+        assert_eq!(sender.count(), 0, "disabled crossings must not notify");
+    }
+
+    #[test]
+    fn predicted_overage_warns_when_on_track_to_exceed() {
+        // 60% used at the midpoint of the period → projected ~120%.
+        // Expect a threshold notification (50 band) plus an overage warning.
+        let config = Config::default();
+        let sender = MockNotificationSender::new();
+        let mut state = MonitorState::default();
+
+        process_five_hour(&sender, &config, &mut state, &limit(60.0, 150));
+        assert_eq!(sender.count(), 2, "threshold + overage expected");
+        assert!(!state.should_warn_overage(LimitType::FiveHour), "overage cooldown set");
+    }
+
+    #[test]
+    fn upcoming_reset_notifies_once_within_window() {
+        let mut config = Config::default();
+        config.notifications.minutes_before_five_hour_reset = Some(15);
+        let sender = MockNotificationSender::new();
+        let mut state = MonitorState::default();
+        // Reset 10 min out (<=15) and 0% used → only the upcoming-reset notif fires.
+        let l = limit(0.0, 10);
+
+        process_five_hour(&sender, &config, &mut state, &l);
+        assert_eq!(sender.count(), 1, "upcoming reset should notify");
+        assert!(state.is_upcoming_reset_notified(LimitType::FiveHour));
+
+        process_five_hour(&sender, &config, &mut state, &l);
+        assert_eq!(sender.count(), 1, "upcoming reset must not re-notify");
+    }
+
+    #[test]
+    fn capacity_warning_fires_when_capacity_left_near_reset() {
+        let mut config = Config::default();
+        // Warn if <=60 min remain with >=20% capacity unused.
+        config.notifications.capacity_warning_five_hour = Some((60, 20));
+        let sender = MockNotificationSender::new();
+        let mut state = MonitorState::default();
+        // 30 min to reset, 10% used → 90% capacity left, threshold not crossed.
+        let l = limit(10.0, 30);
+
+        process_five_hour(&sender, &config, &mut state, &l);
+        assert_eq!(sender.count(), 1, "capacity warning should fire");
+        assert!(state.is_capacity_warning_notified(LimitType::FiveHour));
+    }
 }

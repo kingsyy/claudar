@@ -47,6 +47,9 @@ cargo build --release
 
 # Install to your PATH (optional)
 cargo install --path .
+
+# Free up build artifacts (~20GB) — safe to run after installing
+cargo clean
 ```
 
 ### Quick Start

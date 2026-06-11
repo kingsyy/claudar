@@ -17,13 +17,8 @@
   };
 
   type WindowRow = {
-    window_start: string;
-    window_end: string;
     peak_five_hour_pct: number;
-    hit_100: boolean;
-    time_to_100_mins: number | null;
-    seven_day_pct_at_start: number;
-    seven_day_pct_at_end: number;
+    /// Positive 7-day movement across the window (rises only; net drops clamp to 0).
     seven_day_delta: number;
   };
 
@@ -78,22 +73,8 @@
     const build = (slice: HistoryRecord[]): WindowRow => {
       const first = slice[0];
       const last = slice[slice.length - 1];
-      const peak = Math.max(...slice.map((r) => r.five_hour_pct));
-      const hit = slice.some((r) => r.five_hour_pct >= 100);
-      const hitRec = hit ? slice.find((r) => r.five_hour_pct >= 100) : undefined;
-      const mins = hitRec
-        ? Math.round(
-            (new Date(hitRec.polled_at).getTime() - new Date(first.polled_at).getTime()) / 60000,
-          )
-        : null;
       return {
-        window_start: first.polled_at,
-        window_end: last.polled_at,
-        peak_five_hour_pct: peak,
-        hit_100: hit,
-        time_to_100_mins: mins,
-        seven_day_pct_at_start: first.seven_day_pct,
-        seven_day_pct_at_end: last.seven_day_pct,
+        peak_five_hour_pct: Math.max(...slice.map((r) => r.five_hour_pct)),
         seven_day_delta: Math.max(0, last.seven_day_pct - first.seven_day_pct),
       };
     };
@@ -106,31 +87,96 @@
       }
     }
     out.push(build(records.slice(start)));
-    return out.reverse(); // newest first
+    return out;
   });
 
   // ── Derived: prediction ───────────────────────────────────────────────────────
   let prediction = $derived.by(() => {
     if (!records.length) return null;
-    const THEORETICAL = 100 / 33.6;
-    const maxed = windows.filter((w) => w.hit_100);
+    const THEORETICAL = 100 / 33.6; // ~2.98% of the 7-day budget per full 5-hour window
+
+    // Empirical cost = total 7-day budget consumed per full-window-equivalent of 5-hour
+    // usage. Counts every window with real usage (not just ones that pegged 100%), and
+    // only sums positive 7-day rises — a net drop means old usage aged off the rolling
+    // window, which says nothing about consumption, so those windows are skipped.
+    let consumed = 0; // Σ positive 7-day rises
+    let fullEquiv = 0; // Σ window fullness (peak / 100) over the same windows
+    for (const w of windows) {
+      if (w.seven_day_delta > 0 && w.peak_five_hour_pct > 0) {
+        consumed += w.seven_day_delta;
+        fullEquiv += w.peak_five_hour_pct / 100;
+      }
+    }
+    const empCost = fullEquiv > 0 ? consumed / fullEquiv : 0;
+
     let avgCost: number;
     let isEmpirical: boolean;
-    if (maxed.length >= 2) {
-      const raw = maxed.reduce((a, w) => a + w.seven_day_delta, 0) / maxed.length;
-      avgCost = raw > 0 ? raw : THEORETICAL;
+    // Trust the empirical figure only with enough observed usage and a plausible result;
+    // otherwise fall back to the theoretical rate.
+    if (fullEquiv >= 3 && empCost >= 0.3 && empCost <= 15) {
+      avgCost = empCost;
       isEmpirical = true;
     } else {
       avgCost = THEORETICAL;
       isEmpirical = false;
     }
+
     const current7d = records[records.length - 1].seven_day_pct;
     return {
       current7d,
       windowsRemaining: Math.max(0, 100 - current7d) / avgCost,
       avgCost,
       isEmpirical,
-      windowsObserved: maxed.length,
+      windowsObserved: Math.round(fullEquiv), // full-window-equivalents of usage observed
+    };
+  });
+
+  // ── Derived: 7-day pace (the real long-term constraint) ───────────────────────
+  let pace = $derived.by(() => {
+    if (records.length < 2) return null;
+    const last = records[records.length - 1];
+    const current = last.seven_day_pct;
+    const resetIso = last.seven_day_resets_at;
+    if (!resetIso) return null;
+
+    const DAY = 86_400_000;
+    const WINDOW = 7 * DAY;
+    const resetAt = new Date(resetIso).getTime();
+    const now = new Date(last.polled_at).getTime();
+    const windowStart = resetAt - WINDOW;
+
+    // Where you'd be if you spent the weekly budget evenly toward the reset.
+    const elapsed = Math.min(Math.max(now - windowStart, 0), WINDOW);
+    const evenPacePct = (elapsed / WINDOW) * 100;
+    const paceDiff = current - evenPacePct; // + = ahead (burning fast), − = behind
+
+    const daysToReset = Math.max(0, (resetAt - now) / DAY);
+    // How much you can spend per day from here and exactly reach 100% at reset.
+    const safePerDay = daysToReset > 0.01 ? (100 - current) / daysToReset : 0;
+
+    // Measured burn over the records inside the current 7-day window.
+    const inWindow = records.filter((r) => r.seven_day_resets_at === resetIso);
+    let burnPerDay: number | null = null;
+    if (inWindow.length >= 2) {
+      const f = inWindow[0];
+      const spanDays = (now - new Date(f.polled_at).getTime()) / DAY;
+      if (spanDays > 0.04) burnPerDay = (current - f.seven_day_pct) / spanDays;
+    }
+
+    let verdict: "spare" | "track" | "ease";
+    if (paceDiff > 10) verdict = "ease";
+    else if (paceDiff < -10) verdict = "spare";
+    else verdict = "track";
+
+    return {
+      current,
+      evenPacePct,
+      paceDiff,
+      daysToReset,
+      safePerDay,
+      burnPerDay,
+      verdict,
+      resetAt,
     };
   });
 
@@ -284,10 +330,28 @@
       hour: "2-digit",
       minute: "2-digit",
     });
-  const fmtMins = (m: number) =>
-    m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60 > 0 ? `${m % 60}m` : ""}`.trim();
   const hourLabel = (h: number) =>
     h === 0 ? "12a" : h === 12 ? "12p" : h < 12 ? `${h}a` : `${h - 12}p`;
+  const fmtRate = (n: number) => `${n.toFixed(1)}%/day`;
+  const fmtDays = (d: number) =>
+    d < 1 ? `${Math.round(d * 24)}h` : `${d.toFixed(d < 2 ? 1 : 0)}d`;
+  const fmtResetDate = (ms: number) =>
+    new Date(ms).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+
+  const PACE_COPY = {
+    spare: {
+      title: "Room to spare — push harder",
+      tone: "You're behind your even-pace line. You can lean in without risking the weekly limit.",
+    },
+    track: {
+      title: "Right on pace",
+      tone: "You're tracking to spend the weekly budget evenly through the reset. Keep going.",
+    },
+    ease: {
+      title: "Ahead of pace — ease off",
+      tone: "At this rate you'll exhaust the weekly limit before it resets. Consider slowing down.",
+    },
+  } as const;
 </script>
 
 <div class="page">
@@ -531,49 +595,74 @@
       </div>
     {/if}
 
-    <!-- Windows breakdown -->
-    {#if windows.length > 0}
+    <!-- Pace: are you ahead or behind on the weekly budget? -->
+    {#if pace}
       <section class="section">
-        <h2>5-Hour Windows</h2>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Window start</th>
-                <th>Peak 5h</th>
-                <th>Hit limit</th>
-                <th>Time to limit</th>
-                <th>7d cost</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each windows as w (w.window_start)}
-                <tr>
-                  <td>{fmtTime(w.window_start)}</td>
-                  <td>
-                    <span
-                      class="pct-text"
-                      class:pct-high={w.peak_five_hour_pct >= 80}
-                      class:pct-mid={w.peak_five_hour_pct >= 50 && w.peak_five_hour_pct < 80}
-                    >
-                      {fmtPct(w.peak_five_hour_pct)}
-                    </span>
-                  </td>
-                  <td>
-                    {#if w.hit_100}
-                      <span class="badge badge-hit">Yes</span>
-                    {:else}
-                      <span class="badge badge-no">No</span>
-                    {/if}
-                  </td>
-                  <td>{w.time_to_100_mins != null ? fmtMins(w.time_to_100_mins) : "—"}</td>
-                  <td class="delta">
-                    {w.seven_day_delta > 0 ? `+${w.seven_day_delta.toFixed(1)}%` : "—"}
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+        <h2>Weekly pace</h2>
+        <p class="section-sub">
+          The 7-day limit is your real ceiling. This compares where you are against spending it
+          evenly until it resets.
+        </p>
+
+        <div class="pace-card pace-{pace.verdict}">
+          <div class="pace-head">
+            <span class="pace-icon" aria-hidden="true"
+              >{pace.verdict === "spare" ? "🟢" : pace.verdict === "ease" ? "🔴" : "🟡"}</span
+            >
+            <div>
+              <div class="pace-title">{PACE_COPY[pace.verdict].title}</div>
+              <div class="pace-tone">{PACE_COPY[pace.verdict].tone}</div>
+            </div>
+          </div>
+
+          <!-- Pace bar: fill = used now, tick = where even-pace sits -->
+          <div class="pace-bar" role="img"
+            aria-label={`${fmtPct(pace.current)} used, even pace at ${fmtPct(pace.evenPacePct)}`}>
+            <div class="pace-fill" style:width="{Math.min(pace.current, 100)}%"></div>
+            <div class="pace-marker" style:left="{Math.min(pace.evenPacePct, 100)}%">
+              <span class="pace-marker-label">even pace</span>
+            </div>
+          </div>
+          <div class="pace-scale"><span>0%</span><span>weekly limit · 100%</span></div>
+
+          <div class="pace-stats">
+            <div class="pace-stat">
+              <span class="pace-stat-label">Used now</span>
+              <span class="pace-stat-value">{fmtPct(pace.current)}</span>
+            </div>
+            <div class="pace-stat">
+              <span class="pace-stat-label">vs. even pace</span>
+              <span
+                class="pace-stat-value"
+                class:over={pace.paceDiff > 10}
+                class:under={pace.paceDiff < -10}
+              >
+                {pace.paceDiff >= 0 ? "+" : "−"}{Math.abs(pace.paceDiff).toFixed(0)}%
+              </span>
+            </div>
+            <div class="pace-stat">
+              <span class="pace-stat-label">Safe daily budget</span>
+              <span class="pace-stat-value">{fmtRate(pace.safePerDay)}</span>
+            </div>
+            {#if pace.burnPerDay != null}
+              <div class="pace-stat">
+                <span class="pace-stat-label">Recent burn</span>
+                <span
+                  class="pace-stat-value"
+                  class:over={pace.burnPerDay > pace.safePerDay + 1}
+                  class:under={pace.burnPerDay < pace.safePerDay - 1}
+                >
+                  {fmtRate(pace.burnPerDay)}
+                </span>
+              </div>
+            {/if}
+            <div class="pace-stat">
+              <span class="pace-stat-label">Resets</span>
+              <span class="pace-stat-value"
+                >{fmtResetDate(pace.resetAt)} · {fmtDays(pace.daysToReset)}</span
+              >
+            </div>
+          </div>
         </div>
       </section>
     {/if}
@@ -1030,81 +1119,133 @@
     margin: 0 0 0.75rem;
   }
 
-  /* ── Windows table ──────────────────────────────────────────────────────────── */
-  .table-wrap {
+  /* ── Weekly pace ────────────────────────────────────────────────────────────── */
+  .pace-card {
     border: 1px solid hsl(214.3 31.8% 91.4%);
     border-radius: var(--radius);
-    overflow: hidden;
+    background: hsl(0 0% 100%);
+    padding: 1.1rem 1.25rem 1.25rem;
   }
 
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.8125rem;
+  .pace-card.pace-spare {
+    border-color: hsl(142 60% 70%);
+    background: hsl(142 70% 98%);
   }
 
-  thead tr {
-    background: hsl(210 40% 98%);
+  .pace-card.pace-ease {
+    border-color: hsl(0 84% 70%);
+    background: hsl(0 86% 98%);
   }
 
-  th {
-    padding: 0.55rem 0.85rem;
-    text-align: left;
+  .pace-head {
+    display: flex;
+    gap: 0.6rem;
+    align-items: flex-start;
+    margin-bottom: 1rem;
+  }
+
+  .pace-icon {
+    font-size: 1.1rem;
+    line-height: 1.4;
+  }
+
+  .pace-title {
+    font-size: 0.95rem;
     font-weight: 600;
-    font-size: 0.7rem;
-    color: hsl(215.4 16.3% 46.9%);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    border-bottom: 1px solid hsl(214.3 31.8% 91.4%);
-  }
-
-  td {
-    padding: 0.5rem 0.85rem;
-    border-bottom: 1px solid hsl(214.3 31.8% 91.4%);
     color: hsl(222.2 84% 4.9%);
   }
 
-  tbody tr:last-child td {
-    border-bottom: none;
+  .pace-tone {
+    font-size: 0.8rem;
+    color: hsl(215.4 16.3% 40%);
+    margin-top: 0.1rem;
   }
 
-  tbody tr:hover td {
-    background: hsl(210 40% 98.5%);
+  .pace-bar {
+    position: relative;
+    height: 12px;
+    border-radius: 6px;
+    background: hsl(214.3 31.8% 91.4%);
+    overflow: visible;
+    margin-top: 0.5rem;
   }
 
-  .pct-text {
+  .pace-fill {
+    height: 100%;
+    border-radius: 6px;
+    background: hsl(25 95% 55%);
+  }
+
+  .pace-spare .pace-fill {
+    background: hsl(142 65% 45%);
+  }
+
+  .pace-ease .pace-fill {
+    background: hsl(0 75% 55%);
+  }
+
+  .pace-marker {
+    position: absolute;
+    top: -4px;
+    bottom: -4px;
+    width: 2px;
+    background: hsl(222.2 84% 25%);
+    transform: translateX(-1px);
+  }
+
+  .pace-marker-label {
+    position: absolute;
+    top: -16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.6rem;
+    color: hsl(222.2 84% 30%);
+    white-space: nowrap;
+  }
+
+  .pace-scale {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.65rem;
+    color: hsl(215.4 16.3% 56%);
+    margin-top: 0.35rem;
+  }
+
+  .pace-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.25rem;
+    margin-top: 1.1rem;
+    padding-top: 1rem;
+    border-top: 1px solid hsl(214.3 31.8% 91.4%);
+  }
+
+  .pace-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .pace-stat-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: hsl(215.4 16.3% 46.9%);
+  }
+
+  .pace-stat-value {
+    font-size: 0.95rem;
     font-weight: 600;
+    color: hsl(222.2 84% 4.9%);
+    font-variant-numeric: tabular-nums;
   }
 
-  .pct-high {
+  .pace-stat-value.over {
     color: hsl(0 70% 45%);
   }
 
-  .pct-mid {
-    color: hsl(38 92% 32%);
-  }
-
-  .badge {
-    display: inline-block;
-    padding: 0.1rem 0.42rem;
-    border-radius: 4px;
-    font-size: 0.72rem;
-    font-weight: 600;
-  }
-
-  .badge-hit {
-    background: hsl(0 84% 93%);
-    color: hsl(0 70% 38%);
-  }
-
-  .badge-no {
-    background: hsl(142 60% 92%);
-    color: hsl(142 55% 28%);
-  }
-
-  .delta {
-    color: hsl(215.4 16.3% 46.9%);
-    font-variant-numeric: tabular-nums;
+  .pace-stat-value.under {
+    color: hsl(142 55% 32%);
   }
 
   /* ── Daily pattern ──────────────────────────────────────────────────────────── */

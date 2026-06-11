@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex};
 
 /// Trait for sending notifications, allowing for mocking in tests
 pub trait NotificationSender: Send + Sync {
-    fn send(&self, summary: &str, body: &str, timeout: Timeout, sound: bool) -> anyhow::Result<()>;
+    /// `sound` is `Some(name)` to play the named system sound, or `None` for silence.
+    fn send(&self, summary: &str, body: &str, timeout: Timeout, sound: Option<&str>) -> anyhow::Result<()>;
 }
 
 /// Real notification sender.
@@ -17,16 +18,15 @@ pub trait NotificationSender: Send + Sync {
 pub struct RealNotificationSender;
 
 impl NotificationSender for RealNotificationSender {
-    fn send(&self, summary: &str, body: &str, timeout: Timeout, sound: bool) -> anyhow::Result<()> {
+    fn send(&self, summary: &str, body: &str, timeout: Timeout, sound: Option<&str>) -> anyhow::Result<()> {
         #[cfg(target_os = "macos")]
         {
             let _ = timeout; // osascript doesn't support custom timeouts
             let safe_summary = summary.replace('\\', "\\\\").replace('"', "\\\"");
             let safe_body = body.replace('\\', "\\\\").replace('"', "\\\"");
-            let sound_clause = if sound {
-                " sound name \"Glass\""
-            } else {
-                ""
+            let sound_clause = match sound {
+                Some(name) => format!(" sound name \"{}\"", name.replace('\\', "\\\\").replace('"', "\\\"")),
+                None => String::new(),
             };
             let script = format!(
                 "display notification \"{safe_body}\" with title \"{safe_summary}\"{sound_clause}"
@@ -68,7 +68,7 @@ pub struct SentNotification {
     pub summary: String,
     pub body: String,
     pub timeout_ms: Option<u32>, // None for Timeout::Never
-    pub sound: bool,
+    pub sound: Option<String>,
 }
 
 #[cfg(test)]
@@ -94,7 +94,7 @@ impl MockNotificationSender {
 
 #[cfg(test)]
 impl NotificationSender for MockNotificationSender {
-    fn send(&self, summary: &str, body: &str, timeout: Timeout, sound: bool) -> anyhow::Result<()> {
+    fn send(&self, summary: &str, body: &str, timeout: Timeout, sound: Option<&str>) -> anyhow::Result<()> {
         let timeout_ms = match timeout {
             Timeout::Milliseconds(ms) => Some(ms),
             Timeout::Never => None,
@@ -105,7 +105,7 @@ impl NotificationSender for MockNotificationSender {
             summary: summary.to_string(),
             body: body.to_string(),
             timeout_ms,
-            sound,
+            sound: sound.map(|s| s.to_string()),
         };
 
         self.sent_notifications.lock().unwrap().push(notification);
@@ -121,7 +121,7 @@ mod tests {
     fn test_mock_sender_records_notifications() {
         let mock = MockNotificationSender::new();
 
-        mock.send("Test Summary", "Test Body", Timeout::Milliseconds(5000), true)
+        mock.send("Test Summary", "Test Body", Timeout::Milliseconds(5000), Some("Glass"))
             .unwrap();
 
         let sent = mock.get_sent();
@@ -129,25 +129,25 @@ mod tests {
         assert_eq!(sent[0].summary, "Test Summary");
         assert_eq!(sent[0].body, "Test Body");
         assert_eq!(sent[0].timeout_ms, Some(5000));
-        assert!(sent[0].sound);
+        assert_eq!(sent[0].sound.as_deref(), Some("Glass"));
     }
 
     #[test]
     fn test_mock_sender_handles_never_timeout() {
         let mock = MockNotificationSender::new();
 
-        mock.send("Test", "Body", Timeout::Never, false).unwrap();
+        mock.send("Test", "Body", Timeout::Never, None).unwrap();
 
         let sent = mock.get_sent();
         assert_eq!(sent[0].timeout_ms, None);
-        assert!(!sent[0].sound);
+        assert!(sent[0].sound.is_none());
     }
 
     #[test]
     fn test_mock_sender_clear() {
         let mock = MockNotificationSender::new();
 
-        mock.send("Test", "Body", Timeout::Milliseconds(1000), false).unwrap();
+        mock.send("Test", "Body", Timeout::Milliseconds(1000), None).unwrap();
         assert_eq!(mock.count(), 1);
 
         mock.clear();

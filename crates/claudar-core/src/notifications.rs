@@ -6,6 +6,12 @@ use crate::time_format;
 use chrono::{DateTime, Utc};
 use notify_rust::Timeout;
 
+/// Resolve the sound argument for `NotificationSender::send` from config:
+/// `Some(name)` if sounds are enabled, `None` if muted.
+fn sound_arg(config: &NotificationsConfig) -> Option<&str> {
+    config.sound.then_some(config.sound_name.as_str())
+}
+
 /// Format a notification title with optional instance prefix.
 /// When instance_name is "default", no prefix is added (backward compat).
 fn format_title(instance_name: &str, title: &str) -> String {
@@ -75,7 +81,7 @@ pub fn notify_threshold(
         predicted_line,
     );
 
-    sender.send(&summary, &body, timeout, config.sound)?;
+    sender.send(&summary, &body, timeout, sound_arg(config))?;
 
     Ok(())
 }
@@ -127,7 +133,7 @@ pub fn notify_predicted_overage(
         pace_line
     );
 
-    sender.send(&summary, &body, timeout, config.sound)?;
+    sender.send(&summary, &body, timeout, sound_arg(config))?;
 
     Ok(())
 }
@@ -161,7 +167,7 @@ pub fn notify_reset(
         limit_type.as_str()
     );
 
-    sender.send(&summary, &body, timeout, config.sound)?;
+    sender.send(&summary, &body, timeout, sound_arg(config))?;
 
     Ok(())
 }
@@ -199,7 +205,7 @@ pub fn notify_upcoming_reset(
         remaining_capacity
     );
 
-    sender.send(&summary, &body, timeout, config.sound)?;
+    sender.send(&summary, &body, timeout, sound_arg(config))?;
 
     Ok(())
 }
@@ -251,7 +257,7 @@ pub fn notify_unused_capacity(
         other_reset_str
     );
 
-    sender.send(&summary, &body, timeout, config.sound)?;
+    sender.send(&summary, &body, timeout, sound_arg(config))?;
 
     Ok(())
 }
@@ -286,6 +292,7 @@ mod tests {
     fn default_config() -> NotificationsConfig {
         NotificationsConfig {
             sound: true,
+            sound_name: "Glass".to_string(),
             persistent: false,
             notify_threshold_crossings: true,
             notify_predicted_overage: true,

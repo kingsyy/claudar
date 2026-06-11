@@ -97,11 +97,14 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 Timeout::Milliseconds(10000)
             };
-            let sound = cfg.notifications.sound;
+            let sound = cfg
+                .notifications
+                .sound
+                .then_some(cfg.notifications.sound_name.as_str());
 
             println!(
                 "Sending test notifications (sound: {}, persistent: {})...",
-                sound, cfg.notifications.persistent
+                cfg.notifications.sound, cfg.notifications.persistent
             );
 
             sender.send(

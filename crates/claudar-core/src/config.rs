@@ -64,6 +64,9 @@ pub struct ThresholdsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationsConfig {
     pub sound: bool,
+    /// Name of the system sound to play (e.g. "Glass", "Ping")
+    #[serde(default = "default_sound_name")]
+    pub sound_name: String,
     pub persistent: bool,
     #[serde(default = "default_true")]
     pub notify_threshold_crossings: bool,
@@ -91,6 +94,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_sound_name() -> String {
+    "Glass".to_string()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -105,6 +112,7 @@ impl Default for Config {
             },
             notifications: NotificationsConfig {
                 sound: true,
+                sound_name: default_sound_name(),
                 persistent: false,
                 notify_threshold_crossings: true,
                 notify_predicted_overage: true,
@@ -210,6 +218,7 @@ mod tests {
         assert_eq!(config.thresholds.five_hour, vec![50, 75, 90, 100]);
         assert_eq!(config.thresholds.seven_day, vec![50, 75, 90, 100]);
         assert!(config.notifications.sound);
+        assert_eq!(config.notifications.sound_name, "Glass");
         assert!(!config.notifications.persistent);
         assert!(config.notifications.notify_threshold_crossings);
         assert!(config.notifications.notify_predicted_overage);
@@ -264,6 +273,7 @@ mod tests {
         assert_eq!(deserialized.general.timezone, config.general.timezone);
         assert_eq!(deserialized.thresholds.five_hour, config.thresholds.five_hour);
         assert_eq!(deserialized.notifications.sound, config.notifications.sound);
+        assert_eq!(deserialized.notifications.sound_name, config.notifications.sound_name);
     }
 
     #[test]
