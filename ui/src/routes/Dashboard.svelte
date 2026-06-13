@@ -71,12 +71,17 @@
     return `${minutes}m`;
   }
 
+  function formatAbsoluteTime(iso: string | null | undefined): string {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
   const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
   const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
 
-  /// Percentage of the reset window that has elapsed, derived from how long until reset.
-  function timeElapsedPct(iso: string | null | undefined, windowMs: number): number | null {
-    if (!iso) return null;
+  function timeElapsedPct(iso: string | null | undefined, windowMs: number): number {
+    if (!iso) return 0;
     const remaining = new Date(iso).getTime() - now;
     if (remaining <= 0) return 100;
     const elapsed = windowMs - remaining;
@@ -84,10 +89,19 @@
     return Math.min(100, (elapsed / windowMs) * 100);
   }
 
-  function gaugeColor(pct: number): string {
-    if (pct >= 90) return "hsl(0 84% 60%)";
-    if (pct >= 70) return "hsl(38 92% 50%)";
-    return "hsl(142 71% 45%)";
+  // Mirrors the Rust pace::calculate_pace_info logic (±10% dead band)
+  function paceInfo(usagePct: number, timePct: number): { label: string; kind: "over" | "under" | "on" } {
+    const diff = usagePct - timePct;
+    if (diff > 10) return { label: `${diff.toFixed(1)}% over pace`, kind: "over" };
+    if (diff < -10) return { label: `${Math.abs(diff).toFixed(1)}% under pace`, kind: "under" };
+    return { label: "On pace", kind: "on" };
+  }
+
+  function statusInfo(pct: number): { label: string; kind: "ok" | "elevated" | "warning" | "critical" } {
+    if (pct >= 90) return { label: "Critical", kind: "critical" };
+    if (pct >= 70) return { label: "Warning", kind: "warning" };
+    if (pct >= 50) return { label: "Elevated", kind: "elevated" };
+    return { label: "OK", kind: "ok" };
   }
 
   function formatTimeSince(timestamp: number | undefined): string {
@@ -172,54 +186,88 @@
       <p>Waiting for the first usage update…</p>
     </div>
   {:else if usage}
-    <div class="gauges">
-      <div class="gauge-card">
-        <div
-          class="gauge"
-          style={`--pct: ${usage.five_hour_pct}; --color: ${gaugeColor(usage.five_hour_pct)}`}
-        >
-          <span class="gauge-value">
-            {usage.five_hour_pct.toFixed(0)}%
-            {#if timeElapsedPct(usage.resets_at, FIVE_HOUR_MS) != null}
-              <span class="gauge-time">{timeElapsedPct(usage.resets_at, FIVE_HOUR_MS)!.toFixed(0)}% elapsed</span>
-            {/if}
-          </span>
+    {@const fiveTimePct = timeElapsedPct(usage.resets_at, FIVE_HOUR_MS)}
+    {@const sevenTimePct = timeElapsedPct(usage.seven_day_resets_at, SEVEN_DAY_MS)}
+    {@const fivePace = paceInfo(usage.five_hour_pct, fiveTimePct)}
+    {@const sevenPace = paceInfo(usage.seven_day_pct, sevenTimePct)}
+    {@const fiveStatus = statusInfo(usage.five_hour_pct)}
+    {@const sevenStatus = statusInfo(usage.seven_day_pct)}
+
+    <div class="limit-cards">
+      <!-- 5-hour card -->
+      <div class="limit-card">
+        <div class="card-header">
+          <span class="card-title">5-Hour Limit</span>
+          <span class="status-badge status-{fiveStatus.kind}">{fiveStatus.label}</span>
+          <span class="pace-badge pace-{fivePace.kind}">{fivePace.label}</span>
         </div>
-        <h2>5-hour usage</h2>
-        <p class="sub">Resets in {formatCountdown(usage.resets_at)}</p>
+
+        <div class="bars">
+          <div class="bar-row">
+            <span class="bar-icon" title="Time elapsed">⏱</span>
+            <div class="bar-track">
+              <div class="bar-fill bar-time" style="width: {fiveTimePct}%"></div>
+            </div>
+            <span class="bar-pct muted">{fiveTimePct.toFixed(1)}%</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-icon" title="Tokens used">💬</span>
+            <div class="bar-track">
+              <div class="bar-fill bar-usage bar-usage-{fiveStatus.kind}" style="width: {usage.five_hour_pct}%"></div>
+            </div>
+            <span class="bar-pct">{usage.five_hour_pct.toFixed(1)}%</span>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          Resets in <strong>{formatCountdown(usage.resets_at)}</strong>
+          {#if usage.resets_at}
+            <span class="muted">· at {formatAbsoluteTime(usage.resets_at)}</span>
+          {/if}
+        </div>
       </div>
 
-      <div class="gauge-card">
-        <div
-          class="gauge"
-          style={`--pct: ${usage.seven_day_pct}; --color: ${gaugeColor(usage.seven_day_pct)}`}
-        >
-          <span class="gauge-value">
-            {usage.seven_day_pct.toFixed(0)}%
-            {#if timeElapsedPct(usage.seven_day_resets_at, SEVEN_DAY_MS) != null}
-              <span class="gauge-time">{timeElapsedPct(usage.seven_day_resets_at, SEVEN_DAY_MS)!.toFixed(0)}% elapsed</span>
-            {/if}
-          </span>
+      <!-- 7-day card -->
+      <div class="limit-card">
+        <div class="card-header">
+          <span class="card-title">7-Day Limit</span>
+          <span class="status-badge status-{sevenStatus.kind}">{sevenStatus.label}</span>
+          <span class="pace-badge pace-{sevenPace.kind}">{sevenPace.label}</span>
         </div>
-        <h2>7-day usage</h2>
-        <p class="sub">Resets in {formatCountdown(usage.seven_day_resets_at)}</p>
+
+        <div class="bars">
+          <div class="bar-row">
+            <span class="bar-icon" title="Time elapsed">⏱</span>
+            <div class="bar-track">
+              <div class="bar-fill bar-time" style="width: {sevenTimePct}%"></div>
+            </div>
+            <span class="bar-pct muted">{sevenTimePct.toFixed(1)}%</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-icon" title="Tokens used">💬</span>
+            <div class="bar-track">
+              <div class="bar-fill bar-usage bar-usage-{sevenStatus.kind}" style="width: {usage.seven_day_pct}%"></div>
+            </div>
+            <span class="bar-pct">{usage.seven_day_pct.toFixed(1)}%</span>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          Resets in <strong>{formatCountdown(usage.seven_day_resets_at)}</strong>
+          {#if usage.seven_day_resets_at}
+            <span class="muted">· at {formatAbsoluteTime(usage.seven_day_resets_at)}</span>
+          {/if}
+        </div>
       </div>
     </div>
 
-    <div class="stats-footer">
-      <div class="stat-row">
-        <span class="stat-label">Expected 5-hour usage at reset</span>
-        <span class="stat-value">
-          {usage.predicted_pct != null ? `${usage.predicted_pct.toFixed(0)}%` : "—"}
-        </span>
-      </div>
+    <div class="meta-row">
       {#if usage.predicted_pct != null}
-        <p class="stat-hint">Based on your current usage rate</p>
+        <span class="meta-item">
+          Predicted 5h usage: <strong>{usage.predicted_pct.toFixed(0)}%</strong>
+        </span>
       {/if}
-      <div class="stat-row">
-        <span class="stat-label">Last updated</span>
-        <span class="stat-value">{formatTimeSince(lastUpdate)}</span>
-      </div>
+      <span class="meta-item muted">Updated {formatTimeSince(lastUpdate)}</span>
     </div>
   {/if}
 </div>
@@ -227,16 +275,17 @@
 <style>
   .page {
     padding: 2rem;
-    max-width: 720px;
+    max-width: 680px;
   }
 
   h1 {
     font-size: 1.5rem;
     font-weight: 600;
-    margin: 0 0 1rem;
+    margin: 0 0 1.25rem;
     color: hsl(222.2 84% 4.9%);
   }
 
+  /* Tabs */
   .tabs {
     display: flex;
     gap: 0.25rem;
@@ -254,9 +303,7 @@
     cursor: pointer;
   }
 
-  .tab:hover {
-    color: hsl(var(--foreground));
-  }
+  .tab:hover { color: hsl(var(--foreground)); }
 
   .tab.active {
     color: hsl(var(--foreground));
@@ -264,6 +311,7 @@
     font-weight: 600;
   }
 
+  /* Error / loading */
   .error-banner {
     background-color: hsl(0 84% 95%);
     color: hsl(0 70% 40%);
@@ -293,105 +341,137 @@
     animation: spin 0.8s linear infinite;
   }
 
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
-  .gauges {
-    display: flex;
-    gap: 2rem;
-    flex-wrap: wrap;
-    margin-bottom: 2rem;
-  }
-
-  .gauge-card {
+  /* Cards */
+  .limit-cards {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
   }
 
-  .gauge {
-    --pct: 0;
-    --color: hsl(142 71% 45%);
-    width: 9rem;
-    height: 9rem;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: conic-gradient(
-      var(--color) calc(var(--pct) * 1%),
-      hsl(var(--muted)) calc(var(--pct) * 1%)
-    );
-  }
-
-  .gauge-value {
-    background: hsl(var(--background));
-    border-radius: 50%;
-    width: 6.5rem;
-    height: 6.5rem;
+  .limit-card {
+    background: hsl(var(--card, var(--background)));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
     display: flex;
     flex-direction: column;
+    gap: 0.85rem;
+  }
+
+  /* Card header */
+  .card-header {
+    display: flex;
     align-items: center;
-    justify-content: center;
-    gap: 0.15rem;
-    font-size: 1.5rem;
+    gap: 0.6rem;
+  }
+
+  .card-title {
     font-weight: 600;
+    font-size: 0.95rem;
     color: hsl(var(--foreground));
+    flex: 1;
   }
 
-  .gauge-time {
-    font-size: 0.65rem;
-    font-weight: 500;
+  /* Status badge */
+  .status-badge {
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 0.15rem 0.5rem;
+    border-radius: 99px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  .status-ok       { background: hsl(142 71% 90%); color: hsl(142 60% 28%); }
+  .status-elevated { background: hsl(38 92% 90%);  color: hsl(38 80% 30%);  }
+  .status-warning  { background: hsl(38 92% 88%);  color: hsl(38 80% 28%);  }
+  .status-critical { background: hsl(0 84% 92%);   color: hsl(0 70% 38%);   }
+
+  /* Pace badge */
+  .pace-badge {
+    font-size: 0.78rem;
     color: hsl(var(--muted-foreground));
   }
 
-  h2 {
-    font-size: 0.95rem;
-    font-weight: 600;
-    margin: 0;
+  .pace-over  { color: hsl(38 80% 38%); }
+  .pace-under { color: hsl(142 60% 35%); }
+  .pace-on    { color: hsl(var(--muted-foreground)); }
+
+  /* Progress bars */
+  .bars {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+
+  .bar-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  .bar-icon {
+    width: 1.25rem;
+    text-align: center;
+    font-size: 0.85rem;
+    flex-shrink: 0;
+  }
+
+  .bar-track {
+    flex: 1;
+    height: 8px;
+    background: hsl(var(--muted));
+    border-radius: 99px;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 99px;
+    transition: width 0.4s ease;
+  }
+
+  .bar-time {
+    background: hsl(215 20% 65%);
+  }
+
+  .bar-usage-ok       { background: hsl(142 71% 45%); }
+  .bar-usage-elevated { background: hsl(38 92% 50%); }
+  .bar-usage-warning  { background: hsl(38 92% 50%); }
+  .bar-usage-critical { background: hsl(0 84% 60%); }
+
+  .bar-pct {
+    font-size: 0.78rem;
+    font-weight: 500;
+    width: 3.5rem;
+    text-align: right;
+    flex-shrink: 0;
     color: hsl(var(--foreground));
   }
 
-  .sub {
+  /* Card footer */
+  .card-footer {
+    font-size: 0.8rem;
+    color: hsl(var(--foreground));
+  }
+
+  /* Meta row */
+  .meta-row {
+    display: flex;
+    gap: 1.5rem;
     font-size: 0.8rem;
     color: hsl(var(--muted-foreground));
-    margin: 0;
+    flex-wrap: wrap;
   }
 
-  .stats-footer {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    margin-top: 1.5rem;
-  }
-
-  .stat-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.75rem 1rem;
-    background-color: hsl(var(--secondary));
-    border-radius: var(--radius);
-    font-size: 0.875rem;
-  }
-
-  .stat-label {
-    color: hsl(var(--muted-foreground));
-  }
-
-  .stat-value {
-    font-weight: 600;
+  .meta-item strong {
     color: hsl(var(--foreground));
   }
 
-  .stat-hint {
-    margin: -0.5rem 1rem 0;
-    font-size: 0.75rem;
+  .muted {
     color: hsl(var(--muted-foreground));
-    font-style: italic;
   }
 </style>
