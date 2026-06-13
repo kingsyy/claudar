@@ -1,9 +1,12 @@
 use claudar_core::config::Config;
 use claudar_core::storage::SessionData;
+use claudar_core::time_format;
 use crate::service;
+use crate::usage::display_instance_usage;
+use chrono::Local;
 use colored::Colorize;
 
-pub fn run_status(_verbose: bool) -> anyhow::Result<()> {
+pub async fn run_status(_verbose: bool) -> anyhow::Result<()> {
     println!("\n{}", "Claudar Status".bold());
     println!("{}", "━".repeat(50));
     println!();
@@ -22,6 +25,40 @@ pub fn run_status(_verbose: bool) -> anyhow::Result<()> {
 
     // Session Info Section
     display_session_info()?;
+    println!();
+
+    // Usage Section
+    println!("{}", "Usage".bold().underline());
+    println!();
+
+    let config = Config::load()?;
+    let now = Local::now();
+    let timestamp = time_format::format_datetime_24h(&now, &config.general.timezone)
+        .unwrap_or_else(|_| now.format("%H:%M %d/%m/%Y").to_string());
+    println!("  Fetched at: {}", timestamp.bright_black());
+    println!();
+
+    let instances = config.effective_instances();
+    let show_headers = instances.len() > 1;
+
+    for (idx, instance) in instances.iter().enumerate() {
+        if show_headers {
+            println!(
+                "  ── {} {}",
+                instance.name.bold(),
+                "─".repeat(46 - instance.name.len())
+            );
+            println!();
+        }
+
+        if let Err(e) = display_instance_usage(&config, &instance.name, false).await {
+            eprintln!("  Error fetching usage for '{}': {}", instance.name, e);
+        }
+
+        if show_headers && idx < instances.len() - 1 {
+            println!();
+        }
+    }
     println!();
 
     Ok(())

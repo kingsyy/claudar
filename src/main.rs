@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
             usage::run_usage(cli.verbose, instance).await?;
         }
         Commands::Status => {
-            status::run_status(cli.verbose)?;
+            status::run_status(cli.verbose).await?;
         }
         Commands::Config { action } => match action {
             ConfigAction::List => {

@@ -58,7 +58,7 @@ pub async fn run_usage(verbose: bool, instance_filter: Option<String>) -> anyhow
     Ok(())
 }
 
-async fn display_instance_usage(
+pub async fn display_instance_usage(
     config: &Config,
     instance_name: &str,
     _verbose: bool,
