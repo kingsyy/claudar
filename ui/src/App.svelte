@@ -23,7 +23,6 @@
   let unlistenAuthComplete: UnlistenFn | undefined;
 
   const navItems: { id: Route; label: string; icon: string }[] = [
-    { id: "dashboard", label: "Dashboard", icon: "⬤" },
     { id: "history", label: "History", icon: "📈" },
     { id: "accounts", label: "Accounts", icon: "👤" },
     { id: "settings", label: "Settings", icon: "⚙" },
@@ -68,10 +67,15 @@
 {:else if showWizard === false}
   <div class="app-shell">
     <nav class="sidebar">
-      <div class="sidebar-logo">
-        <span class="logo-mark">◉</span>
+      <button class="sidebar-logo" onclick={() => (currentRoute = "dashboard")} aria-label="Go to dashboard">
+        <svg class="logo-mark" viewBox="0 0 100 100" aria-hidden="true">
+          <rect width="100" height="100" rx="22" fill="#1A1A1A" />
+          <circle cx="50" cy="50" r="30" fill="none" stroke="#D97757" stroke-width="4" opacity="0.35" />
+          <circle cx="50" cy="50" r="20" fill="none" stroke="#D97757" stroke-width="4.5" opacity="0.65" />
+          <circle cx="50" cy="50" r="8" fill="#D97757" />
+        </svg>
         <span class="logo-text">Claudar</span>
-      </div>
+      </button>
       <ul class="nav-list">
         {#each navItems as item}
           <li>
@@ -127,11 +131,26 @@
     padding: 1.25rem 1rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     font-weight: 600;
+    background: none;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+    color: inherit;
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.15s;
+  }
+
+  .sidebar-logo:hover {
+    background-color: rgba(255, 255, 255, 0.06);
   }
 
   .logo-mark {
-    font-size: 1.25rem;
-    color: hsl(210 40% 70%);
+    width: 1.5rem;
+    height: 1.5rem;
+    flex-shrink: 0;
+    display: block;
   }
 
   .logo-text {

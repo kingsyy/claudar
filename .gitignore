@@ -14,6 +14,9 @@ Cargo.lock
 # macOS
 .DS_Store
 
+# Logo build intermediates (regenerate with assets/logo/build-icons.sh)
+assets/logo/master-*.png
+
 # Logs
 *.log
 

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100" role="img" aria-label="Claudar">
+  <rect width="100" height="100" rx="22" fill="#FAF9F5"/>
+  <circle cx="50" cy="50" r="30" fill="none" stroke="#F0C2B1" stroke-width="4"/>
+  <circle cx="50" cy="50" r="20" fill="none" stroke="#E89B82" stroke-width="4.5"/>
+  <circle cx="50" cy="50" r="8" fill="#D97757"/>
+</svg>
