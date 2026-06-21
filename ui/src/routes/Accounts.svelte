@@ -227,18 +227,18 @@
     font-size: 1.5rem;
     font-weight: 600;
     margin: 0 0 0.25rem;
-    color: hsl(222.2 84% 4.9%);
+    color: hsl(var(--foreground));
   }
 
   h2 {
     font-size: 1.1rem;
     font-weight: 600;
     margin: 0 0 0.5rem;
-    color: hsl(222.2 84% 4.9%);
+    color: hsl(var(--foreground));
   }
 
   .subtitle {
-    color: hsl(215.4 16.3% 46.9%);
+    color: hsl(var(--muted-foreground));
     font-size: 0.875rem;
     margin: 0;
   }
@@ -251,8 +251,8 @@
     padding: 0.5rem 1rem;
     border: none;
     border-radius: var(--radius);
-    background-color: hsl(222.2 84% 4.9%);
-    color: hsl(210 40% 98%);
+    background-color: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
     font-size: 0.85rem;
     font-weight: 600;
     cursor: pointer;
@@ -266,27 +266,27 @@
 
   .ghost {
     padding: 0.5rem 1rem;
-    border: 1px solid hsl(214.3 31.8% 91.4%);
+    border: 1px solid hsl(var(--border));
     border-radius: var(--radius);
     background: none;
-    color: hsl(222.2 84% 4.9%);
+    color: hsl(var(--foreground));
     font-size: 0.85rem;
     cursor: pointer;
   }
 
   .danger {
     padding: 0.4rem 0.85rem;
-    border: 1px solid hsl(0 70% 85%);
+    border: 1px solid hsl(var(--danger-border));
     border-radius: var(--radius);
     background: none;
-    color: hsl(0 70% 45%);
+    color: hsl(var(--danger-strong));
     font-size: 0.8rem;
     font-weight: 600;
     cursor: pointer;
   }
 
   .danger:hover {
-    background-color: hsl(0 70% 97%);
+    background-color: hsl(var(--danger-bg));
   }
 
   .danger:disabled,
@@ -296,18 +296,18 @@
   }
 
   .add-card {
-    border: 1px solid hsl(214.3 31.8% 91.4%);
+    border: 1px solid hsl(var(--border));
     border-radius: var(--radius);
     padding: 1rem;
     margin-bottom: 1.5rem;
-    background-color: hsl(210 40% 98%);
+    background-color: hsl(var(--muted));
   }
 
   .add-card label {
     display: block;
     font-size: 0.8rem;
     font-weight: 600;
-    color: hsl(222.2 84% 4.9%);
+    color: hsl(var(--foreground));
     margin-bottom: 0.4rem;
   }
 
@@ -319,7 +319,7 @@
   .add-row input {
     flex: 1;
     padding: 0.5rem 0.7rem;
-    border: 1px solid hsl(214.3 31.8% 91.4%);
+    border: 1px solid hsl(var(--border));
     border-radius: var(--radius);
     font-size: 0.875rem;
     font-family: inherit;
@@ -328,13 +328,13 @@
   .field-error {
     margin: 0.5rem 0 0;
     font-size: 0.8rem;
-    color: hsl(0 70% 45%);
+    color: hsl(var(--danger-strong));
   }
 
   .error-banner {
     padding: 0.75rem 1rem;
-    background-color: hsl(0 84% 95%);
-    color: hsl(0 70% 40%);
+    background-color: hsl(var(--danger-bg));
+    color: hsl(var(--danger-strong));
     border-radius: var(--radius);
     font-size: 0.875rem;
   }
@@ -345,15 +345,15 @@
     align-items: center;
     gap: 0.75rem;
     padding: 3rem 0;
-    color: hsl(215.4 16.3% 46.9%);
+    color: hsl(var(--muted-foreground));
     font-size: 0.875rem;
   }
 
   .spinner {
     width: 28px;
     height: 28px;
-    border: 3px solid hsl(214.3 31.8% 91.4%);
-    border-top-color: hsl(222.2 84% 4.9%);
+    border: 3px solid hsl(var(--border));
+    border-top-color: hsl(var(--foreground));
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
@@ -367,7 +367,7 @@
   .empty-state {
     padding: 3rem 1rem;
     text-align: center;
-    color: hsl(215.4 16.3% 46.9%);
+    color: hsl(var(--muted-foreground));
     font-size: 0.9rem;
   }
 
@@ -386,7 +386,7 @@
     justify-content: space-between;
     gap: 1rem;
     padding: 0.85rem 1rem;
-    border: 1px solid hsl(214.3 31.8% 91.4%);
+    border: 1px solid hsl(var(--border));
     border-radius: var(--radius);
   }
 
@@ -404,7 +404,7 @@
   .account-name {
     font-size: 0.95rem;
     font-weight: 600;
-    color: hsl(222.2 84% 4.9%);
+    color: hsl(var(--foreground));
   }
 
   .account-status {
@@ -412,22 +412,22 @@
     align-items: center;
     gap: 0.4rem;
     font-size: 0.8rem;
-    color: hsl(215.4 16.3% 46.9%);
+    color: hsl(var(--muted-foreground));
   }
 
   .status-dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background-color: hsl(0 70% 60%);
+    background-color: hsl(var(--danger));
   }
 
   .account-status.active .status-dot {
-    background-color: hsl(142 71% 45%);
+    background-color: hsl(var(--success));
   }
 
   .account-status.active {
-    color: hsl(142 71% 35%);
+    color: hsl(var(--success-strong));
   }
 
   .modal-backdrop {
@@ -441,7 +441,7 @@
   }
 
   .modal {
-    background-color: hsl(0 0% 100%);
+    background-color: hsl(var(--card));
     border-radius: var(--radius);
     padding: 1.5rem;
     max-width: 420px;
@@ -451,7 +451,7 @@
 
   .modal p {
     font-size: 0.875rem;
-    color: hsl(215.4 16.3% 36%);
+    color: hsl(var(--muted-foreground));
     line-height: 1.5;
   }
 

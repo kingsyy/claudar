@@ -804,14 +804,14 @@
     font-size: 1.5rem;
     font-weight: 600;
     margin: 0 0 0.25rem;
-    color: hsl(222.2 84% 4.9%);
+    color: hsl(var(--foreground));
   }
 
   h2 {
     font-size: 1rem;
     font-weight: 600;
     margin: 0 0 0.75rem;
-    color: hsl(222.2 84% 4.9%);
+    color: hsl(var(--foreground));
   }
 
   h3 {
@@ -819,12 +819,12 @@
     font-weight: 600;
     margin: 1rem 0 0.25rem;
     padding-top: 0.75rem;
-    border-top: 1px solid hsl(214.3 31.8% 91.4%);
-    color: hsl(222.2 84% 4.9%);
+    border-top: 1px solid hsl(var(--border));
+    color: hsl(var(--foreground));
   }
 
   .subtitle {
-    color: hsl(215.4 16.3% 46.9%);
+    color: hsl(var(--muted-foreground));
     font-size: 0.875rem;
     margin: 0 0 1.5rem;
   }
@@ -833,7 +833,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
-    border-bottom: 2px solid hsl(214.3 31.8% 91.4%);
+    border-bottom: 2px solid hsl(var(--border));
     margin-bottom: 1.5rem;
   }
 
@@ -843,19 +843,19 @@
     border: none;
     border-bottom: 3px solid transparent;
     font-size: 0.875rem;
-    color: hsl(215.4 16.3% 46.9%);
+    color: hsl(var(--muted-foreground));
     cursor: pointer;
     transition: all 0.15s;
     font-weight: 500;
   }
 
   .tab-button:hover {
-    color: hsl(222.2 84% 4.9%);
+    color: hsl(var(--foreground));
   }
 
   .tab-button.active {
-    color: hsl(222.2 84% 4.9%);
-    border-bottom-color: hsl(222.2 84% 4.9%);
+    color: hsl(var(--foreground));
+    border-bottom-color: hsl(var(--foreground));
   }
 
   .tab-content {
@@ -873,12 +873,12 @@
 
   .hint {
     font-size: 0.8rem;
-    color: hsl(215.4 16.3% 46.9%);
+    color: hsl(var(--muted-foreground));
     margin: 0.15rem 0 0.75rem;
   }
 
   .card {
-    border: 1px solid hsl(214.3 31.8% 91.4%);
+    border: 1px solid hsl(var(--border));
     border-radius: var(--radius);
     padding: 1.25rem;
     margin-bottom: 1rem;
@@ -894,18 +894,18 @@
 
   .field-row label {
     font-size: 0.875rem;
-    color: hsl(222.2 84% 4.9%);
+    color: hsl(var(--foreground));
     flex-shrink: 0;
   }
 
   .field-row label.label-disabled {
-    color: hsl(215.4 16.3% 46.9%);
+    color: hsl(var(--muted-foreground));
   }
 
   .field-row input,
   .field-row select {
     padding: 0.4rem 0.6rem;
-    border: 1px solid hsl(214.3 31.8% 91.4%);
+    border: 1px solid hsl(var(--border));
     border-radius: var(--radius);
     font-size: 0.875rem;
     font-family: inherit;
@@ -913,8 +913,8 @@
 
   .field-row input:disabled,
   .field-row select:disabled {
-    background-color: hsl(214.3 31.8% 97%);
-    color: hsl(215.4 16.3% 46.9%);
+    background-color: hsl(var(--muted));
+    color: hsl(var(--muted-foreground));
     cursor: not-allowed;
   }
 
@@ -937,7 +937,7 @@
 
   .suffix {
     font-size: 0.8rem;
-    color: hsl(215.4 16.3% 46.9%);
+    color: hsl(var(--muted-foreground));
     white-space: nowrap;
   }
 
@@ -952,7 +952,7 @@
   .toggle-label {
     font-size: 0.875rem;
     font-weight: 600;
-    color: hsl(222.2 84% 4.9%);
+    color: hsl(var(--foreground));
   }
 
   .toggle-row .hint {
@@ -966,7 +966,7 @@
     height: 24px;
     border-radius: 999px;
     border: none;
-    background-color: hsl(214.3 31.8% 85%);
+    background-color: hsl(var(--input));
     cursor: pointer;
     flex-shrink: 0;
     transition: background-color 0.15s;
@@ -978,7 +978,7 @@
   }
 
   .switch.on {
-    background-color: hsl(222.2 84% 4.9%);
+    background-color: hsl(var(--switch-on));
   }
 
   .switch-thumb {
@@ -998,8 +998,8 @@
 
   .test-button {
     padding: 0.65rem 1.25rem;
-    background-color: hsl(222.2 84% 4.9%);
-    color: hsl(210 40% 98%);
+    background-color: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
     border: none;
     border-radius: var(--radius);
     font-size: 0.875rem;
@@ -1009,7 +1009,7 @@
   }
 
   .test-button:hover:not(:disabled) {
-    background-color: hsl(222.2 84% 15%);
+    background-color: hsl(var(--primary-hover));
   }
 
   .test-button:disabled {
@@ -1020,13 +1020,13 @@
   .field-error {
     margin: 0.5rem 0 0;
     font-size: 0.8rem;
-    color: hsl(0 70% 45%);
+    color: hsl(var(--danger-strong));
   }
 
   .error-banner {
     padding: 0.75rem 1rem;
-    background-color: hsl(0 84% 95%);
-    color: hsl(0 70% 40%);
+    background-color: hsl(var(--danger-bg));
+    color: hsl(var(--danger-strong));
     border-radius: var(--radius);
     font-size: 0.875rem;
   }
@@ -1037,15 +1037,15 @@
     align-items: center;
     gap: 0.75rem;
     padding: 3rem 0;
-    color: hsl(215.4 16.3% 46.9%);
+    color: hsl(var(--muted-foreground));
     font-size: 0.875rem;
   }
 
   .spinner {
     width: 28px;
     height: 28px;
-    border: 3px solid hsl(214.3 31.8% 91.4%);
-    border-top-color: hsl(222.2 84% 4.9%);
+    border: 3px solid hsl(var(--border));
+    border-top-color: hsl(var(--foreground));
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
@@ -1061,8 +1061,8 @@
     bottom: 1.5rem;
     right: 1.5rem;
     padding: 0.65rem 1.1rem;
-    background-color: hsl(222.2 84% 4.9%);
-    color: hsl(210 40% 98%);
+    background-color: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
     border-radius: var(--radius);
     font-size: 0.85rem;
     box-shadow: 0 8px 30px hsl(222.2 84% 4.9% / 0.3);
@@ -1070,7 +1070,7 @@
   }
 
   .toast.error {
-    background-color: hsl(0 70% 45%);
+    background-color: hsl(var(--danger));
   }
 
   .history-presets {
@@ -1082,24 +1082,24 @@
 
   .preset-chip {
     padding: 0.25rem 0.65rem;
-    border: 1px solid hsl(214.3 31.8% 85%);
+    border: 1px solid hsl(var(--border));
     border-radius: 999px;
     background: none;
     font-size: 0.775rem;
-    color: hsl(215.4 16.3% 46.9%);
+    color: hsl(var(--muted-foreground));
     cursor: pointer;
     transition: all 0.12s;
   }
 
   .preset-chip:hover:not(:disabled) {
-    border-color: hsl(222.2 84% 4.9%);
-    color: hsl(222.2 84% 4.9%);
+    border-color: hsl(var(--foreground));
+    color: hsl(var(--foreground));
   }
 
   .preset-chip.selected {
-    background-color: hsl(222.2 84% 4.9%);
-    border-color: hsl(222.2 84% 4.9%);
-    color: hsl(210 40% 98%);
+    background-color: hsl(var(--primary));
+    border-color: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
   }
 
   .preset-chip:disabled {

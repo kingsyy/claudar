@@ -27,13 +27,13 @@
   let unlistenUsage: UnlistenFn | undefined;
   let unlistenError: UnlistenFn | undefined;
   let tickInterval: ReturnType<typeof setInterval> | undefined;
+  let refreshing = $state(false);
 
   let usage = $derived(selected ? usageByInstance[selected] : undefined);
   let error = $derived(selected ? errorByInstance[selected] : undefined);
   let lastUpdate = $derived(selected ? lastUpdateByInstance[selected] : undefined);
 
-  async function loadInitialUsage(instance: string) {
-    if (usageByInstance[instance]) return;
+  async function fetchUsage(instance: string) {
     try {
       const payload = await invoke<UsagePayload>("get_usage", { instance });
       usageByInstance = { ...usageByInstance, [instance]: payload };
@@ -45,6 +45,21 @@
       }
     } catch (e) {
       errorByInstance = { ...errorByInstance, [instance]: String(e) };
+    }
+  }
+
+  async function loadInitialUsage(instance: string) {
+    if (usageByInstance[instance]) return;
+    await fetchUsage(instance);
+  }
+
+  async function refresh() {
+    if (!selected || refreshing) return;
+    refreshing = true;
+    try {
+      await fetchUsage(selected);
+    } finally {
+      refreshing = false;
     }
   }
 
@@ -158,7 +173,14 @@
 </script>
 
 <div class="page">
-  <h1>Dashboard</h1>
+  <div class="page-header">
+    <button class="refresh-btn" class:spinning={refreshing} onclick={refresh} disabled={refreshing} aria-label="Refresh">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M13.5 8A5.5 5.5 0 1 1 10 3.07"/>
+        <polyline points="10 1 10 4 13 4"/>
+      </svg>
+    </button>
+  </div>
 
   {#if instances.length > 1}
     <div class="tabs" role="tablist">
@@ -278,11 +300,48 @@
     max-width: 680px;
   }
 
-  h1 {
-    font-size: 1.5rem;
-    font-weight: 600;
-    margin: 0 0 1.25rem;
-    color: hsl(222.2 84% 4.9%);
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .refresh-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    background: none;
+    border: 1px solid hsl(var(--border));
+    border-radius: 6px;
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+    flex-shrink: 0;
+  }
+
+  .refresh-btn:hover:not(:disabled) {
+    background: hsl(var(--muted));
+    color: hsl(var(--foreground));
+    border-color: hsl(var(--border));
+  }
+
+  .refresh-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .refresh-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .refresh-btn.spinning svg {
+    animation: spin 0.7s linear infinite;
   }
 
   /* Tabs */
@@ -313,9 +372,9 @@
 
   /* Error / loading */
   .error-banner {
-    background-color: hsl(0 84% 95%);
-    color: hsl(0 70% 40%);
-    border: 1px solid hsl(0 84% 80%);
+    background-color: hsl(var(--danger-bg));
+    color: hsl(var(--danger-strong));
+    border: 1px solid hsl(var(--danger-border));
     border-radius: var(--radius);
     padding: 0.75rem 1rem;
     font-size: 0.875rem;
@@ -385,10 +444,10 @@
     text-transform: uppercase;
   }
 
-  .status-ok       { background: hsl(142 71% 90%); color: hsl(142 60% 28%); }
-  .status-elevated { background: hsl(38 92% 90%);  color: hsl(38 80% 30%);  }
-  .status-warning  { background: hsl(38 92% 88%);  color: hsl(38 80% 28%);  }
-  .status-critical { background: hsl(0 84% 92%);   color: hsl(0 70% 38%);   }
+  .status-ok       { background: hsl(var(--success-bg)); color: hsl(var(--success-strong)); }
+  .status-elevated { background: hsl(var(--warning-bg)); color: hsl(var(--warning-strong)); }
+  .status-warning  { background: hsl(var(--warning-bg)); color: hsl(var(--warning-strong)); }
+  .status-critical { background: hsl(var(--danger-bg));  color: hsl(var(--danger-strong));  }
 
   /* Pace badge */
   .pace-badge {
@@ -396,8 +455,8 @@
     color: hsl(var(--muted-foreground));
   }
 
-  .pace-over  { color: hsl(38 80% 38%); }
-  .pace-under { color: hsl(142 60% 35%); }
+  .pace-over  { color: hsl(var(--warning-strong)); }
+  .pace-under { color: hsl(var(--success-strong)); }
   .pace-on    { color: hsl(var(--muted-foreground)); }
 
   /* Progress bars */
@@ -435,13 +494,13 @@
   }
 
   .bar-time {
-    background: hsl(215 20% 65%);
+    background: hsl(var(--muted-foreground));
   }
 
-  .bar-usage-ok       { background: hsl(142 71% 45%); }
-  .bar-usage-elevated { background: hsl(38 92% 50%); }
-  .bar-usage-warning  { background: hsl(38 92% 50%); }
-  .bar-usage-critical { background: hsl(0 84% 60%); }
+  .bar-usage-ok       { background: hsl(var(--success)); }
+  .bar-usage-elevated { background: hsl(var(--warning)); }
+  .bar-usage-warning  { background: hsl(var(--warning)); }
+  .bar-usage-critical { background: hsl(var(--danger)); }
 
   .bar-pct {
     font-size: 0.78rem;

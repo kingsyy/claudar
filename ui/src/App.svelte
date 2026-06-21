@@ -7,6 +7,13 @@
   import Accounts from "./routes/Accounts.svelte";
   import Settings from "./routes/Settings.svelte";
   import Wizard from "./routes/Wizard.svelte";
+  import { theme, cycleTheme } from "./lib/theme.svelte";
+
+  const themeMeta: Record<string, { icon: string; label: string }> = {
+    light: { icon: "☀", label: "Light" },
+    dark: { icon: "☾", label: "Dark" },
+    system: { icon: "◐", label: "System" },
+  };
 
   type Route = "dashboard" | "history" | "accounts" | "settings";
 
@@ -90,6 +97,15 @@
           </li>
         {/each}
       </ul>
+      <button
+        class="theme-toggle"
+        onclick={cycleTheme}
+        title="Theme: {themeMeta[theme.preference].label} (click to change)"
+        aria-label="Switch theme, currently {themeMeta[theme.preference].label}"
+      >
+        <span class="nav-icon" aria-hidden="true">{themeMeta[theme.preference].icon}</span>
+        <span class="nav-label">{themeMeta[theme.preference].label}</span>
+      </button>
     </nav>
 
     <div class="main-column">
@@ -195,6 +211,32 @@
     width: 1.25rem;
     text-align: center;
     font-size: 0.75rem;
+  }
+
+  .theme-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    width: 100%;
+    padding: 0.6rem 1rem;
+    margin-bottom: 0.5rem;
+    background: none;
+    border: none;
+    color: hsl(215.4 16.3% 70%);
+    font-size: 0.875rem;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s;
+  }
+
+  .theme-toggle:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+    color: hsl(210 40% 98%);
+  }
+
+  .theme-toggle .nav-icon {
+    font-size: 0.9rem;
   }
 
   .main-column {

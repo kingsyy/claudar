@@ -2,6 +2,7 @@
 
 @layer base {
   :root {
+    /* ── Structural ──────────────────────────────────────────────── */
     --background: 0 0% 100%;
     --foreground: 222.2 84% 4.9%;
     --card: 0 0% 100%;
@@ -10,6 +11,7 @@
     --popover-foreground: 222.2 84% 4.9%;
     --primary: 222.2 47.4% 11.2%;
     --primary-foreground: 210 40% 98%;
+    --primary-hover: 222.2 84% 15%;
     --secondary: 210 40% 96.1%;
     --secondary-foreground: 222.2 47.4% 11.2%;
     --muted: 210 40% 96.1%;
@@ -23,6 +25,113 @@
     --ring: 222.2 84% 4.9%;
     --radius: 0.5rem;
     --sidebar-width: 220px;
+
+    /* ── Semantic status ─────────────────────────────────────────── */
+    /* `*-bg`/`*-border` are soft tints for banners/badges; the base and
+       `*-strong` are for text and solid fills. */
+    --success: 142 71% 45%;
+    --success-strong: 142 60% 30%;
+    --success-bg: 142 70% 96%;
+    --success-border: 142 60% 70%;
+
+    --warning: 38 92% 50%;
+    --warning-strong: 38 80% 30%;
+    --warning-bg: 48 100% 96%;
+    --warning-border: 38 92% 60%;
+
+    --danger: 0 84% 60%;
+    --danger-strong: 0 70% 42%;
+    --danger-bg: 0 84% 96%;
+    --danger-border: 0 70% 85%;
+
+    --info: 222 84% 50%;
+    --info-strong: 222 84% 40%;
+    --accent-purple: 262 52% 52%;
+
+    /* Toggle switch "on" accent — mid-tone in both themes so the white thumb
+       stays visible (the near-white `--primary` would hide it in dark mode). */
+    --switch-on: 142 65% 40%;
+
+    /* ── Chart ───────────────────────────────────────────────────── */
+    --chart-surface: 0 0% 100%;
+    --chart-grid: 214.3 31.8% 91.4%;
+    --chart-axis: 215.4 16.3% 56%;
+    --chart-reset: 215 25% 72%;
+    --chart-5h: 222 84% 50%;
+    --chart-5h-soft: 222 84% 65%;
+    --chart-7d: 25 95% 55%;
+    --chart-pred: 222 84% 55%;
+    --chart-bar-track: 214.3 31.8% 93%;
+    --chart-bar: 222 84% 58%;
+    /* heatmap gradient endpoints (low → high intensity) */
+    --heat-empty: 214 20% 95%;
+    --heat-lo: 222 84% 92%;
+    --heat-hi: 222 84% 42%;
+
+    /* tooltip stays dark in both themes (floating overlay) */
+    --tooltip-bg: 222.2 84% 6%;
+    --tooltip-fg: 0 0% 96%;
+    --tooltip-muted: 0 0% 78%;
+  }
+
+  :root.dark {
+    /* ── Structural ──────────────────────────────────────────────── */
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 47.4% 8%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 47.4% 8%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --primary-hover: 210 40% 85%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 50%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 22%;
+    --ring: 212.7 26.8% 83.9%;
+
+    /* ── Semantic status ─────────────────────────────────────────── */
+    --success: 142 65% 55%;
+    --success-strong: 142 60% 62%;
+    --success-bg: 142 40% 14%;
+    --success-border: 142 35% 30%;
+
+    --warning: 38 92% 58%;
+    --warning-strong: 38 92% 65%;
+    --warning-bg: 38 45% 15%;
+    --warning-border: 38 50% 32%;
+
+    --danger: 0 75% 62%;
+    --danger-strong: 0 80% 70%;
+    --danger-bg: 0 45% 17%;
+    --danger-border: 0 45% 32%;
+
+    --info: 222 84% 68%;
+    --info-strong: 222 84% 75%;
+    --accent-purple: 262 60% 68%;
+    --switch-on: 142 60% 45%;
+
+    /* ── Chart ───────────────────────────────────────────────────── */
+    --chart-surface: 222.2 47.4% 8%;
+    --chart-grid: 217.2 32.6% 20%;
+    --chart-axis: 215 20.2% 60%;
+    --chart-reset: 215 20% 40%;
+    --chart-5h: 222 84% 68%;
+    --chart-5h-soft: 222 84% 72%;
+    --chart-7d: 25 95% 62%;
+    --chart-pred: 222 84% 68%;
+    --chart-bar-track: 217.2 32.6% 16%;
+    --chart-bar: 222 84% 62%;
+    --heat-empty: 217 32% 13%;
+    --heat-lo: 222 60% 22%;
+    --heat-hi: 222 90% 70%;
   }
 
   * {

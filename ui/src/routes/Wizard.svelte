@@ -228,12 +228,12 @@
             Logging in with email? Just type the code from your email into the Chrome window —
             we'll detect it automatically.
           </p>
-          <details style="margin-top: 0.5rem; padding: 0.75rem; background: #f5f5f5; border-radius: var(--radius);">
+          <details style="margin-top: 0.5rem; padding: 0.75rem; background: hsl(var(--muted)); border-radius: var(--radius);">
             <summary style="cursor: pointer; font-size: 0.875rem; font-weight: 600;">
               Prefer the magic link?
             </summary>
             <div style="margin-top: 0.75rem;">
-              <p style="font-size: 0.8rem; color: #666; margin: 0 0 0.5rem 0;">
+              <p style="font-size: 0.8rem; color: hsl(var(--muted-foreground)); margin: 0 0 0.5rem 0;">
                 Paste the link from your email here and we'll open it in the Chrome window:
               </p>
               <input
@@ -479,7 +479,7 @@
   }
 
   .auth-status.success {
-    color: hsl(142 71% 35%);
+    color: hsl(var(--success-strong));
     font-weight: 600;
   }
 
