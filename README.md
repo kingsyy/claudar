@@ -16,6 +16,12 @@ Claude Code's built-in `/usage` command only shows locally tracked usage, which 
 - **Multiple Accounts**: Monitor multiple Claude accounts simultaneously
 - **Minimal Footprint**: Low memory and CPU usage
 
+## Screenshots
+
+| Dashboard | History |
+| --- | --- |
+| ![Claudar dashboard showing live 5-hour and 7-day usage limits](assets/screenshots/dashboard.png) | ![Claudar history view with usage charts and weekly pace](assets/screenshots/history.png) |
+
 ## Download & Install (Recommended)
 
 1. Go to [Releases](https://github.com/kingsyy/claudar/releases) and download the file for your system:
