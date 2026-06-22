@@ -18,15 +18,25 @@ Claude Code's built-in `/usage` command only shows locally tracked usage, which 
 
 ## Download & Install (Recommended)
 
-1. Go to [Releases](https://github.com/kingsyy/claudar/releases) and download the file for your system.
-2. macOS: open `claudar-macos.dmg`, then run `claudar` from the window that opens.
-3. Linux: run `chmod +x claudar-linux`, then run `./claudar-linux`.
-4. Windows: download `claudar-windows.exe` and run it from a terminal.
-5. Run the setup wizard:
+1. Go to [Releases](https://github.com/kingsyy/claudar/releases) and download the file for your system:
+   - **macOS** — `Claudar_<version>_universal.dmg` (runs on both Intel and Apple Silicon)
+   - **Windows** — `Claudar_<version>_x64-setup.exe` (installer) or `..._x64_en-US.msi`
+   - **Linux** — `Claudar_<version>_amd64.AppImage` or `..._amd64.deb`
+2. Open the installer and drag/install Claudar, then launch it. The app guides you through login on first run.
 
-```bash
-claudar setup
-```
+### macOS: "Claudar can't be opened" / unidentified developer
+
+The macOS builds are **not yet code-signed or notarized** by Apple, so Gatekeeper blocks
+the first launch. This is expected — pick one of these to open it:
+
+- **Right-click → Open** on `Claudar.app`, then click **Open** in the dialog. (Only needed once.)
+- Or, after the first blocked attempt, go to **System Settings → Privacy & Security**, scroll to
+  the *Security* section, and click **Open Anyway** next to the Claudar message.
+- Or, from a terminal, clear the quarantine flag:
+
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/Claudar.app
+  ```
 
 ## Build from Source
 
@@ -249,7 +259,23 @@ The monitor maintains state to avoid duplicate notifications and automatically c
 
 ## Security
 
-Session cookies are stored in plaintext JSON files in `~/.config/claudar/sessions/`. These files contain authentication tokens that grant access to your Claude.ai account. Ensure appropriate file permissions are set on this directory.
+**Session encryption.** Your Claude.ai session cookies are authentication tokens that grant
+access to your account, so Claudar encrypts them at rest with **AES-256-GCM**. The encryption
+key is stored in your OS keychain (macOS Keychain, Linux Secret Service, Windows Credential
+Manager); if no keychain backend is available it falls back to a key file with `0600`
+permissions alongside the data. Keychain access is scoped to a **single** named item
+(service `claudar`, account `session-encryption-key`) — Claudar never enumerates or reads any
+other keychain entry. On first access the OS may prompt for permission, and the prompt names
+this item so you can see exactly what's being requested.
+
+**Data location.** Sessions, state, and history live under the platform config directory —
+`~/Library/Application Support/claudar/` on macOS, `~/.config/claudar/` (or
+`$XDG_CONFIG_HOME`) on Linux, and `%APPDATA%\claudar\` on Windows.
+
+**Unsigned binaries.** Release builds are **not yet code-signed or notarized**, so macOS
+Gatekeeper and Windows SmartScreen will warn on first launch — see the install instructions
+above for how to proceed. Verify you're downloading from the official
+[Releases](https://github.com/kingsyy/claudar/releases) page.
 
 ## Troubleshooting
 
