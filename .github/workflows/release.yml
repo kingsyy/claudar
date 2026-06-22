@@ -81,6 +81,7 @@ jobs:
           releaseName: "Claudar ${{ github.ref_name }}"
           releaseDraft: false
           prerelease: false
-          # Frontend is prebuilt above; skip the in-config beforeBuildCommand
-          # (its `npm run build` resolves against ui/, not the repo root).
-          args: ${{ matrix.args }} --config "{\"build\":{\"beforeBuildCommand\":\"\"}}"
+          # Frontend is prebuilt above; the CI config override blanks the
+          # in-config beforeBuildCommand (its `npm run build` resolves against
+          # ui/, not the repo root). Path is relative to projectPath.
+          args: ${{ matrix.args }} --config tauri.conf.ci.json
