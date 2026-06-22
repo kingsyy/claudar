@@ -21,6 +21,8 @@ A lightweight Rust daemon that fetches real-time Claude.ai usage data (bypassing
 
 `cargo tauri build` produces a working `.app` locally (verified by launching). Code-signing/notarization (for distribution outside the dev machine) is out of scope for this phase but required before real release.
 
+**v0.4.1 (2026-06-22):** Settings/UX pass — start-minimized-at-login (gated to login launches via a `--minimized` autostart flag, with a macOS dock-Reopen handler and off-screen-window recentering), accessible On/Off toggles (text + ✓/✕ + colour + position, colourblind/RTL-safe), poll-interval changes now preserve history retention in days with a confirming message, and an overuse warning below 5-minute intervals. Plus the About panel (version/build/license/source). Built and shipped as `Claudar_0.4.1_aarch64.dmg`; start-minimized + dock-Reopen not yet runtime-verified on a real login.
+
 **v0.4.0 (2026-06-22):** cross-platform hardening pass — rewrote browser detection (machine-wide + per-user locations for Chrome/Edge/Brave/Chromium with a `$PATH` fallback), unified the notifier onto `tauri-plugin-notification` for all OSes, plus a Dashboard header redesign. `cargo check`/core tests green; GUI notification + login paths on real macOS/Windows still need a manual runtime check.
 
 ## Next

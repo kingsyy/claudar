@@ -1,3 +1,11 @@
+## 2026-06-22 · Release v0.4.1 + off-screen window recentering
+
+**What:** Bumped all four version strings (root `Cargo.toml`, `src-tauri/Cargo.toml`, `crates/claudar-core/Cargo.toml`, `src-tauri/tauri.conf.json`) 0.4.0 → 0.4.1 and rebuilt the macOS bundle (`target/release/bundle/dmg/Claudar_0.4.1_aarch64.dmg`, ~7.1 MB) to package the Settings/UX work below. Also added `ensure_on_screen()` in `main.rs`: the window-state plugin restores the last saved position, which can be off-screen after a monitor is unplugged or the resolution changes (hit live this session — the window restored onto a now-absent second display). `setup_window` now checks how much of the window overlaps any available monitor and re-centers it when less than ~120px in either axis is reachable.
+
+**Why:** The previous build was also 0.4.0, so the About panel / DMG name couldn't distinguish it from the installed app — bumped to 0.4.1 so the running version is identifiable. The recentering fix turns a "where did my window go" failure into a self-correcting one.
+
+**Caveats:** Unsigned (Gatekeeper warns on first launch). Same runtime-verification gap as below: start-minimized-at-login and the dock-Reopen path still need a real login launch on macOS. `cargo tauri build` succeeded end-to-end including the Finder-driven DMG layout step.
+
 ## 2026-06-22 · Start-minimized-at-login, accessible toggles, interval guardrails
 
 **What:** Four related Settings improvements.
