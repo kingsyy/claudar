@@ -2,9 +2,9 @@
 intent: share
 stage: complete
 share_target: maintained
-next: Code-sign/notarize for distribution; or Phase 8 (threshold list editing UI)
+next: Runtime-verify notifications + login on macOS/Windows; code-sign/notarize for distribution; or Phase 8 (threshold list editing UI)
 blocker: null
-updated: 2026-06-10
+updated: 2026-06-22
 ---
 
 # Claudar — Monitor Claude.ai usage limits with native desktop notifications
@@ -20,6 +20,8 @@ A lightweight Rust daemon that fetches real-time Claude.ai usage data (bypassing
 **Post-phase review completed** — agent-loop run found 2 bugs (fixed during review), locked in 6 UX decisions (CLI deprecation, instance naming, welcome copy, dashboard UX, simultaneous CLI/GUI warning), and identified 1 remaining task: **Phase 8 — threshold list editing.** Settings currently only exposes the 4th (highest) of 4 hardcoded thresholds per limit, which creates non-monotonic configs and surprise notifications from hidden thresholds. Phase 8 will add a proper editable list UI: users can add/delete 1–5 thresholds per limit, kept sorted.
 
 `cargo tauri build` produces a working `.app` locally (verified by launching). Code-signing/notarization (for distribution outside the dev machine) is out of scope for this phase but required before real release.
+
+**v0.4.0 (2026-06-22):** cross-platform hardening pass — rewrote browser detection (machine-wide + per-user locations for Chrome/Edge/Brave/Chromium with a `$PATH` fallback), unified the notifier onto `tauri-plugin-notification` for all OSes, plus a Dashboard header redesign. `cargo check`/core tests green; GUI notification + login paths on real macOS/Windows still need a manual runtime check.
 
 ## Next
 
