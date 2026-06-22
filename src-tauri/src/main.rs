@@ -9,6 +9,16 @@ use claudar_core::config::Config;
 use std::collections::HashMap;
 use tauri::{tray::TrayIconBuilder, Manager};
 
+/// CLI flag the autostart plugin appends to the login-launch command. Its
+/// presence at startup means we were opened at login rather than by hand, which
+/// is what gates the "start minimized" behaviour.
+const LOGIN_LAUNCH_FLAG: &str = "--minimized";
+
+/// True when this process was launched at login (i.e. carries [`LOGIN_LAUNCH_FLAG`]).
+fn launched_at_login() -> bool {
+    std::env::args().any(|a| a == LOGIN_LAUNCH_FLAG)
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -21,7 +31,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            Some(vec![LOGIN_LAUNCH_FLAG]),
         ))
         .plugin(
             tauri_plugin_window_state::Builder::default()
@@ -35,6 +45,18 @@ fn main() {
         .manage(monitor_loop::TrayUsage::default())
         .manage(commands::AuthPorts::default())
         .setup(|app| {
+            // If opened at login and the user asked to start minimized, hide the
+            // window as early as possible to avoid a visible flash. Manual launches
+            // (no login flag) always show the window regardless of the setting.
+            let start_minimized = Config::load()
+                .map(|c| c.general.start_minimized)
+                .unwrap_or(false);
+            if start_minimized && launched_at_login() {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
+
             setup_tray(app)?;
             setup_window(app)?;
 
@@ -57,9 +79,22 @@ fn main() {
             commands::get_autostart,
             commands::test_notification,
             commands::set_tray_visible,
+            commands::about_info,
+            commands::open_url,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app_handle, _event| {
+            // On macOS, clicking the dock icon while the window is hidden (e.g.
+            // after a minimized login launch or a close-to-tray) re-opens it.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                if let Some(window) = _app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        });
 }
 
 fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -103,6 +138,12 @@ fn setup_window(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> 
     let window = app
         .get_webview_window("main")
         .ok_or("main window not found")?;
+    // The window-state plugin restores the last saved position. If that position
+    // is now off-screen (monitor unplugged, resolution changed, etc.) the window
+    // can land almost entirely outside the visible area. Recenter when too little
+    // of it overlaps any monitor.
+    ensure_on_screen(&window);
+
     let win = window.clone();
     window.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -111,4 +152,38 @@ fn setup_window(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> 
         }
     });
     Ok(())
+}
+
+/// Recenter the window if less than a usable slice of it overlaps any monitor.
+fn ensure_on_screen(window: &tauri::WebviewWindow) {
+    // Minimum visible width/height (in physical pixels) we require to consider
+    // the window reachable — enough to grab the title bar and drag it back.
+    const MIN_VISIBLE: i64 = 120;
+
+    let (Ok(pos), Ok(size), Ok(monitors)) = (
+        window.outer_position(),
+        window.outer_size(),
+        window.available_monitors(),
+    ) else {
+        return;
+    };
+
+    let (wx, wy) = (pos.x as i64, pos.y as i64);
+    let (ww, wh) = (size.width as i64, size.height as i64);
+
+    let visible_enough = monitors.iter().any(|m| {
+        let mp = m.position();
+        let ms = m.size();
+        let (mx, my) = (mp.x as i64, mp.y as i64);
+        let (mw, mh) = (ms.width as i64, ms.height as i64);
+
+        let overlap_x = (wx + ww).min(mx + mw) - wx.max(mx);
+        let overlap_y = (wy + wh).min(my + mh) - wy.max(my);
+
+        overlap_x >= MIN_VISIBLE.min(ww) && overlap_y >= MIN_VISIBLE.min(wh)
+    });
+
+    if !visible_enough {
+        let _ = window.center();
+    }
 }

@@ -49,6 +49,10 @@ pub struct GeneralConfig {
     /// Show a menu-bar / system-tray icon with at-a-glance usage (default: false).
     #[serde(default)]
     pub show_tray_icon: bool,
+    /// When launched at login (autostart), start hidden in the background instead
+    /// of opening the window. Has no effect on manual launches (default: false).
+    #[serde(default)]
+    pub start_minimized: bool,
 }
 
 fn default_timezone() -> String {
@@ -105,6 +109,7 @@ impl Default for Config {
                 poll_interval_seconds: 900, // 15 minutes
                 timezone: "local".to_string(),
                 show_tray_icon: false,
+                start_minimized: false,
             },
             thresholds: ThresholdsConfig {
                 five_hour: vec![50, 75, 90, 100],

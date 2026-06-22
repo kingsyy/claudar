@@ -383,6 +383,51 @@ pub fn set_tray_visible(app: AppHandle, visible: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Basic build/app metadata shown in the About panel.
+#[derive(Debug, Serialize)]
+pub struct AboutInfo {
+    pub version: &'static str,
+    pub git_hash: &'static str,
+    pub license: &'static str,
+    pub repository: &'static str,
+}
+
+/// Return static version / license / repository info for the About panel.
+#[tauri::command]
+pub fn about_info() -> AboutInfo {
+    AboutInfo {
+        version: env!("CARGO_PKG_VERSION"),
+        git_hash: env!("GIT_HASH"),
+        license: "MIT",
+        repository: "https://github.com/kingsyy/claudar",
+    }
+}
+
+/// Open a URL in the user's default browser. Only `https://` links are allowed
+/// so the renderer can't drive arbitrary command execution.
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("only https URLs are allowed".into());
+    }
+
+    #[cfg(target_os = "macos")]
+    let mut cmd = std::process::Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", "start", ""]);
+        c
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = std::process::Command::new("xdg-open");
+
+    cmd.arg(&url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 /// Send a test notification to verify notification pipeline works.
 #[tauri::command]
 pub fn test_notification(app: AppHandle) -> Result<(), String> {

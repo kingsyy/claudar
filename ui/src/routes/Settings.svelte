@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import Switch from "../lib/Switch.svelte";
 
   type Config = {
-    general: { poll_interval_seconds: number; timezone: string; show_tray_icon: boolean };
+    general: { poll_interval_seconds: number; timezone: string; show_tray_icon: boolean; start_minimized: boolean };
     thresholds: { five_hour: number[]; seven_day: number[] };
     notifications: {
       sound: boolean;
@@ -30,6 +31,11 @@
   let pollIntervalMinutes = $state(15);
   let timezone = $state("local");
   let trayIconEnabled = $state(false);
+  let startMinimized = $state(false);
+
+  // Polling more often than this hammers Claude's servers without giving more
+  // accurate readings, so we surface a warning below the field.
+  const MIN_RECOMMENDED_INTERVAL = 5;
   let fiveHourThresholdStr = $state("50,75,90,100");
   let sevenDayThresholdStr = $state("50,75,90,100");
 
@@ -92,6 +98,7 @@
       pollIntervalMinutes = Math.round(config.general.poll_interval_seconds / 60);
       timezone = config.general.timezone;
       trayIconEnabled = config.general.show_tray_icon;
+      startMinimized = config.general.start_minimized;
       fiveHourThresholdStr = config.thresholds.five_hour.join(",");
       sevenDayThresholdStr = config.thresholds.seven_day.join(",");
 
@@ -146,9 +153,17 @@
   function savePollInterval() {
     const minutes = Math.max(1, Math.round(pollIntervalMinutes));
     pollIntervalMinutes = minutes;
+    // History is stored as a record count, not a time span. Changing the poll
+    // interval would silently change how many days that count covers, so we
+    // recompute max_records to preserve the user's chosen retention in days.
+    const newRecords = recordsFromDays(historyDays);
+    const dayWord = historyDays === 1 ? "day" : "days";
     persist((c) => {
       c.general.poll_interval_seconds = minutes * 60;
-    }, "Polling interval updated");
+      c.history.max_records = newRecords;
+    }, historyEnabled
+      ? `Interval set to ${minutes} min · history retention kept at ~${historyDays} ${dayWord} (${newRecords.toLocaleString()} records)`
+      : "Polling interval updated");
   }
 
   function saveTimezone() {
@@ -168,6 +183,13 @@
     persist((c) => {
       c.general.show_tray_icon = trayIconEnabled;
     }, trayIconEnabled ? "Menu bar icon enabled" : "Menu bar icon disabled");
+  }
+
+  function toggleStartMinimized() {
+    startMinimized = !startMinimized;
+    persist((c) => {
+      c.general.start_minimized = startMinimized;
+    }, startMinimized ? "Start minimized at login enabled" : "Start minimized at login disabled");
   }
 
   function parseCsvThresholds(csv: string): number[] | null {
@@ -392,6 +414,17 @@
               <span class="suffix">minutes</span>
             </div>
           </div>
+          <p class="hint">
+            Each check fetches your usage from Claude's servers. Please be considerate —
+            polling very frequently puts unnecessary load on Claude's systems and won't make
+            readings more accurate. Every 5–15 minutes is plenty.
+          </p>
+          {#if pollIntervalMinutes < MIN_RECOMMENDED_INTERVAL}
+            <p class="notice notice-warn" role="alert">
+              ⚠ Checking more often than every {MIN_RECOMMENDED_INTERVAL} minutes is discouraged —
+              it hammers Claude's servers without any benefit. Consider a longer interval.
+            </p>
+          {/if}
         </section>
 
         <section class="card">
@@ -416,20 +449,31 @@
               <span class="toggle-label">Open at login</span>
               <p class="hint">Automatically launch Claudar when you sign in.</p>
             </div>
-            <button
-              class="switch"
-              class:on={autostartEnabled}
-              role="switch"
-              aria-checked={autostartEnabled}
-              aria-label="Toggle open at login"
-              onclick={toggleAutostart}
-            >
-              <span class="switch-thumb"></span>
-            </button>
+            <Switch
+              checked={autostartEnabled}
+              label="Toggle open at login"
+              onToggle={toggleAutostart}
+            />
           </div>
           {#if autostartError}
             <p class="field-error">{autostartError}</p>
           {/if}
+
+          <div class="toggle-row">
+            <div>
+              <span class="toggle-label" class:label-disabled={!autostartEnabled}>Start minimized</span>
+              <p class="hint">
+                When opened at login, start hidden in the background instead of showing the
+                window. {autostartEnabled ? "Reopen it any time from the menu bar icon or the dock." : "Enable “Open at login” above to use this."}
+              </p>
+            </div>
+            <Switch
+              checked={startMinimized}
+              disabled={!autostartEnabled}
+              label="Toggle start minimized at login"
+              onToggle={toggleStartMinimized}
+            />
+          </div>
         </section>
 
         <section class="card">
@@ -442,16 +486,11 @@
                 dropdown of your 5-hour and 7-day usage and reset times.
               </p>
             </div>
-            <button
-              class="switch"
-              class:on={trayIconEnabled}
-              role="switch"
-              aria-checked={trayIconEnabled}
-              aria-label="Toggle menu bar icon"
-              onclick={toggleTrayIcon}
-            >
-              <span class="switch-thumb"></span>
-            </button>
+            <Switch
+              checked={trayIconEnabled}
+              label="Toggle menu bar icon"
+              onToggle={toggleTrayIcon}
+            />
           </div>
         </section>
 
@@ -462,16 +501,11 @@
               <span class="toggle-label">Record usage history</span>
               <p class="hint">Save usage snapshots to analyze trends and patterns.</p>
             </div>
-            <button
-              class="switch"
-              class:on={historyEnabled}
-              role="switch"
-              aria-checked={historyEnabled}
-              aria-label="Toggle history recording"
-              onclick={toggleHistoryEnabled}
-            >
-              <span class="switch-thumb"></span>
-            </button>
+            <Switch
+              checked={historyEnabled}
+              label="Toggle history recording"
+              onToggle={toggleHistoryEnabled}
+            />
           </div>
 
           <div class="field-row">
@@ -562,16 +596,11 @@
               <span class="toggle-label">Sound</span>
               <p class="hint">Play a sound when notifications arrive.</p>
             </div>
-            <button
-              class="switch"
-              class:on={soundEnabled}
-              role="switch"
-              aria-checked={soundEnabled}
-              aria-label="Toggle notification sound"
-              onclick={toggleSound}
-            >
-              <span class="switch-thumb"></span>
-            </button>
+            <Switch
+              checked={soundEnabled}
+              label="Toggle notification sound"
+              onToggle={toggleSound}
+            />
           </div>
 
           <div class="field-row">
@@ -594,16 +623,11 @@
               <span class="toggle-label">Persistent notifications</span>
               <p class="hint">Keep notifications on screen until you dismiss them.</p>
             </div>
-            <button
-              class="switch"
-              class:on={persistentEnabled}
-              role="switch"
-              aria-checked={persistentEnabled}
-              aria-label="Toggle persistent notifications"
-              onclick={togglePersistent}
-            >
-              <span class="switch-thumb"></span>
-            </button>
+            <Switch
+              checked={persistentEnabled}
+              label="Toggle persistent notifications"
+              onToggle={togglePersistent}
+            />
           </div>
         </section>
 
@@ -615,16 +639,11 @@
               <span class="toggle-label">Threshold crossing alerts</span>
               <p class="hint">Notify when usage crosses a threshold percentage.</p>
             </div>
-            <button
-              class="switch"
-              class:on={notifyThresholdCrossings}
-              role="switch"
-              aria-checked={notifyThresholdCrossings}
-              aria-label="Toggle threshold crossing alerts"
-              onclick={toggleNotifyThresholdCrossings}
-            >
-              <span class="switch-thumb"></span>
-            </button>
+            <Switch
+              checked={notifyThresholdCrossings}
+              label="Toggle threshold crossing alerts"
+              onToggle={toggleNotifyThresholdCrossings}
+            />
           </div>
 
           <div class="toggle-row">
@@ -632,16 +651,11 @@
               <span class="toggle-label">Predicted overage alerts</span>
               <p class="hint">Warn if your current usage suggests you'll exceed a limit.</p>
             </div>
-            <button
-              class="switch"
-              class:on={notifyPredictedOverage}
-              role="switch"
-              aria-checked={notifyPredictedOverage}
-              aria-label="Toggle predicted overage alerts"
-              onclick={toggleNotifyPredictedOverage}
-            >
-              <span class="switch-thumb"></span>
-            </button>
+            <Switch
+              checked={notifyPredictedOverage}
+              label="Toggle predicted overage alerts"
+              onToggle={toggleNotifyPredictedOverage}
+            />
           </div>
         </section>
 
@@ -652,16 +666,11 @@
               <span class="toggle-label">Notify when limits reset</span>
               <p class="hint">Send an alert the moment your 5-hour or 7-day limit resets.</p>
             </div>
-            <button
-              class="switch"
-              class:on={notifyResets}
-              role="switch"
-              aria-checked={notifyResets}
-              aria-label="Toggle reset notifications"
-              onclick={toggleNotifyResets}
-            >
-              <span class="switch-thumb"></span>
-            </button>
+            <Switch
+              checked={notifyResets}
+              label="Toggle reset notifications"
+              onToggle={toggleNotifyResets}
+            />
           </div>
 
           <h3>Pre-Reset Reminders</h3>
@@ -955,45 +964,27 @@
     color: hsl(var(--foreground));
   }
 
+  .toggle-label.label-disabled {
+    color: hsl(var(--muted-foreground));
+  }
+
   .toggle-row .hint {
     margin: 0.2rem 0 0;
     max-width: 360px;
   }
 
-  .switch {
-    position: relative;
-    width: 42px;
-    height: 24px;
-    border-radius: 999px;
-    border: none;
-    background-color: hsl(var(--input));
-    cursor: pointer;
-    flex-shrink: 0;
-    transition: background-color 0.15s;
+  .notice {
+    font-size: 0.8rem;
+    line-height: 1.4;
+    margin: 0.5rem 0 0;
+    padding: 0.55rem 0.75rem;
+    border-radius: var(--radius);
   }
 
-  .switch:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .switch.on {
-    background-color: hsl(var(--switch-on));
-  }
-
-  .switch-thumb {
-    position: absolute;
-    top: 3px;
-    left: 3px;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background-color: hsl(0 0% 100%);
-    transition: transform 0.15s;
-  }
-
-  .switch.on .switch-thumb {
-    transform: translateX(18px);
+  .notice-warn {
+    background-color: hsl(var(--warning-bg));
+    color: hsl(var(--warning-strong));
+    border: 1px solid hsl(var(--warning-border));
   }
 
   .test-button {

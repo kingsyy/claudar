@@ -6,6 +6,7 @@
   import History from "./routes/History.svelte";
   import Accounts from "./routes/Accounts.svelte";
   import Settings from "./routes/Settings.svelte";
+  import About from "./routes/About.svelte";
   import Wizard from "./routes/Wizard.svelte";
   import { theme, cycleTheme } from "./lib/theme.svelte";
 
@@ -15,7 +16,7 @@
     system: { icon: "◐", label: "System" },
   };
 
-  type Route = "dashboard" | "history" | "accounts" | "settings";
+  type Route = "dashboard" | "history" | "accounts" | "settings" | "about";
 
   type InstanceInfo = {
     name: string;
@@ -97,15 +98,27 @@
           </li>
         {/each}
       </ul>
-      <button
-        class="theme-toggle"
-        onclick={cycleTheme}
-        title="Theme: {themeMeta[theme.preference].label} (click to change)"
-        aria-label="Switch theme, currently {themeMeta[theme.preference].label}"
-      >
-        <span class="nav-icon" aria-hidden="true">{themeMeta[theme.preference].icon}</span>
-        <span class="nav-label">{themeMeta[theme.preference].label}</span>
-      </button>
+      <div class="sidebar-footer">
+        <button
+          class="theme-toggle"
+          class:active={currentRoute === "about"}
+          onclick={() => (currentRoute = "about")}
+          title="About Claudar"
+          aria-label="About Claudar"
+        >
+          <span class="nav-icon" aria-hidden="true">ⓘ</span>
+          <span class="nav-label">About</span>
+        </button>
+        <button
+          class="theme-toggle"
+          onclick={cycleTheme}
+          title="Theme: {themeMeta[theme.preference].label} (click to change)"
+          aria-label="Switch theme, currently {themeMeta[theme.preference].label}"
+        >
+          <span class="nav-icon" aria-hidden="true">{themeMeta[theme.preference].icon}</span>
+          <span class="nav-label">{themeMeta[theme.preference].label}</span>
+        </button>
+      </div>
     </nav>
 
     <div class="main-column">
@@ -118,6 +131,8 @@
           <Accounts />
         {:else if currentRoute === "settings"}
           <Settings />
+        {:else if currentRoute === "about"}
+          <About />
         {/if}
       </main>
     </div>
@@ -213,13 +228,18 @@
     font-size: 0.75rem;
   }
 
+  .sidebar-footer {
+    padding-bottom: 0.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding-top: 0.5rem;
+  }
+
   .theme-toggle {
     display: flex;
     align-items: center;
     gap: 0.625rem;
     width: 100%;
     padding: 0.6rem 1rem;
-    margin-bottom: 0.5rem;
     background: none;
     border: none;
     color: hsl(215.4 16.3% 70%);
@@ -232,6 +252,11 @@
 
   .theme-toggle:hover {
     background-color: rgba(255, 255, 255, 0.06);
+    color: hsl(210 40% 98%);
+  }
+
+  .theme-toggle.active {
+    background-color: rgba(255, 255, 255, 0.1);
     color: hsl(210 40% 98%);
   }
 
