@@ -5,49 +5,110 @@ use std::path::PathBuf;
 use tokio_tungstenite::tungstenite::Message;
 use futures::{SinkExt, StreamExt};
 
-fn find_chrome() -> Result<PathBuf> {
-    let candidates: Vec<PathBuf> = if cfg!(target_os = "macos") {
-        vec![
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Chromium.app/Contents/MacOS/Chromium",
-        ]
-        .into_iter()
-        .map(PathBuf::from)
-        .collect()
-    } else if cfg!(target_os = "linux") {
-        vec![
-            "/usr/bin/google-chrome",
-            "/usr/bin/chromium-browser",
-            "/usr/bin/chromium",
-        ]
-        .into_iter()
-        .map(PathBuf::from)
-        .collect()
-    } else if cfg!(target_os = "windows") {
-        let mut paths = Vec::new();
-        for env_var in ["PROGRAMFILES", "PROGRAMFILES(X86)"] {
-            if let Ok(pf) = std::env::var(env_var) {
-                paths.push(PathBuf::from(&pf).join("Google\\Chrome\\Application\\chrome.exe"));
-                paths.push(PathBuf::from(&pf).join("Microsoft\\Edge\\Application\\msedge.exe"));
-            }
+/// Well-known install locations for a Chromium-based browser, in preference order.
+///
+/// Any of these speak the same CDP protocol the login flow drives, so Edge / Brave /
+/// Chromium are accepted alongside Chrome. We check both machine-wide and per-user
+/// locations because Chrome can be installed without admin rights (e.g. macOS
+/// `~/Applications`, Windows `%LOCALAPPDATA%`).
+fn browser_candidates() -> Vec<PathBuf> {
+    if cfg!(target_os = "macos") {
+        let apps = [
+            "Google Chrome.app/Contents/MacOS/Google Chrome",
+            "Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+            "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            "Brave Browser.app/Contents/MacOS/Brave Browser",
+            "Chromium.app/Contents/MacOS/Chromium",
+        ];
+        let mut roots = vec![PathBuf::from("/Applications")];
+        if let Some(home) = std::env::var_os("HOME") {
+            roots.push(PathBuf::from(home).join("Applications"));
         }
-        if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            paths.push(PathBuf::from(&local).join("Google\\Chrome\\Application\\chrome.exe"));
-            paths.push(PathBuf::from(&local).join("Chromium\\Application\\chrome.exe"));
+        roots
+            .iter()
+            .flat_map(|root| apps.iter().map(move |a| root.join(a)))
+            .collect()
+    } else if cfg!(target_os = "windows") {
+        let suffixes = [
+            "Google\\Chrome\\Application\\chrome.exe",
+            "Microsoft\\Edge\\Application\\msedge.exe",
+            "BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+            "Chromium\\Application\\chrome.exe",
+        ];
+        let mut paths = Vec::new();
+        for env_var in ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"] {
+            if let Ok(base) = std::env::var(env_var) {
+                for s in &suffixes {
+                    paths.push(PathBuf::from(&base).join(s));
+                }
+            }
         }
         paths
     } else {
-        vec![]
-    };
+        // Linux and other unixes.
+        [
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/microsoft-edge",
+            "/usr/bin/brave-browser",
+            "/usr/bin/chromium-browser",
+            "/usr/bin/chromium",
+            "/snap/bin/chromium",
+            "/snap/bin/google-chrome",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect()
+    }
+}
 
-    for path in &candidates {
+/// Executable names to look for on `$PATH` as a last resort when no well-known
+/// install location matched (covers custom installs, distro packaging, Nix, etc.).
+fn path_exe_names() -> &'static [&'static str] {
+    if cfg!(target_os = "windows") {
+        &["chrome.exe", "msedge.exe", "brave.exe", "chromium.exe"]
+    } else {
+        &[
+            "google-chrome",
+            "google-chrome-stable",
+            "microsoft-edge",
+            "brave-browser",
+            "chromium",
+            "chromium-browser",
+            "brave",
+        ]
+    }
+}
+
+/// Minimal `which`: return the first `$PATH` entry containing one of `names`.
+fn search_path(names: &[&str]) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        for name in names {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn find_chrome() -> Result<PathBuf> {
+    for path in browser_candidates() {
         if path.exists() {
-            return Ok(path.clone());
+            return Ok(path);
         }
     }
 
+    if let Some(path) = search_path(path_exe_names()) {
+        return Ok(path);
+    }
+
     Err(anyhow!(
-        "Chrome or Chromium not found. Please install Google Chrome."
+        "No Chromium-based browser found. Claudar needs Google Chrome, \
+         Microsoft Edge, Brave, or Chromium installed to sign in. \
+         Please install one and try again."
     ))
 }
 

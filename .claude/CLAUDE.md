@@ -34,9 +34,15 @@ src/
 
 ## Data Storage
 
-- Config: `~/.config/claudar/config.toml`
-- Sessions: `~/.config/claudar/sessions/{instance}.json`
-- State: `~/.config/claudar/state/{instance}.json`
+Paths are resolved via `dirs::config_dir()` (see `Config::config_dir`), so the base
+directory is platform-specific — **not** always `~/.config`:
+
+- macOS: `~/Library/Application Support/claudar/`
+- Linux: `~/.config/claudar/` (or `$XDG_CONFIG_HOME/claudar/`)
+- Windows: `%APPDATA%\claudar\` (e.g. `C:\Users\<user>\AppData\Roaming\claudar\`)
+
+Under that base: `config.toml`, `sessions/{instance}.json`, `state/{instance}.json`,
+`history/{instance}.jsonl`, and `chrome-profiles/{instance}/` (auth login profiles).
 
 ## Building & Testing
 
@@ -49,8 +55,8 @@ cargo check              # Type-check without building
 
 ## Key Dependencies
 
-- `headless_chrome` - Browser automation for auth and API calls
-- `notify-rust` - Cross-platform desktop notifications
+- Browser automation for auth: the Tauri app spawns a Chromium-based browser and drives it directly over the Chrome DevTools Protocol (`tokio-tungstenite` WebSocket + `reqwest`); no `headless_chrome` crate
+- `tauri-plugin-notification` / `notify-rust` - Cross-platform desktop notifications
 - `clap` - CLI argument parsing
 - `serde`/`toml`/`serde_json` - Config and data serialization
 - `chrono`/`chrono-tz` - Time handling with timezone support
@@ -58,7 +64,9 @@ cargo check              # Type-check without building
 
 ## Notes
 
-- Session files are encrypted at rest (AES-256-GCM, see `crates/claudar-core/src/crypto.rs`); the key lives in the OS keychain, with a `0600` key-file fallback if no keychain backend is available
+- Session files are encrypted at rest (AES-256-GCM, see `crates/claudar-core/src/crypto.rs`); the key lives in the OS keychain, with a `0600` key-file fallback if no keychain backend is available. Keychain access is scoped to a **single** named item (service `claudar`, account `session-encryption-key`) — Claudar never enumerates or reads any other keychain entry. The OS may prompt for permission on first access; the prompt names this item so users can see exactly what's being requested.
+- Browser detection for the login flow (`src-tauri/src/chrome_auth.rs`) is one code path across OSes: it checks well-known install locations (machine-wide *and* per-user) for Chrome/Edge/Brave/Chromium, then falls back to a `$PATH` search. Chrome is only needed for one-time login — ongoing polling uses `reqwest` with stored cookies, no browser required.
+- Desktop notifications from the Tauri app go through a single path (`tauri-plugin-notification` → `notify-rust`) on all platforms; sound names are translated per-OS in `tauri_notifier::resolve_sound`. (The standalone CLI's `RealNotificationSender` still uses `osascript` on macOS, which is correct for an unbundled binary.)
 - The `NotificationSender` trait allows mocking notifications in tests
 - Service installation supports macOS (launchd) and Linux (systemd)
 - The `build.rs` embeds the git commit hash for version display

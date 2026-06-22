@@ -174,29 +174,35 @@
 
 <div class="page">
   <div class="page-header">
-    <button class="refresh-btn" class:spinning={refreshing} onclick={refresh} disabled={refreshing} aria-label="Refresh">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M13.5 8A5.5 5.5 0 1 1 10 3.07"/>
-        <polyline points="10 1 10 4 13 4"/>
-      </svg>
-    </button>
-  </div>
-
-  {#if instances.length > 1}
-    <div class="tabs" role="tablist">
-      {#each instances as inst (inst.name)}
-        <button
-          class="tab"
-          class:active={selected === inst.name}
-          role="tab"
-          aria-selected={selected === inst.name}
-          onclick={() => selectInstance(inst.name)}
-        >
-          {inst.name}
-        </button>
-      {/each}
+    <div>
+      <h1>Dashboard</h1>
+      <p class="subtitle">Live usage across your Claude.ai limits.</p>
     </div>
-  {/if}
+    <div class="controls">
+      {#if instances.length > 1}
+        <div class="tabs" role="tablist">
+          {#each instances as inst (inst.name)}
+            <button
+              class="tab"
+              class:active={selected === inst.name}
+              role="tab"
+              aria-selected={selected === inst.name}
+              onclick={() => selectInstance(inst.name)}>{inst.name}</button
+            >
+          {/each}
+        </div>
+      {/if}
+      {#if usage}
+        <span class="updated">Updated {formatTimeSince(lastUpdate)}</span>
+      {/if}
+      <button class="refresh-btn" class:spinning={refreshing} onclick={refresh} disabled={refreshing} aria-label="Refresh">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13.5 8A5.5 5.5 0 1 1 10 3.07"/>
+          <polyline points="10 1 10 4 13 4"/>
+        </svg>
+      </button>
+    </div>
+  </div>
 
   {#if error}
     <div class="error-banner" role="alert">⚠ {error}</div>
@@ -246,6 +252,9 @@
           {#if usage.resets_at}
             <span class="muted">· at {formatAbsoluteTime(usage.resets_at)}</span>
           {/if}
+          {#if usage.predicted_pct != null}
+            <span class="muted">· predicted peak {usage.predicted_pct.toFixed(0)}%</span>
+          {/if}
         </div>
       </div>
 
@@ -282,15 +291,6 @@
         </div>
       </div>
     </div>
-
-    <div class="meta-row">
-      {#if usage.predicted_pct != null}
-        <span class="meta-item">
-          Predicted 5h usage: <strong>{usage.predicted_pct.toFixed(0)}%</strong>
-        </span>
-      {/if}
-      <span class="meta-item muted">Updated {formatTimeSince(lastUpdate)}</span>
-    </div>
   {/if}
 </div>
 
@@ -302,10 +302,37 @@
 
   .page-header {
     display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.75rem;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
     margin-bottom: 1.25rem;
+  }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .updated {
+    font-size: 0.8rem;
+    color: hsl(var(--muted-foreground));
+    white-space: nowrap;
+  }
+
+  h1 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin: 0 0 0.2rem;
+    color: hsl(var(--foreground));
+  }
+
+  .subtitle {
+    color: hsl(var(--muted-foreground));
+    font-size: 0.875rem;
+    margin: 0;
   }
 
   .refresh-btn {
@@ -344,30 +371,34 @@
     animation: spin 0.7s linear infinite;
   }
 
-  /* Tabs */
+  /* Instance tabs (segmented, matches History) */
   .tabs {
     display: flex;
     gap: 0.25rem;
-    border-bottom: 1px solid hsl(var(--border));
-    margin-bottom: 1.5rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: 6px;
+    padding: 2px;
+    background: hsl(var(--muted));
   }
 
   .tab {
-    padding: 0.5rem 1rem;
+    padding: 0.3rem 0.75rem;
     background: none;
     border: none;
-    border-bottom: 2px solid transparent;
+    border-radius: 4px;
+    font-size: 0.8125rem;
     color: hsl(var(--muted-foreground));
-    font-size: 0.875rem;
     cursor: pointer;
+    transition: background 0.12s, color 0.12s;
   }
 
   .tab:hover { color: hsl(var(--foreground)); }
 
   .tab.active {
+    background: hsl(var(--card));
     color: hsl(var(--foreground));
-    border-bottom-color: hsl(var(--ring));
     font-weight: 600;
+    box-shadow: 0 1px 3px hsl(222.2 84% 4.9% / 0.08);
   }
 
   /* Error / loading */
@@ -514,19 +545,6 @@
   /* Card footer */
   .card-footer {
     font-size: 0.8rem;
-    color: hsl(var(--foreground));
-  }
-
-  /* Meta row */
-  .meta-row {
-    display: flex;
-    gap: 1.5rem;
-    font-size: 0.8rem;
-    color: hsl(var(--muted-foreground));
-    flex-wrap: wrap;
-  }
-
-  .meta-item strong {
     color: hsl(var(--foreground));
   }
 

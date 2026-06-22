@@ -43,6 +43,11 @@ pub fn get_or_create_key(fallback_dir: &Path) -> Result<[u8; 32]> {
 
 #[cfg(not(test))]
 fn try_keychain_key() -> Result<[u8; 32]> {
+    // Scope is deliberately a single named item: service "claudar", account
+    // "session-encryption-key". `Entry` addresses exactly that one credential —
+    // it does NOT enumerate, scan, or read any other keychain entry, and the OS
+    // permission prompt names this item so the user can see what is being asked
+    // for. We only ever read our own key or create it if absent.
     let entry = keyring::Entry::new(SERVICE_NAME, KEY_ACCOUNT)?;
     match entry.get_password() {
         Ok(encoded) => decode_key(&encoded),
