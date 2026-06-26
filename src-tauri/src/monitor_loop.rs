@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
@@ -28,6 +28,25 @@ fn is_transport_error(e: &anyhow::Error) -> bool {
             .map(|re| re.is_connect() || re.is_request() || re.is_timeout())
             .unwrap_or(false)
     })
+}
+
+/// Returns a human-readable string describing which reqwest error kinds are set.
+fn transport_error_kind(e: &anyhow::Error) -> String {
+    for cause in e.chain() {
+        if let Some(re) = cause.downcast_ref::<reqwest::Error>() {
+            let mut kinds = Vec::new();
+            if re.is_connect() { kinds.push("connect"); }
+            if re.is_request() { kinds.push("request"); }
+            if re.is_timeout() { kinds.push("timeout"); }
+            if re.is_decode() { kinds.push("decode"); }
+            if re.is_body() { kinds.push("body"); }
+            if re.is_status() { kinds.push("status"); }
+            let kind_str = if kinds.is_empty() { "unknown".to_string() } else { kinds.join("+") };
+            let url_str = re.url().map(|u| u.to_string()).unwrap_or_else(|| "—".to_string());
+            return format!("kind=[{}] url={}", kind_str, url_str);
+        }
+    }
+    "no-reqwest-error-in-chain".to_string()
 }
 
 /// Tracks the running background poll task for each instance, keyed by instance name.
@@ -122,14 +141,17 @@ pub fn spawn_instance_task(app_handle: AppHandle, instance_name: String) {
                 let config = Config::load().unwrap_or_default();
                 let interval = Duration::from_secs(config.general.poll_interval_seconds);
 
+                let poll_start = Instant::now();
+                tracing::debug!("poll: starting request for '{}'", instance_name);
                 match poll_instance(&config, &instance_name, &sender).await {
                     Ok(payload) => {
                         consecutive_transport_errors = 0;
                         tracing::info!(
-                            "poll: {} — 5h={:.1}% 7d={:.1}%",
+                            "poll: {} — 5h={:.1}% 7d={:.1}% (took {}ms)",
                             instance_name,
                             payload.five_hour_pct,
-                            payload.seven_day_pct
+                            payload.seven_day_pct,
+                            poll_start.elapsed().as_millis()
                         );
 
                         // Emit usage-update event to all subscribers (frontend).
@@ -156,7 +178,12 @@ pub fn spawn_instance_task(app_handle: AppHandle, instance_name: String) {
                     Err(e) => {
                         if e.downcast_ref::<AuthRequiredError>().is_some() {
                             consecutive_transport_errors = 0;
-                            tracing::warn!("poll: auth required for '{}': {}", instance_name, e);
+                            tracing::warn!(
+                                "poll: auth required for '{}' (took {}ms): {:#}",
+                                instance_name,
+                                poll_start.elapsed().as_millis(),
+                                e
+                            );
                             let _ = app_handle.emit(
                                 "auth-required",
                                 AuthRequiredPayload { instance: instance_name.clone() },
@@ -165,10 +192,12 @@ pub fn spawn_instance_task(app_handle: AppHandle, instance_name: String) {
                         } else if is_transport_error(&e) {
                             consecutive_transport_errors += 1;
                             tracing::warn!(
-                                "poll: transport error {}/{} for '{}': {}",
+                                "poll: transport error {}/{} for '{}' (took {}ms) {} — chain: {:#}",
                                 consecutive_transport_errors,
                                 TRANSPORT_ERROR_AUTH_THRESHOLD,
                                 instance_name,
+                                poll_start.elapsed().as_millis(),
+                                transport_error_kind(&e),
                                 e
                             );
                             if consecutive_transport_errors >= TRANSPORT_ERROR_AUTH_THRESHOLD {
@@ -201,7 +230,12 @@ pub fn spawn_instance_task(app_handle: AppHandle, instance_name: String) {
                             }
                         } else {
                             consecutive_transport_errors = 0;
-                            tracing::error!("poll: error for '{}': {}", instance_name, e);
+                            tracing::error!(
+                                "poll: error for '{}' (took {}ms): {:#}",
+                                instance_name,
+                                poll_start.elapsed().as_millis(),
+                                e
+                            );
                             let _ = app_handle.emit(
                                 "monitor-error",
                                 MonitorErrorPayload {

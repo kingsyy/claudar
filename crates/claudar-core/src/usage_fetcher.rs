@@ -251,9 +251,10 @@ pub async fn fetch_usage(cookie_header: &str, org_id: &str) -> Result<serde_json
         }));
     }
 
-    tracing::debug!(
-        "usage_fetch: raw response: {}",
-        &body[..body.len().min(500)]
+    tracing::info!(
+        "usage_fetch: raw response ({}B): {}",
+        body.len(),
+        &body[..body.len().min(1000)]
     );
 
     let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
