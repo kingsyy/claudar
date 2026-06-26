@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde::Deserialize;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 /// A pluggable HTTP fetcher: takes `(url, cookie_header)` and returns `(status_code, body)`.
@@ -178,14 +178,23 @@ fn is_reqwest_transport_error(e: &anyhow::Error) -> bool {
     })
 }
 
-/// Perform the raw HTTP GET using the native-tls reqwest client.
+/// Shared persistent reqwest client — reuses TCP connections across poll cycles,
+/// which avoids the Cloudflare cold-start block that hits fresh connections.
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("failed to build reqwest client")
+    })
+}
+
+/// Perform the raw HTTP GET using the shared native-tls reqwest client.
 /// Returns `(status_code_u16, body_string)`.
 async fn do_reqwest_fetch(url: &str, cookie_header: &str) -> Result<(u16, String)> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?;
-
-    let response = client
+    let response = http_client()
         .get(url)
         .header(
             "User-Agent",
@@ -284,11 +293,12 @@ fn process_response(status: u16, body: &str, org_id: &str) -> Result<serde_json:
 
 /// Fetch usage data from the Claude.ai API using stored session cookies.
 ///
-/// Tries the native-tls reqwest client first. If that hits a transport-level
-/// error (connection reset / Cloudflare TLS block), and `fallback` is provided,
-/// it retries via the fallback (e.g. a webview fetch that uses WKWebView /
-/// URLSession and bypasses TLS fingerprinting). Falls through to an error only
-/// when all available strategies fail.
+/// Strategy (in order):
+///   1. Shared native-tls reqwest client (persistent connection pool).
+///   2. Immediate retry on transport error — Cloudflare's connection block expires
+///      when the first attempt closes, so the retry succeeds in ~400 ms.
+///   3. Webview fallback via `fallback` (requires CORS to be working; currently
+///      disabled by claude.ai's CORS policy for non-claude.ai origins).
 ///
 /// On HTTP 401/403 or a Cloudflare challenge page the error downcasts to
 /// [`AuthRequiredError`]. The caller (monitor loop) checks for this variant
@@ -301,24 +311,41 @@ pub async fn fetch_usage(
     let url = format!("https://claude.ai/api/organizations/{}/usage", org_id);
     tracing::info!("usage_fetch: attempting for org {} (native-tls)", org_id);
 
-    match do_reqwest_fetch(&url, cookie_header).await {
+    let first_err = match do_reqwest_fetch(&url, cookie_header).await {
         Ok((status, body)) => {
             tracing::info!("usage_fetch: succeeded for org {}", org_id);
-            process_response(status, &body, org_id)
+            return process_response(status, &body, org_id);
         }
-        Err(e) if is_reqwest_transport_error(&e) => {
-            if let Some(fb) = fallback {
-                tracing::warn!(
-                    "usage_fetch: native-tls transport error for org {} ({:#}), trying webview fallback",
-                    org_id, e
-                );
-                let (status, body) = fb(url, cookie_header.to_string()).await?;
-                tracing::info!("usage_fetch: webview fallback succeeded for org {}", org_id);
-                process_response(status, &body, org_id)
-            } else {
-                Err(e)
-            }
+        Err(e) if !is_reqwest_transport_error(&e) => return Err(e),
+        Err(e) => e,
+    };
+
+    // Attempt 2: immediate retry — Cloudflare's block expires when the first
+    // connection closes, so a fresh connection typically succeeds in ~400 ms.
+    tracing::warn!(
+        "usage_fetch: transport error for org {} ({:#}), retrying immediately",
+        org_id, first_err
+    );
+    match do_reqwest_fetch(&url, cookie_header).await {
+        Ok((status, body)) => {
+            tracing::info!("usage_fetch: retry succeeded for org {}", org_id);
+            return process_response(status, &body, org_id);
         }
-        Err(e) => Err(e),
+        Err(e) if !is_reqwest_transport_error(&e) => return Err(e),
+        Err(e) => tracing::warn!("usage_fetch: retry also failed for org {} ({:#})", org_id, e),
     }
+
+    // Attempt 3: webview fallback (only useful once CORS is resolved).
+    if let Some(fb) = fallback {
+        tracing::warn!("usage_fetch: trying webview fallback for org {}", org_id);
+        match fb(url, cookie_header.to_string()).await {
+            Ok((status, body)) => {
+                tracing::info!("usage_fetch: webview fallback succeeded for org {}", org_id);
+                return process_response(status, &body, org_id);
+            }
+            Err(e) => tracing::warn!("usage_fetch: webview fallback failed for org {}: {:#}", org_id, e),
+        }
+    }
+
+    Err(first_err)
 }
