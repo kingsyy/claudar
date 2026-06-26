@@ -12,6 +12,24 @@ use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
+/// Number of consecutive transport-level failures before escalating to `auth-required`.
+/// Transient Cloudflare blips clear on their own; only persistent failures mean the
+/// session has expired and the user needs to re-authenticate.
+const TRANSPORT_ERROR_AUTH_THRESHOLD: u32 = 3;
+
+/// Returns true when the error chain contains a reqwest transport failure (connect,
+/// send, or timeout). These look like "error sending request for url …" and are caused
+/// by Cloudflare resetting the TLS connection for expired-session requests — they are
+/// *not* clean HTTP 401/403s, so they don't trip the normal AuthRequiredError path.
+fn is_transport_error(e: &anyhow::Error) -> bool {
+    e.chain().any(|cause| {
+        cause
+            .downcast_ref::<reqwest::Error>()
+            .map(|re| re.is_connect() || re.is_request() || re.is_timeout())
+            .unwrap_or(false)
+    })
+}
+
 /// Tracks the running background poll task for each instance, keyed by instance name.
 /// Lets `remove_instance` stop a specific instance's loop without restarting the app.
 #[derive(Default)]
@@ -98,6 +116,7 @@ pub fn spawn_instance_task(app_handle: AppHandle, instance_name: String) {
             tokio::time::sleep(Duration::from_secs(idx)).await;
 
             let sender = TauriNotificationSender { app: app_handle.clone() };
+            let mut consecutive_transport_errors: u32 = 0;
 
             loop {
                 let config = Config::load().unwrap_or_default();
@@ -105,6 +124,7 @@ pub fn spawn_instance_task(app_handle: AppHandle, instance_name: String) {
 
                 match poll_instance(&config, &instance_name, &sender).await {
                     Ok(payload) => {
+                        consecutive_transport_errors = 0;
                         tracing::info!(
                             "poll: {} — 5h={:.1}% 7d={:.1}%",
                             instance_name,
@@ -135,13 +155,52 @@ pub fn spawn_instance_task(app_handle: AppHandle, instance_name: String) {
                     }
                     Err(e) => {
                         if e.downcast_ref::<AuthRequiredError>().is_some() {
+                            consecutive_transport_errors = 0;
                             tracing::warn!("poll: auth required for '{}': {}", instance_name, e);
                             let _ = app_handle.emit(
                                 "auth-required",
                                 AuthRequiredPayload { instance: instance_name.clone() },
                             );
                             set_tray_icon(&app_handle, UsageLevel::Grey);
+                        } else if is_transport_error(&e) {
+                            consecutive_transport_errors += 1;
+                            tracing::warn!(
+                                "poll: transport error {}/{} for '{}': {}",
+                                consecutive_transport_errors,
+                                TRANSPORT_ERROR_AUTH_THRESHOLD,
+                                instance_name,
+                                e
+                            );
+                            if consecutive_transport_errors >= TRANSPORT_ERROR_AUTH_THRESHOLD {
+                                consecutive_transport_errors = 0;
+                                tracing::warn!(
+                                    "poll: {} consecutive transport errors for '{}' — escalating to auth-required",
+                                    TRANSPORT_ERROR_AUTH_THRESHOLD,
+                                    instance_name
+                                );
+                                let _ = app_handle.emit(
+                                    "auth-required",
+                                    AuthRequiredPayload { instance: instance_name.clone() },
+                                );
+                                set_tray_icon(&app_handle, UsageLevel::Grey);
+                            } else {
+                                let _ = app_handle.emit(
+                                    "monitor-error",
+                                    MonitorErrorPayload {
+                                        instance: instance_name.clone(),
+                                        message: format!(
+                                            "Connection blocked by Cloudflare bot protection \
+                                             (attempt {}/{}). This usually clears on its own — \
+                                             if it persists, re-authenticate.\n\nDetail: {}",
+                                            consecutive_transport_errors,
+                                            TRANSPORT_ERROR_AUTH_THRESHOLD,
+                                            e
+                                        ),
+                                    },
+                                );
+                            }
                         } else {
+                            consecutive_transport_errors = 0;
                             tracing::error!("poll: error for '{}': {}", instance_name, e);
                             let _ = app_handle.emit(
                                 "monitor-error",

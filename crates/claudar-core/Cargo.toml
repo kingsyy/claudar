@@ -1,6 +1,6 @@
 [package]
 name = "claudar-core"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 description = "Core library for claudar: monitoring, usage fetching, config, and notifications"
 license = "MIT"
