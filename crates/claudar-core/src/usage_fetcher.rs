@@ -1,6 +1,14 @@
 use anyhow::Result;
 use serde::Deserialize;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
+
+/// A pluggable HTTP fetcher: takes `(url, cookie_header)` and returns `(status_code, body)`.
+/// Used to inject the webview fetch path when the native-tls client hits a transport error.
+pub type HttpFetcher =
+    Arc<dyn Fn(String, String) -> Pin<Box<dyn Future<Output = Result<(u16, String)>> + Send>> + Send + Sync>;
 
 /// Returned when session cookies are expired, revoked, or blocked by Cloudflare.
 /// The monitor loop catches this variant and logs a warning instead of crashing.
@@ -160,21 +168,25 @@ mod tests {
     }
 }
 
-/// Fetch usage data from the Claude.ai API using stored session cookies.
-///
-/// On HTTP 401/403 or a Cloudflare challenge page the error downcasts to
-/// [`AuthRequiredError`].  The caller (monitor loop) checks for this variant
-/// and emits a warning rather than propagating the error or crashing.
-pub async fn fetch_usage(cookie_header: &str, org_id: &str) -> Result<serde_json::Value> {
-    let url = format!("https://claude.ai/api/organizations/{}/usage", org_id);
-    tracing::info!("usage_fetch: attempting for org {}", org_id);
+/// Returns true when this reqwest error is a transport-level failure (connect/send/timeout).
+fn is_reqwest_transport_error(e: &anyhow::Error) -> bool {
+    e.chain().any(|cause| {
+        cause
+            .downcast_ref::<reqwest::Error>()
+            .map(|re| re.is_connect() || re.is_request() || re.is_timeout())
+            .unwrap_or(false)
+    })
+}
 
+/// Perform the raw HTTP GET using the native-tls reqwest client.
+/// Returns `(status_code_u16, body_string)`.
+async fn do_reqwest_fetch(url: &str, cookie_header: &str) -> Result<(u16, String)> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?;
 
     let response = client
-        .get(&url)
+        .get(url)
         .header(
             "User-Agent",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 \
@@ -197,53 +209,42 @@ pub async fn fetch_usage(cookie_header: &str, org_id: &str) -> Result<serde_json
         .send()
         .await?;
 
-    let status = response.status();
+    let status = response.status().as_u16();
+    let body = response.text().await?;
+    Ok((status, body))
+}
+
+/// Validate and parse a raw `(status, body)` pair into JSON, handling all error cases.
+fn process_response(status: u16, body: &str, org_id: &str) -> Result<serde_json::Value> {
     tracing::info!("usage_fetch: response status {}", status);
 
-    let body = response.text().await?;
-
-    // Cloudflare challenge pages contain these markers
     if body.contains("Just a moment")
         || body.contains("cf-browser-verification")
         || body.contains("_cf_chl")
     {
-        tracing::warn!(
-            "usage_fetch: Cloudflare challenge detected for org {}",
-            org_id
-        );
+        tracing::warn!("usage_fetch: Cloudflare challenge for org {}", org_id);
         return Err(anyhow::Error::new(AuthRequiredError {
             message: "Cloudflare challenge — re-authentication required".to_string(),
         }));
     }
 
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+    if status == 401 || status == 403 {
         let preview = &body[..body.len().min(300)];
-        tracing::warn!(
-            "usage_fetch: auth failure ({}) for org {}: {}",
-            status,
-            org_id,
-            preview
-        );
+        tracing::warn!("usage_fetch: auth failure ({}) for org {}: {}", status, org_id, preview);
         return Err(anyhow::Error::new(AuthRequiredError {
             message: format!("HTTP {} — session expired or invalid", status),
         }));
     }
 
-    if !status.is_success() {
+    if !(200..300).contains(&status) {
         let preview = &body[..body.len().min(300)];
-        tracing::warn!(
-            "usage_fetch: non-success status {} for org {}: {}",
-            status,
-            org_id,
-            preview
-        );
+        tracing::warn!("usage_fetch: non-success status {} for org {}: {}", status, org_id, preview);
         anyhow::bail!("HTTP {}: {}", status, preview);
     }
 
-    // HTML response indicates an auth redirect or Cloudflare JS challenge
     if body.trim_start().starts_with('<') {
         tracing::warn!(
-            "usage_fetch: received HTML instead of JSON for org {} — session may have expired",
+            "usage_fetch: HTML response for org {} — session may have expired",
             org_id
         );
         return Err(anyhow::Error::new(AuthRequiredError {
@@ -257,7 +258,7 @@ pub async fn fetch_usage(cookie_header: &str, org_id: &str) -> Result<serde_json
         &body[..body.len().min(1000)]
     );
 
-    let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
+    let json: serde_json::Value = serde_json::from_str(body).map_err(|e| {
         tracing::warn!(
             "usage_fetch: failed to parse JSON: {} | body: {}",
             e,
@@ -266,7 +267,6 @@ pub async fn fetch_usage(cookie_header: &str, org_id: &str) -> Result<serde_json
         anyhow::anyhow!("Failed to parse JSON response: {}", e)
     })?;
 
-    // Warn if the response looks like an unauthenticated/empty result
     if let (Some(fh), Some(sd)) = (json.get("five_hour"), json.get("seven_day")) {
         let fh_util = fh.get("utilization").and_then(|v| v.as_f64()).unwrap_or(-1.0);
         let sd_util = sd.get("utilization").and_then(|v| v.as_f64()).unwrap_or(-1.0);
@@ -279,6 +279,46 @@ pub async fn fetch_usage(cookie_header: &str, org_id: &str) -> Result<serde_json
         }
     }
 
-    tracing::info!("usage_fetch: succeeded for org {}", org_id);
     Ok(json)
+}
+
+/// Fetch usage data from the Claude.ai API using stored session cookies.
+///
+/// Tries the native-tls reqwest client first. If that hits a transport-level
+/// error (connection reset / Cloudflare TLS block), and `fallback` is provided,
+/// it retries via the fallback (e.g. a webview fetch that uses WKWebView /
+/// URLSession and bypasses TLS fingerprinting). Falls through to an error only
+/// when all available strategies fail.
+///
+/// On HTTP 401/403 or a Cloudflare challenge page the error downcasts to
+/// [`AuthRequiredError`]. The caller (monitor loop) checks for this variant
+/// and emits a warning rather than propagating the error or crashing.
+pub async fn fetch_usage(
+    cookie_header: &str,
+    org_id: &str,
+    fallback: Option<&HttpFetcher>,
+) -> Result<serde_json::Value> {
+    let url = format!("https://claude.ai/api/organizations/{}/usage", org_id);
+    tracing::info!("usage_fetch: attempting for org {} (native-tls)", org_id);
+
+    match do_reqwest_fetch(&url, cookie_header).await {
+        Ok((status, body)) => {
+            tracing::info!("usage_fetch: succeeded for org {}", org_id);
+            process_response(status, &body, org_id)
+        }
+        Err(e) if is_reqwest_transport_error(&e) => {
+            if let Some(fb) = fallback {
+                tracing::warn!(
+                    "usage_fetch: native-tls transport error for org {} ({:#}), trying webview fallback",
+                    org_id, e
+                );
+                let (status, body) = fb(url, cookie_header.to_string()).await?;
+                tracing::info!("usage_fetch: webview fallback succeeded for org {}", org_id);
+                process_response(status, &body, org_id)
+            } else {
+                Err(e)
+            }
+        }
+        Err(e) => Err(e),
+    }
 }

@@ -4,6 +4,7 @@ mod chrome_auth;
 mod commands;
 mod monitor_loop;
 mod tauri_notifier;
+mod webview_fetch;
 
 use claudar_core::config::Config;
 use std::collections::HashMap;

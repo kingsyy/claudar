@@ -72,8 +72,9 @@ pub fn set_config(_instance: Option<String>, config: Config) -> Result<(), Strin
 pub async fn get_usage(app: AppHandle, instance: Option<String>) -> Result<UsagePayload, String> {
     let config = Config::load().map_err(|e| e.to_string())?;
     let name = instance.as_deref().unwrap_or("default");
+    let webview_fetcher = crate::webview_fetch::make_webview_fetcher(app.clone());
     let sender = TauriNotificationSender { app };
-    poll_instance(&config, name, &sender)
+    poll_instance(&config, name, &sender, Some(&webview_fetcher))
         .await
         .map_err(|e| e.to_string())
 }

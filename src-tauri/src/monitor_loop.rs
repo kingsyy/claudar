@@ -1,4 +1,5 @@
 use crate::tauri_notifier::TauriNotificationSender;
+use crate::webview_fetch::make_webview_fetcher;
 use claudar_core::{
     config::Config,
     monitor::{poll_instance, UsagePayload},
@@ -135,6 +136,7 @@ pub fn spawn_instance_task(app_handle: AppHandle, instance_name: String) {
             tokio::time::sleep(Duration::from_secs(idx)).await;
 
             let sender = TauriNotificationSender { app: app_handle.clone() };
+            let webview_fetcher = make_webview_fetcher(app_handle.clone());
             let mut consecutive_transport_errors: u32 = 0;
 
             loop {
@@ -143,7 +145,7 @@ pub fn spawn_instance_task(app_handle: AppHandle, instance_name: String) {
 
                 let poll_start = Instant::now();
                 tracing::debug!("poll: starting request for '{}'", instance_name);
-                match poll_instance(&config, &instance_name, &sender).await {
+                match poll_instance(&config, &instance_name, &sender, Some(&webview_fetcher)).await {
                     Ok(payload) => {
                         consecutive_transport_errors = 0;
                         tracing::info!(

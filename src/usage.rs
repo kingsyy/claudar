@@ -78,7 +78,7 @@ pub async fn display_instance_usage(
     let session = SessionData::load(&session_path)?;
     let cookie_header = session.cookie_header_string();
 
-    let usage_json = fetch_usage(&cookie_header, &session.org_id).await?;
+    let usage_json = fetch_usage(&cookie_header, &session.org_id, None).await?;
 
     let usage: UsageResponse = serde_json::from_value(usage_json)
         .map_err(|e| anyhow::anyhow!("Failed to parse usage data: {}", e))?;

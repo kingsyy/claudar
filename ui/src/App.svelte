@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
   import Dashboard from "./routes/Dashboard.svelte";
   import History from "./routes/History.svelte";
   import Accounts from "./routes/Accounts.svelte";
@@ -29,6 +29,13 @@
   let showWizard = $state<boolean | null>(null);
 
   let unlistenAuthComplete: UnlistenFn | undefined;
+  let unlistenWebviewFetch: UnlistenFn | undefined;
+
+  interface WebviewFetchRequest {
+    id: number;
+    url: string;
+    cookie: string;
+  }
 
   const navItems: { id: Route; label: string; icon: string }[] = [
     { id: "history", label: "History", icon: "📈" },
@@ -63,10 +70,42 @@
     unlistenAuthComplete = await listen<{ instance: string }>("auth-complete", () => {
       checkFirstRun();
     });
+
+    // Proxy HTTP requests from the Rust monitor through WKWebView / URLSession so
+    // Cloudflare sees a real browser TLS fingerprint instead of reqwest/rustls.
+    unlistenWebviewFetch = await listen<WebviewFetchRequest>("webview-fetch-request", async (event) => {
+      const { id, url, cookie } = event.payload;
+      try {
+        const resp = await fetch(url, {
+          headers: {
+            Cookie: cookie,
+            "User-Agent":
+              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+              "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            Accept: "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            Referer: "https://claude.ai/settings/usage",
+            Origin: "https://claude.ai",
+            "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"macOS"',
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+          },
+        });
+        const body = await resp.text();
+        await emit("webview-fetch-response", { id, status: resp.status, body });
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        await emit("webview-fetch-response", { id, error: message });
+      }
+    });
   });
 
   onDestroy(() => {
     unlistenAuthComplete?.();
+    unlistenWebviewFetch?.();
   });
 </script>
 

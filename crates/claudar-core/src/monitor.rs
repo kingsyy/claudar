@@ -8,7 +8,7 @@ use crate::notifications::{
 use crate::state::{LimitType, MonitorState};
 use crate::storage::SessionData;
 use crate::time_format;
-use crate::usage_fetcher::{AuthRequiredError, UsageLimit, UsageResponse, fetch_usage};
+use crate::usage_fetcher::{AuthRequiredError, HttpFetcher, UsageLimit, UsageResponse, fetch_usage};
 use chrono::{DateTime, Local, Utc};
 use serde::Serialize;
 use std::time::Duration;
@@ -39,9 +39,10 @@ pub async fn poll_instance(
     config: &Config,
     instance_name: &str,
     sender: &dyn NotificationSender,
+    http_fallback: Option<&HttpFetcher>,
 ) -> anyhow::Result<UsagePayload> {
     let mut state = MonitorState::load_for(config, instance_name)?;
-    let result = check_usage(config, &mut state, instance_name, false, &config.general.timezone, sender).await;
+    let result = check_usage(config, &mut state, instance_name, false, &config.general.timezone, sender, http_fallback).await;
     // Always persist state updates, even when a fetch error occurred mid-way.
     let _ = state.save_for(config, instance_name);
     let payload = result?;
@@ -131,7 +132,7 @@ pub async fn run_monitor(foreground: bool) -> anyhow::Result<()> {
                 tracing::info!("{} [{}]", instance_name, timestamp);
             }
 
-            match check_usage(&config, &mut state, instance_name, foreground, &config.general.timezone, &sender).await {
+            match check_usage(&config, &mut state, instance_name, foreground, &config.general.timezone, &sender, None).await {
                 Ok(_payload) => {}
                 Err(e) => {
                     // AuthRequiredError means session expired or Cloudflare blocked — log
@@ -204,6 +205,7 @@ async fn check_usage(
     verbose: bool,
     timezone: &str,
     sender: &dyn NotificationSender,
+    http_fallback: Option<&HttpFetcher>,
 ) -> anyhow::Result<UsagePayload> {
     if verbose {
         let timestamp = get_current_time_formatted(timezone);
@@ -221,7 +223,7 @@ async fn check_usage(
         instance_name
     );
 
-    let usage_json = fetch_usage(&cookie_header, &session.org_id).await?;
+    let usage_json = fetch_usage(&cookie_header, &session.org_id, http_fallback).await?;
     let usage: UsageResponse = serde_json::from_value(usage_json)?;
 
     if verbose {
