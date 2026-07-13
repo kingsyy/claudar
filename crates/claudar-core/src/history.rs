@@ -171,8 +171,40 @@ fn parse_jsonl(path: &std::path::Path) -> anyhow::Result<Vec<HistoryRecord>> {
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
 
-/// Group records into 5-hour windows by detecting transitions in `five_hour_resets_at`.
-/// Returns one `WindowSummary` per detected window, oldest first.
+/// A window's reset timestamp is reported by the API as `now + remaining`, so it
+/// jitters by sub-second (sometimes whole-second) amounts on every poll. Only a
+/// large *forward* jump marks a genuine window boundary — real windows are hours
+/// apart, jitter is under a minute.
+const RESET_JUMP: chrono::Duration = chrono::Duration::minutes(30);
+
+fn parse_reset(s: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(s)
+        .or_else(|_| DateTime::parse_from_rfc3339(&format!("{}Z", s)))
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
+/// Whether the transition from `prev` to `curr` is a genuine window boundary:
+/// a forward jump beyond jitter, or a transition into/out of "no active window".
+/// Falls back to string inequality when a timestamp can't be parsed.
+fn is_window_boundary(prev: &Option<String>, curr: &Option<String>) -> bool {
+    match (prev, curr) {
+        (None, None) => false,
+        (Some(p), Some(c)) => {
+            if p == c {
+                return false;
+            }
+            match (parse_reset(p), parse_reset(c)) {
+                (Some(pt), Some(ct)) => ct - pt > RESET_JUMP,
+                _ => true,
+            }
+        }
+        _ => true, // None <-> Some
+    }
+}
+
+/// Group records into 5-hour windows by detecting genuine resets in
+/// `five_hour_resets_at`. Returns one `WindowSummary` per detected window, oldest first.
 pub fn summarize_windows(records: &[HistoryRecord]) -> Vec<WindowSummary> {
     if records.is_empty() {
         return Vec::new();
@@ -183,11 +215,11 @@ pub fn summarize_windows(records: &[HistoryRecord]) -> Vec<WindowSummary> {
     let mut prev_resets_at = records[0].five_hour_resets_at.clone();
 
     for i in 1..records.len() {
-        if records[i].five_hour_resets_at != prev_resets_at {
+        if is_window_boundary(&prev_resets_at, &records[i].five_hour_resets_at) {
             windows.push(build_window_summary(&records[window_start_idx..i]));
             window_start_idx = i;
-            prev_resets_at = records[i].five_hour_resets_at.clone();
         }
+        prev_resets_at = records[i].five_hour_resets_at.clone();
     }
 
     // Final (possibly incomplete) window.
@@ -474,6 +506,22 @@ mod tests {
         ];
         let windows = summarize_windows(&records);
         assert_eq!(windows.len(), 2);
+    }
+
+    #[test]
+    fn summarize_ignores_subminute_reset_jitter() {
+        // The API reports reset_at as `now + remaining`, so it drifts by
+        // fractions of a second every poll. That must NOT split the window.
+        let records = vec![
+            make_record(ts(10), 20.0, Some("2026-05-27T15:00:00.033075+00:00"), 10.0),
+            make_record(ts(11), 55.0, Some("2026-05-27T15:00:00.306154+00:00"), 12.0),
+            make_record(ts(12), 90.0, Some("2026-05-27T15:00:01.001200+00:00"), 14.0),
+            // Genuine reset: jumps ~5h forward.
+            make_record(ts(16), 5.0, Some("2026-05-27T20:00:00.512000+00:00"), 15.0),
+        ];
+        let windows = summarize_windows(&records);
+        assert_eq!(windows.len(), 2, "sub-second jitter must not create windows");
+        assert!((windows[0].peak_five_hour_pct - 90.0).abs() < 0.001);
     }
 
     // ── daily_pattern ────────────────────────────────────────────────────────

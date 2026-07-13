@@ -23,12 +23,12 @@
   };
 
   type ResetEvent = {
-    detectedAt: string;
-    scheduledAt: string;
+    resetAt: string; // window boundary — the scheduled reset time
+    detectedAt: string; // poll when the fresh window was first seen
     windowType: "5h" | "7d";
-    usageAtReset: number;
-    deltaMinutes: number;
-    isAnomaly: boolean;
+    peakPct: number; // peak usage in the window that just ended
+    hitCap: boolean; // window reached 100%
+    lagMinutes: number; // detection lag (detectedAt − resetAt)
   };
 
   type TooltipState = {
@@ -38,13 +38,25 @@
     record: HistoryRecord;
   };
 
-  type ResetTooltip = {
-    domX: number;
-    domY: number;
-    event: ResetEvent;
-  };
-
   type DisplayRange = "5h" | "24h" | "7d" | "14d" | "21d";
+
+  // A window's reset timestamp is reported as `now + remaining`, so it jitters
+  // by fractions of a second on every poll. A *genuine* reset is when it jumps
+  // forward by far more than that jitter — real windows are hours apart.
+  const RESET_JUMP_MS = 30 * 60 * 1000;
+
+  function jumpedForward(prev: string | null, curr: string | null): boolean {
+    if (!prev || !curr) return false;
+    return new Date(curr).getTime() - new Date(prev).getTime() > RESET_JUMP_MS;
+  }
+
+  // Boundary for grouping records into windows: a real forward jump, or a
+  // transition into/out of "no active window" (null).
+  function isWindowBoundary(prev: string | null, curr: string | null): boolean {
+    if (prev === curr) return false;
+    if (!prev || !curr) return true;
+    return jumpedForward(prev, curr);
+  }
 
   const CHART_WIDTH = 720;
   const CHART_HEIGHT = 200;
@@ -52,13 +64,6 @@
   const PAD_R = 12;
   const PAD_T = 10;
   const PAD_B = 20;
-
-  const RESET_W = 720;
-  const RESET_H = 170;
-  const RPAD_L = 36;
-  const RPAD_R = 16;
-  const RPAD_T = 16;
-  const RPAD_B = 24;
 
   // ── State ─────────────────────────────────────────────────────────────────────
   let instances = $state<InstanceInfo[]>([]);
@@ -68,9 +73,7 @@
   let error = $state<string | null>(null);
   let displayRange = $state<DisplayRange>("7d");
   let tooltip = $state<TooltipState | null>(null);
-  let resetTooltip = $state<ResetTooltip | null>(null);
   let chartCard = $state<HTMLDivElement | null>(null);
-  let resetChartCard = $state<SVGSVGElement | null>(null);
   let viewMode = $state<"overview" | "resets">("overview");
 
   function rangeToDays(r: DisplayRange): number {
@@ -91,7 +94,13 @@
     const last = allRecords[allRecords.length - 1];
     const currentResetAt = last.five_hour_resets_at;
     if (!currentResetAt) return allRecords.slice(-20);
-    return allRecords.filter((r) => r.five_hour_resets_at === currentResetAt);
+    // Same window = reset timestamp within jitter range of the current one.
+    const ref = new Date(currentResetAt).getTime();
+    return allRecords.filter(
+      (r) =>
+        r.five_hour_resets_at != null &&
+        Math.abs(new Date(r.five_hour_resets_at).getTime() - ref) < RESET_JUMP_MS
+    );
   });
 
   let stats = $derived.by(() => {
@@ -119,11 +128,11 @@
       seven_day_delta: Math.max(0, slice[slice.length - 1].seven_day_pct - slice[0].seven_day_pct),
     });
     for (let i = 1; i < records.length; i++) {
-      if (records[i].five_hour_resets_at !== prevResets) {
+      if (isWindowBoundary(prevResets, records[i].five_hour_resets_at)) {
         out.push(build(records.slice(start, i)));
         start = i;
-        prevResets = records[i].five_hour_resets_at;
       }
+      prevResets = records[i].five_hour_resets_at;
     }
     out.push(build(records.slice(start)));
     return out;
@@ -293,87 +302,82 @@
   });
 
   // ── Derived: reset events ─────────────────────────────────────────────────────
+  // One event per genuine window boundary. For each, the peak usage recorded in
+  // the window that just ended — i.e. how hard that window was hit before it reset.
   let resets = $derived.by((): ResetEvent[] => {
     if (allRecords.length < 2) return [];
     const events: ResetEvent[] = [];
-    for (let i = 1; i < allRecords.length; i++) {
-      const prev = allRecords[i - 1];
-      const curr = allRecords[i];
-      if (
-        curr.five_hour_resets_at !== prev.five_hour_resets_at &&
-        curr.five_hour_resets_at !== null &&
-        prev.five_hour_resets_at !== null
-      ) {
-        const delta =
-          (new Date(curr.polled_at).getTime() - new Date(prev.five_hour_resets_at).getTime()) /
-          60000;
-        events.push({
-          detectedAt: curr.polled_at,
-          scheduledAt: prev.five_hour_resets_at,
-          windowType: "5h",
-          usageAtReset: curr.five_hour_pct,
-          deltaMinutes: delta,
-          isAnomaly: delta < -10 && curr.five_hour_pct < 80,
-        });
+
+    const scan = (
+      type: "5h" | "7d",
+      resetKey: "five_hour_resets_at" | "seven_day_resets_at",
+      pctKey: "five_hour_pct" | "seven_day_pct"
+    ) => {
+      let start = 0;
+      // Track the last non-null reset timestamp so a window that resets while
+      // usage is idle (reset_at momentarily null) is still detected.
+      let lastReset = allRecords[0][resetKey];
+      for (let i = 1; i < allRecords.length; i++) {
+        const curr = allRecords[i][resetKey];
+        if (jumpedForward(lastReset, curr)) {
+          let peak = 0;
+          for (let k = start; k < i; k++) peak = Math.max(peak, allRecords[k][pctKey]);
+          events.push({
+            resetAt: lastReset!,
+            detectedAt: allRecords[i].polled_at,
+            windowType: type,
+            peakPct: peak,
+            hitCap: peak >= 100,
+            lagMinutes:
+              (new Date(allRecords[i].polled_at).getTime() - new Date(lastReset!).getTime()) /
+              60000,
+          });
+          start = i;
+        }
+        if (curr) lastReset = curr;
       }
-      if (
-        curr.seven_day_resets_at !== prev.seven_day_resets_at &&
-        curr.seven_day_resets_at !== null &&
-        prev.seven_day_resets_at !== null
-      ) {
-        const delta =
-          (new Date(curr.polled_at).getTime() - new Date(prev.seven_day_resets_at).getTime()) /
-          60000;
-        events.push({
-          detectedAt: curr.polled_at,
-          scheduledAt: prev.seven_day_resets_at,
-          windowType: "7d",
-          usageAtReset: curr.seven_day_pct,
-          deltaMinutes: delta,
-          isAnomaly: delta < -10 && curr.seven_day_pct < 80,
-        });
-      }
-    }
-    return events.sort(
-      (a, b) => new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime()
-    );
+    };
+
+    scan("5h", "five_hour_resets_at", "five_hour_pct");
+    scan("7d", "seven_day_resets_at", "seven_day_pct");
+
+    return events.sort((a, b) => new Date(b.resetAt).getTime() - new Date(a.resetAt).getTime());
   });
 
-  let anomalyCount = $derived(resets.filter((r) => r.isAnomaly).length);
+  let resetSummary = $derived.by(() => {
+    const r5 = resets.filter((r) => r.windowType === "5h");
+    return {
+      count5h: r5.length,
+      count7d: resets.length - r5.length,
+      maxed: r5.filter((r) => r.hitCap).length,
+      avgPeak: r5.length ? r5.reduce((a, b) => a + b.peakPct, 0) / r5.length : 0,
+    };
+  });
 
-  // ── Derived: reset scatter chart ──────────────────────────────────────────────
-  let resetChart = $derived.by(() => {
-    if (resets.length === 0) return null;
-    const times = resets.map((e) => new Date(e.detectedAt).getTime());
-    const tMin = Math.min(...times);
-    const tMax = Math.max(...times);
-    const tSpan = Math.max(tMax - tMin, 3_600_000);
-    const iW = RESET_W - RPAD_L - RPAD_R;
-    const iH = RESET_H - RPAD_T - RPAD_B;
-    const toX = (t: number) => RPAD_L + ((t - tMin) / tSpan) * iW;
-    const toY = (pct: number) => RPAD_T + iH - (Math.min(Math.max(pct, 0), 100) / 100) * iH;
-    const dots = resets.map((e, i) => ({
-      x: toX(times[i]),
-      y: toY(e.usageAtReset),
-      event: e,
-      r: e.windowType === "5h" ? 6 : 5,
-    }));
-    const grid = [0, 25, 50, 75, 100].map((p) => ({ y: toY(p), label: `${p}%` }));
-    const spanDays = (tMax - tMin) / 86_400_000;
-    const tickMs =
-      spanDays <= 1 ? 3 * 3_600_000 : spanDays <= 7 ? 86_400_000 : 2 * 86_400_000;
-    const fmtTick =
-      spanDays <= 1
-        ? (t: number) => new Date(t).toLocaleTimeString([], { hour: "2-digit" })
-        : (t: number) =>
-            new Date(t).toLocaleDateString([], { month: "short", day: "numeric" });
-    const ticks: { x: number; label: string }[] = [];
-    let t = Math.ceil(tMin / tickMs) * tickMs;
-    while (t <= tMax) {
-      ticks.push({ x: toX(t), label: fmtTick(t) });
-      t += tickMs;
+  // Group resets by calendar day (newest first) for the timeline.
+  let resetsByDay = $derived.by((): { key: string; label: string; events: ResetEvent[] }[] => {
+    const map = new Map<string, ResetEvent[]>();
+    for (const e of resets) {
+      const key = new Date(e.resetAt).toDateString();
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(e);
     }
-    return { dots, grid, ticks, iW, iH, toX, toY, tMin, tSpan };
+    const today = new Date().toDateString();
+    const yest = new Date(Date.now() - 86_400_000).toDateString();
+    return Array.from(map.entries()).map(([key, events]) => ({
+      key,
+      label:
+        key === today
+          ? "Today"
+          : key === yest
+            ? "Yesterday"
+            : new Date(key).toLocaleDateString([], {
+                weekday: "long",
+                month: "short",
+                day: "numeric",
+              }),
+      events,
+    }));
   });
 
   // ── Derived: main chart ───────────────────────────────────────────────────────
@@ -408,7 +412,7 @@
     const predLine = predPts.length >= 2 ? pathLine(predPts) : null;
     const resetLines: number[] = [];
     for (let i = 1; i < records.length; i++) {
-      if (records[i].five_hour_resets_at !== records[i - 1].five_hour_resets_at)
+      if (isWindowBoundary(records[i - 1].five_hour_resets_at, records[i].five_hour_resets_at))
         resetLines.push(toX(times[i]));
     }
     const grid = [0, 25, 50, 75, 100].map((p) => ({ y: toY(p), label: `${p}%` }));
@@ -453,23 +457,6 @@
       if (d < minDist) { minDist = d; nearestIdx = i; }
     });
     tooltip = { domX, domY, svgX: chart.pts5h[nearestIdx][0], record: records[nearestIdx] };
-  }
-
-  // ── Tooltip: reset chart ──────────────────────────────────────────────────────
-  function onResetMouseMove(e: MouseEvent) {
-    if (!resetChart || !resetChartCard) return;
-    const rect = resetChartCard.getBoundingClientRect();
-    const svgX = ((e.clientX - rect.left) / rect.width) * RESET_W;
-    const svgY = ((e.clientY - rect.top) / rect.height) * RESET_H;
-    let nearest: (typeof resetChart.dots)[0] | null = null;
-    let minDist = 22;
-    for (const dot of resetChart.dots) {
-      const dist = Math.sqrt((dot.x - svgX) ** 2 + (dot.y - svgY) ** 2);
-      if (dist < minDist) { minDist = dist; nearest = dot; }
-    }
-    resetTooltip = nearest
-      ? { domX: e.clientX - rect.left, domY: e.clientY - rect.top, event: nearest.event }
-      : null;
   }
 
   // ── Data loading ──────────────────────────────────────────────────────────────
@@ -517,11 +504,8 @@
   const hourLabel = (h: number) =>
     h === 0 ? "12a" : h === 12 ? "12p" : h < 12 ? `${h}a` : `${h - 12}p`;
   const fmtRate = (n: number) => `${n.toFixed(1)}%/day`;
-  const fmtDelta = (m: number) => {
-    const abs = Math.abs(m);
-    const str = abs < 90 ? `${Math.round(abs)}m` : `${(abs / 60).toFixed(1)}h`;
-    return m < -1 ? `−${str} early` : m > 1 ? `+${str} late` : "on time";
-  };
+  const fmtClock = (iso: string) =>
+    new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const fmtDays = (d: number) => d < 1 ? `${Math.round(d * 24)}h` : `${d.toFixed(d < 2 ? 1 : 0)}d`;
   const fmtDuration = (ms: number) => {
     const h = Math.floor(ms / 3600000);
@@ -601,8 +585,7 @@
           class:active={viewMode === "resets"}
           role="tab"
           aria-selected={viewMode === "resets"}
-          onclick={() => (viewMode = "resets")}
-          >Resets{#if anomalyCount > 0}<span class="anomaly-badge">{anomalyCount}</span>{/if}</button
+          onclick={() => (viewMode = "resets")}>Resets</button
         >
       </div>
       <div class="range-selector" role="group" aria-label="Time range">
@@ -964,95 +947,78 @@
           <div>
             <h2>Reset log</h2>
             <p class="section-sub">
-              Each dot is a detected window boundary. Y-axis = usage at the moment of reset.
+              When each usage window reset, and how much you'd used before it did.
             </p>
           </div>
-          {#if resets.length > 0}
-            <div class="resets-summary">
-              <span class="rs-stat"><strong>{resets.length}</strong> resets</span>
-              {#if anomalyCount > 0}
-                <span class="rs-stat rs-anomaly"><strong>{anomalyCount}</strong> early</span>
-              {/if}
-            </div>
-          {/if}
         </div>
 
         {#if resets.length === 0}
           <div class="resets-empty">
             <p>No resets detected in the last {sinceDays === 1 ? "24 hours" : `${sinceDays} days`}.</p>
-            <p class="sub">Try expanding to 21d, or wait for more polling cycles.</p>
+            <p class="sub">Try a longer range, or wait for more polling cycles.</p>
           </div>
         {:else}
-          <!-- Scatter plot -->
-          <div class="reset-chart-wrap">
-            {#if resetTooltip}
-              <div
-                class="tooltip reset-tooltip"
-                style:left={resetTooltip.domX < 360 ? `${resetTooltip.domX + 14}px` : "auto"}
-                style:right={resetTooltip.domX >= 360 ? `${720 - resetTooltip.domX + 14}px` : "auto"}
-                style:top={`${Math.max(4, resetTooltip.domY - 110)}px`}
-              >
-                <div class="tt-time">{fmtTime(resetTooltip.event.detectedAt)}</div>
-                <div class="tt-row">
-                  <span>Window</span>
-                  <strong>{resetTooltip.event.windowType}</strong>
-                </div>
-                <div class="tt-row">
-                  <span>Usage at reset</span>
-                  <strong>{fmtPct(resetTooltip.event.usageAtReset)}</strong>
-                </div>
-                <div class="tt-row">
-                  <span>Timing</span>
-                  <strong class:tt-early={resetTooltip.event.deltaMinutes < -10}>{fmtDelta(resetTooltip.event.deltaMinutes)}</strong>
-                </div>
-                {#if resetTooltip.event.isAnomaly}
-                  <div class="tt-anomaly">Early reset with low usage</div>
-                {/if}
-              </div>
-            {/if}
-            <svg
-              viewBox={`0 0 ${RESET_W} ${RESET_H}`}
-              bind:this={resetChartCard}
-              onmousemove={onResetMouseMove}
-              onmouseleave={() => (resetTooltip = null)}
-              class="reset-svg"
-            >
-              {#if resetChart}
-                <!-- Grid -->
-                {#each resetChart.grid as g}
-                  <line x1={RPAD_L} x2={RESET_W - RPAD_R} y1={g.y} y2={g.y} class="grid-line" />
-                  <text x={RPAD_L - 4} y={g.y + 4} class="grid-label" text-anchor="end">{g.label}</text>
-                {/each}
-                <!-- Time axis -->
-                {#each resetChart.ticks as tick}
-                  <text x={tick.x} y={RESET_H - 3} class="time-label" text-anchor="middle">{tick.label}</text>
-                {/each}
-                <!-- Dots -->
-                {#each resetChart.dots as dot}
-                  <circle
-                    cx={dot.x}
-                    cy={dot.y}
-                    r={resetTooltip?.event === dot.event ? dot.r + 2.5 : dot.r}
-                    class="reset-dot"
-                    class:reset-dot-7d={dot.event.windowType === "7d"}
-                    class:reset-dot-anomaly={dot.event.isAnomaly}
-                  />
-                {/each}
-                <!-- Hovered crosshair -->
-                {#if resetTooltip && resetChart}
-                  {@const hDot = resetChart.dots.find((d) => d.event === resetTooltip?.event)}
-                  {#if hDot}
-                    <line x1={hDot.x} x2={hDot.x} y1={RPAD_T} y2={RPAD_T + resetChart.iH} class="crosshair" />
-                  {/if}
-                {/if}
-              {/if}
-            </svg>
-            <!-- Legend -->
-            <div class="chart-legend reset-legend">
-              <span class="legend-item"><span class="legend-dot" style="background: hsl(var(--chart-5h))"></span>5h normal</span>
-              <span class="legend-item"><span class="legend-dot" style="background: hsl(var(--accent-purple))"></span>7d normal</span>
-              <span class="legend-item"><span class="legend-dot" style="background: hsl(var(--danger))"></span>anomaly</span>
+          <!-- Summary tiles -->
+          <div class="reset-tiles">
+            <div class="rtile">
+              <span class="rtile-value">{resetSummary.count5h}</span>
+              <span class="rtile-label">5-hour resets</span>
             </div>
+            <div class="rtile" class:rtile-hot={resetSummary.maxed > 0}>
+              <span class="rtile-value">{resetSummary.maxed}</span>
+              <span class="rtile-label">maxed out</span>
+            </div>
+            <div class="rtile">
+              <span class="rtile-value">{fmtPct(resetSummary.avgPeak)}</span>
+              <span class="rtile-label">avg peak</span>
+            </div>
+            <div class="rtile">
+              <span class="rtile-value">{resetSummary.count7d}</span>
+              <span class="rtile-label">weekly resets</span>
+            </div>
+          </div>
+
+          <!-- Timeline: each row is one window that reset, with its peak usage -->
+          <div class="reset-timeline">
+            {#each resetsByDay as day (day.key)}
+              <div class="rt-day">
+                <div class="rt-day-label">{day.label}</div>
+                <div class="rt-rows">
+                  {#each day.events as e (e.windowType + e.resetAt)}
+                    {#if e.windowType === "7d"}
+                      <div class="rt-row rt-row-7d">
+                        <span class="rt-time">{fmtClock(e.resetAt)}</span>
+                        <span class="rt-badge badge-7d">7-day</span>
+                        <span class="rt-desc">
+                          Weekly limit reset — peaked at {fmtPct(e.peakPct)}
+                        </span>
+                      </div>
+                    {:else}
+                      <div class="rt-row" class:rt-maxed={e.hitCap}>
+                        <span class="rt-time">{fmtClock(e.resetAt)}</span>
+                        <div
+                          class="rt-bar"
+                          role="img"
+                          aria-label={`peaked at ${fmtPct(e.peakPct)}`}
+                        >
+                          <div
+                            class="rt-bar-fill"
+                            class:rt-bar-high={e.peakPct >= 80}
+                            style:width="{Math.min(e.peakPct, 100)}%"
+                          ></div>
+                        </div>
+                        <span class="rt-peak">{fmtPct(e.peakPct)}</span>
+                        {#if e.hitCap}
+                          <span class="rt-badge badge-max">maxed</span>
+                        {:else}
+                          <span class="rt-badge-spacer"></span>
+                        {/if}
+                      </div>
+                    {/if}
+                  {/each}
+                </div>
+              </div>
+            {/each}
           </div>
         {/if}
       </section>
@@ -1125,21 +1091,6 @@
     color: hsl(var(--foreground));
     font-weight: 600;
     box-shadow: 0 1px 3px hsl(222.2 84% 4.9% / 0.08);
-  }
-
-  .anomaly-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 16px;
-    height: 16px;
-    padding: 0 4px;
-    background: hsl(var(--danger));
-    color: white;
-    border-radius: 8px;
-    font-size: 0.65rem;
-    font-weight: 700;
-    line-height: 1;
   }
 
   /* ── Instance tabs ──────────────────────────────────────────────────────────── */
@@ -1462,8 +1413,6 @@
   .dot-5h { background: hsl(222 84% 65%); }
   .dot-7d { background: hsl(25 95% 62%); }
   .dot-pred { background: hsl(222 84% 65%); opacity: 0.55; }
-  .tt-anomaly { margin-top: 0.3rem; padding-top: 0.3rem; border-top: 1px solid hsl(0 0% 20%); font-size: 0.68rem; color: hsl(0 70% 65%); }
-  .tt-early { color: hsl(0 70% 65%); }
 
   /* ── Stats row ──────────────────────────────────────────────────────────────── */
   .stats-row {
@@ -1698,7 +1647,7 @@
     background: linear-gradient(to right, hsl(var(--heat-lo)), hsl(var(--heat-hi)));
   }
 
-  /* ── Reset scatter chart ────────────────────────────────────────────────────── */
+  /* ── Reset log ──────────────────────────────────────────────────────────────── */
   .resets-header {
     display: flex;
     justify-content: space-between;
@@ -1707,34 +1656,115 @@
     margin-bottom: 1rem;
   }
 
-  .resets-summary { display: flex; gap: 0.5rem; align-items: center; flex-shrink: 0; margin-top: 0.1rem; }
-  .rs-stat { font-size: 0.8rem; color: hsl(var(--muted-foreground)); background: hsl(var(--muted)); border: 1px solid hsl(var(--border)); border-radius: 12px; padding: 0.15rem 0.6rem; }
-  .rs-anomaly { background: hsl(var(--danger-bg)); border-color: hsl(var(--danger-border)); color: hsl(var(--danger-strong)); }
   .resets-empty { padding: 2rem; text-align: center; color: hsl(var(--muted-foreground)); font-size: 0.875rem; }
   .resets-empty .sub { font-size: 0.8rem; margin-top: 0.3rem; }
 
-  .reset-chart-wrap {
-    position: relative;
+  /* Summary tiles */
+  .reset-tiles {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .rtile {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    padding: 0.7rem 0.85rem;
     border: 1px solid hsl(var(--border));
     border-radius: 8px;
-    padding: 0.75rem 0.75rem 0.4rem;
     background: hsl(var(--card));
-    cursor: crosshair;
-    user-select: none;
   }
 
-  .reset-svg { width: 100%; height: auto; display: block; }
+  .rtile-hot { border-color: hsl(var(--danger-border)); background: hsl(var(--danger-bg)); }
+  .rtile-value { font-size: 1.4rem; font-weight: 700; color: hsl(var(--foreground)); font-variant-numeric: tabular-nums; line-height: 1; }
+  .rtile-hot .rtile-value { color: hsl(var(--danger-strong)); }
+  .rtile-label { font-size: 0.7rem; color: hsl(var(--muted-foreground)); text-transform: uppercase; letter-spacing: 0.04em; }
 
-  .reset-dot {
-    fill: hsl(var(--chart-5h));
-    stroke: hsl(var(--chart-surface));
-    stroke-width: 1.5;
-    transition: r 0.1s;
+  /* Timeline */
+  .reset-timeline { display: flex; flex-direction: column; gap: 1.25rem; }
+
+  .rt-day {
+    display: grid;
+    grid-template-columns: 108px 1fr;
+    gap: 0.75rem;
+    align-items: start;
   }
 
-  .reset-dot-7d { fill: hsl(var(--accent-purple)); }
-  .reset-dot-anomaly { fill: hsl(var(--danger)); }
+  .rt-day-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: hsl(var(--muted-foreground));
+    padding-top: 0.35rem;
+    position: sticky;
+    top: 0;
+  }
 
-  .reset-tooltip { min-width: 170px; }
-  .reset-legend { margin-top: 0.25rem; }
+  .rt-rows { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .rt-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: 7px;
+    background: hsl(var(--card));
+  }
+
+  .rt-row.rt-maxed { border-color: hsl(var(--danger-border)); background: hsl(var(--danger-bg)); }
+
+  .rt-time {
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+    color: hsl(var(--muted-foreground));
+    width: 52px;
+    flex-shrink: 0;
+  }
+
+  .rt-bar {
+    flex: 1;
+    height: 8px;
+    background: hsl(var(--chart-bar-track));
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .rt-bar-fill {
+    height: 100%;
+    background: hsl(var(--chart-5h));
+    border-radius: 4px;
+    min-width: 2px;
+  }
+
+  .rt-bar-high { background: hsl(var(--danger)); }
+
+  .rt-peak {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+    font-variant-numeric: tabular-nums;
+    width: 40px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .rt-badge {
+    font-size: 0.62rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+
+  .badge-max { background: hsl(var(--danger)); color: white; }
+  .badge-7d { background: hsl(var(--accent-purple)); color: white; }
+  .rt-badge-spacer { width: 44px; flex-shrink: 0; }
+
+  /* 7-day reset row spans full width and stands out */
+  .rt-row-7d { border-color: hsl(var(--accent-purple)); background: hsl(var(--accent-purple) / 0.08); }
+  .rt-desc { font-size: 0.8rem; color: hsl(var(--foreground)); }
 </style>

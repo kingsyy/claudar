@@ -1,3 +1,17 @@
+## 2026-07-13 · Rebuild History → Resets around a corrected reset-detection heuristic
+
+**What:** Reworked the Resets view in `ui/src/routes/History.svelte`. Root problem: reset detection used raw string inequality on `*_resets_at`, but the API reports each window's reset time as `now + remaining`, so the timestamp jitters by sub-second (sometimes whole-second) amounts on *every* poll. Over 20 days of real data this turned ~68 genuine 5h resets into **3,356 phantom ones** (and ~3 weekly resets into 4,050). The old scatter plot also put `usageAtReset` on the Y axis — which read the *new* window's ~0% usage, not anything meaningful. Fixes:
+1. **`jumpedForward()` / `isWindowBoundary()` helpers** — a genuine reset is when `resets_at` jumps forward by > 30 min (real windows are hours apart; jitter is sub-minute). The reset scan also carries the last non-null `resets_at` across idle gaps so windows that reset while usage is 0/null are still caught. Validated on real data: 68/48 5h resets, 3/4 weekly — realistic.
+2. Reused the same helper for the overview `windows` grouping (feeds the empirical prediction), the main chart's reset lines (was drawing thousands of dashed lines), and the "current 5h window" filter (was matching one exact jittered string, dropping most of the window).
+3. **New `ResetEvent` model** — `{resetAt, detectedAt, windowType, peakPct, hitCap, lagMinutes}`. `peakPct` = peak usage in the window that *ended* (how hard it was hit before reset), replacing the meaningless new-window usage.
+4. **Redesigned view**: four summary tiles (5h resets · maxed-out count · avg peak · weekly resets) + a day-grouped timeline where each row shows the clock time it reset, a peak-usage bar, the peak %, and a "maxed" flag; weekly (7d) resets render as distinct highlighted rows. Removed the scatter SVG, its tooltip/hover machinery, and the red anomaly badge.
+
+**Why:** The page was "not clear" because it was showing thousands of fake resets against a meaningless axis. A user cares about *when* windows reset (rhythm), *how much* they'd used before each reset (peak — did they leave capacity or slam the cap), and *how often* they max out. The timeline answers all three directly.
+
+**Rust side (same session):** Applied the identical fix to `summarize_windows` in `crates/claudar-core/src/history.rs` (feeds `predict_windows_remaining` / the CLI). Added `is_window_boundary()` + `parse_reset()` helpers mirroring the JS: a boundary is a forward jump > 30 min, a None↔Some transition, or — when a timestamp can't be parsed — string inequality (keeps the existing `"T1"`/`"T2"` label-based tests valid). Added a `summarize_ignores_subminute_reset_jitter` regression test. `cargo test -p claudar-core` green (98 pass); workspace `cargo check` clean.
+
+**Caveats:** The 30-min threshold is a heuristic; fine for 5h/7d windows but would need revisiting if shorter windows are ever introduced. UI verified via `vite build` (clean) and by simulating the exact detection algorithm against both real history files.
+
 ## 2026-07-01 · Fix silent rekey on keychain failure + per-poll prompt storm
 
 **What:** Reworked `crypto::get_or_create_key` (`crates/claudar-core/src/crypto.rs`). Two fixes:
