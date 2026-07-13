@@ -75,6 +75,10 @@
   let tooltip = $state<TooltipState | null>(null);
   let chartCard = $state<HTMLDivElement | null>(null);
   let viewMode = $state<"overview" | "resets">("overview");
+  let heatTooltip = $state<{ domX: number; domY: number; label: string; val: number } | null>(
+    null
+  );
+  let heatmapCard = $state<HTMLDivElement | null>(null);
 
   function rangeToDays(r: DisplayRange): number {
     if (r === "5h" || r === "24h") return 1;
@@ -506,6 +510,20 @@
   const fmtRate = (n: number) => `${n.toFixed(1)}%/day`;
   const fmtClock = (iso: string) =>
     new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  function onHeatMove(e: MouseEvent, dow: number, hour: number, val: number | null) {
+    if (val == null || !heatmapCard) {
+      heatTooltip = null;
+      return;
+    }
+    const rect = heatmapCard.getBoundingClientRect();
+    heatTooltip = {
+      domX: e.clientX - rect.left,
+      domY: e.clientY - rect.top,
+      label: `${DOW_LABELS[dow]} · ${hourLabel(hour)}`,
+      val,
+    };
+  }
   const fmtDays = (d: number) => d < 1 ? `${Math.round(d * 24)}h` : `${d.toFixed(d < 2 ? 1 : 0)}d`;
   const fmtDuration = (ms: number) => {
     const h = Math.floor(ms / 3600000);
@@ -906,7 +924,31 @@
         <section class="section">
           <h2>Usage heatmap</h2>
           <p class="section-sub">Average 5-hour usage by day of week and hour (local time)</p>
-          <div class="heatmap">
+          <div
+            class="heatmap"
+            bind:this={heatmapCard}
+            role="img"
+            aria-label="Usage heatmap by day and hour"
+            onmouseleave={() => (heatTooltip = null)}
+          >
+            {#if heatTooltip}
+              <div
+                class="tooltip heat-tooltip"
+                style:left={heatTooltip.domX < (heatmapCard?.clientWidth ?? 0) / 2
+                  ? `${heatTooltip.domX + 14}px`
+                  : "auto"}
+                style:right={heatTooltip.domX >= (heatmapCard?.clientWidth ?? 0) / 2
+                  ? `${(heatmapCard?.clientWidth ?? 0) - heatTooltip.domX + 14}px`
+                  : "auto"}
+                style:top={`${Math.max(4, heatTooltip.domY - 46)}px`}
+              >
+                <div class="tt-time">{heatTooltip.label}</div>
+                <div class="tt-row">
+                  <span class="tt-dot dot-5h"></span><span>avg 5-hour</span>
+                  <strong>{fmtPct(heatTooltip.val)}</strong>
+                </div>
+              </div>
+            {/if}
             <!-- Hour header -->
             <div class="heatmap-row heatmap-header">
               <div class="heatmap-dow-label"></div>
@@ -917,15 +959,17 @@
             {#each heatmap as row, dow}
               <div class="heatmap-row">
                 <div class="heatmap-dow-label">{DOW_LABELS[dow]}</div>
-                {#each row as val}
+                {#each row as val, h}
                   <div
                     class="heatmap-cell"
+                    class:heatmap-cell-active={heatTooltip?.label === `${DOW_LABELS[dow]} · ${hourLabel(h)}`}
                     style:background={val != null
                       ? (theme.isDark
                           ? `hsl(222 80% ${Math.round(20 + (val / maxHeatmapCell) * 55)}%)`
                           : `hsl(222 84% ${Math.round(95 - (val / maxHeatmapCell) * 55)}%)`)
                       : (theme.isDark ? "hsl(217 32% 13%)" : "hsl(214 20% 95%)")}
-                    title={val != null ? `${val.toFixed(0)}%` : "no data"}
+                    role="presentation"
+                    onmousemove={(e) => onHeatMove(e, dow, h, val)}
                   ></div>
                 {/each}
               </div>
@@ -1586,12 +1630,14 @@
 
   /* ── Heatmap ────────────────────────────────────────────────────────────────── */
   .heatmap {
+    position: relative;
     border: 1px solid hsl(var(--border));
     border-radius: 8px;
-    overflow: hidden;
     padding: 0.5rem;
     background: hsl(var(--card));
   }
+
+  .heat-tooltip { min-width: 0; }
 
   .heatmap-row {
     display: grid;
@@ -1628,6 +1674,10 @@
   }
 
   .heatmap-cell:hover { opacity: 0.75; }
+
+  .heatmap-cell-active {
+    box-shadow: inset 0 0 0 1.5px hsl(var(--foreground));
+  }
 
   .heatmap-scale {
     display: flex;
