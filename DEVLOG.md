@@ -1,3 +1,44 @@
+## 2026-07-19 · Optional read-only web dashboard for remote/agent access
+
+**What:** Added an opt-in HTTP server (`src-tauri/src/web_server.rs`, new `config.web` section: `enabled`, `bind`, `port`, `agent_api_enabled`) so usage can be checked from outside the desktop app — e.g. a phone over Tailscale, or another agent polling programmatically. Off by default; binds to `127.0.0.1` by default and never defaults to `0.0.0.0` — exposing it beyond loopback (e.g. to a Tailscale IP) is a deliberate config change, not an accident. Routes: `/` (static HTML dashboard), `/healthz`, `/api/usage` (raw per-instance payloads), `/api/history` (returns `[]` rather than erroring when `history.enabled` is off), and `/api/agent` — a separate opt-in, minimal machine-readable endpoint (usage %, pace vs. time-elapsed, reset countdown, predicted peak) meant for other tools/agents to poll for throttling decisions, gated independently of the human dashboard since it's for unattended access. Settings gained a new "Web" tab to toggle/configure all four fields; `set_config` now restarts the server after every save so bind/port/enabled changes take effect without an app restart.
+
+**Why:** The GUI is the only way to see usage today, but the user wants to check it from a phone or let an agent poll it without opening the app. A tiny axum server reusing the already-in-memory `TrayUsage` state was the simplest way to do that without duplicating the polling loop.
+
+**Verification:** `cargo check --workspace` and `cargo test --workspace` (98 passed) clean; `vite build` clean. Server itself not runtime-verified (no bundled-app environment here) — binding, restart-on-config-change, and the `/api/agent` gating should get a manual check before relying on it.
+
+## 2026-07-18 · Optional pace-delta label + pill-styled bars on the Dashboard
+
+**What:** Two changes to the Dashboard usage bars, both opt-in/additive over the existing now/peak marks (didn't replace them — decided against that after initially proposing it):
+1. **New setting** `general.show_pace_delta` (default `false`, toggle under Settings → Dashboard). When on, each bar shows `usage% − time-elapsed%` as a signed `+N%`/`−N%` label (hidden when both are 0/null — a fresh window has nothing meaningful to compare).
+2. **Bar-fill restyled as a pill**: was a saturated gradient per tone; now pastel `*-bg` background + `*-border` outline, matching the badge/pill token pairing already used elsewhere (e.g. the error banner) — pastel background, strong color reserved for text.
+
+**Positioning (the hard part):** rather than measuring rendered text width in JS, the delta label is anchored via `left: {fillW}%` + a CSS `translate()` that flips direction based on a `fillW` threshold: `<3%` pins it to the track's right edge (nothing to anchor to), `3–12%` sits just outside the fill's trailing edge, `≥12%` sits inside the fill, inset from the edge. Same trick the existing now/peak marks already use (`nowPos`/`peakPos` clamps), just with a binary inside/outside split instead of continuous collision math — single label instead of two, so there's no cross-label collision to solve.
+
+**Verification:** `cargo check -p claudar-core` clean; `vite build` clean (pre-existing unrelated Wizard warning only). Not runtime-driven — Tauri IPC only returns real data in the bundled app.
+
+## 2026-07-16 · Responsive nav, clearer dashboard bars, narrow History
+
+Follow-up to the portrait-layout reshape (below).
+
+**Responsive nav** (`App.svelte`): the hamburger is no longer permanent. Added `winWidth` tracking (resize listener) with a `wide` derived at a **680px** breakpoint (fits the 220px sidebar + a comfortable content column). ≥680px renders the original persistent sidebar; <680px keeps the top bar + slide-out drawer. Factored the logo and nav list into shared `{#snippet}`s so both layouts render identical nav without duplication. Resizing to wide force-closes the drawer.
+
+**Dashboard bar clarity** (`Dashboard.svelte`): the collapsed single-bar (fill + vertical tick) was ambiguous about which element was tokens vs time. Kept the compact encoding but made it legible: (1) a one-time legend under the header — gradient swatch = "tokens used", vertical tick = "time elapsed" — instead of repeating labels on every row; (2) a **CSS-only hover tooltip** per limit (`.limit:hover .limit-tip`) spelling out exact "Tokens used %" / "Time elapsed %" + pace + reset; (3) taller 9px bar and a white-ringed time marker so the tick reads on top of the coloured fill; (4) the % now carries a "used" unit label. No JS state for the tooltip — pure hover, works fine with the snippet-based render.
+
+**History narrow** (`History.svelte`): kept the desktop design intact and added a `@media (max-width: 680px)` block — header stacks, range selector goes full-width, stat/tile grids reflow (5→3 cols, 4→2 cols), week-over-week gutters shrink, and the reset-timeline day label becomes a heading above its rows instead of a fixed 108px column. Horizontal scroll is still allowed here (only the Dashboard is pinned), so the heatmap etc. degrade gracefully.
+
+**Verification:** `vite build` clean; DMG rebuilt. Not runtime-driven here (Tauri IPC only returns real data in the bundled app) — visual confirmation on the user's install.
+
+## 2026-07-16 · Reshape the app into a narrow, always-open portrait layout
+
+**What:** The window was a 1180×880 two-column desktop layout (220px persistent sidebar + content), and the Dashboard only showed one instance at a time behind tabs. For an always-open companion window that's the wrong shape. Reworked into a phone-like portrait app:
+1. **Window** (`src-tauri/tauri.conf.json`): 400×820, min 320×480 (was 1180×880 / 960×640). Still resizable.
+2. **Shell** (`ui/src/App.svelte`): replaced the always-visible sidebar with a 48px top bar (hamburger + logo + current-route title) and a slide-out drawer (scrim + left panel, animated) holding the nav, About, and theme toggle. Added Dashboard to the nav list. Content area allows horizontal scroll on every page **except** Dashboard (`.no-scroll-x`), per the requirement that the dashboard must always fit the narrow width.
+3. **Dashboard** (`ui/src/routes/Dashboard.svelte`): now shows **all** instances at once, stacked — each instance a card with its name and both the 5-Hour and 7-Day limits. Dropped the instance tabs and single-`selected` state; loads usage for every instance on mount and the refresh button refreshes all in parallel. Each limit is a compact block: status dot + label + %, a 5px bar with the usage fill plus a vertical time-elapsed marker (replaces the old two-bar time+usage layout), and a meta line with pace + reset countdown. Used a Svelte `{#snippet}` for the reusable limit block.
+
+**Why:** User keeps it open constantly and wanted a practical narrow shape that uses vertical space — seeing work + personal, 5h + 7d all at once rather than tab-switching. Small bars + stacked instances fit that.
+
+**Verification:** `vite build` clean (pre-existing Wizard `state_referenced_locally` warning unrelated). Could not runtime-drive the Tauri app in this environment (no webview / IPC returns real data only inside the bundled app, no headless browser available) — visual confirmation is on the user's running instance.
+
 ## 2026-07-13 · Rebuild History → Resets around a corrected reset-detection heuristic
 
 **What:** Reworked the Resets view in `ui/src/routes/History.svelte`. Root problem: reset detection used raw string inequality on `*_resets_at`, but the API reports each window's reset time as `now + remaining`, so the timestamp jitters by sub-second (sometimes whole-second) amounts on *every* poll. Over 20 days of real data this turned ~68 genuine 5h resets into **3,356 phantom ones** (and ~3 weekly resets into 4,050). The old scatter plot also put `usageAtReset` on the Y axis — which read the *new* window's ~0% usage, not anything meaningful. Fixes:

@@ -24,6 +24,13 @@
   };
 
   let currentRoute: Route = $state("dashboard");
+  let menuOpen = $state(false);
+
+  // Responsive: persistent sidebar when there's room, hamburger drawer when narrow.
+  // Breakpoint fits the 220px sidebar + a comfortable content column.
+  const WIDE_BREAKPOINT = 680;
+  let winWidth = $state(typeof window !== "undefined" ? window.innerWidth : 400);
+  let wide = $derived(winWidth >= WIDE_BREAKPOINT);
 
   // `null` = still checking; `true` = show wizard; `false` = go straight to the app.
   let showWizard = $state<boolean | null>(null);
@@ -38,10 +45,24 @@
   }
 
   const navItems: { id: Route; label: string; icon: string }[] = [
+    { id: "dashboard", label: "Dashboard", icon: "▦" },
     { id: "history", label: "History", icon: "📈" },
     { id: "accounts", label: "Accounts", icon: "👤" },
     { id: "settings", label: "Settings", icon: "⚙" },
   ];
+
+  function navigate(route: Route) {
+    currentRoute = route;
+    menuOpen = false;
+  }
+
+  const routeTitles: Record<Route, string> = {
+    dashboard: "Dashboard",
+    history: "History",
+    accounts: "Accounts",
+    settings: "Settings",
+    about: "About",
+  };
 
   async function testIpc() {
     const result = await invoke<string>("ping");
@@ -64,8 +85,14 @@
     showWizard = false;
   }
 
+  function onResize() {
+    winWidth = window.innerWidth;
+    if (wide) menuOpen = false; // drawer is meaningless once the sidebar is shown
+  }
+
   onMount(async () => {
     await checkFirstRun();
+    window.addEventListener("resize", onResize);
 
     unlistenAuthComplete = await listen<{ instance: string }>("auth-complete", () => {
       checkFirstRun();
@@ -104,94 +131,133 @@
   });
 
   onDestroy(() => {
+    window.removeEventListener("resize", onResize);
     unlistenAuthComplete?.();
     unlistenWebviewFetch?.();
   });
 </script>
 
+{#snippet logo()}
+  <svg class="logo-mark" viewBox="0 0 100 100" aria-hidden="true">
+    <rect width="100" height="100" rx="22" fill="#1A1A1A" />
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#D97757" stroke-width="4" opacity="0.35" />
+    <circle cx="50" cy="50" r="20" fill="none" stroke="#D97757" stroke-width="4.5" opacity="0.65" />
+    <circle cx="50" cy="50" r="8" fill="#D97757" />
+  </svg>
+{/snippet}
+
+{#snippet navMenu()}
+  <ul class="nav-list">
+    {#each navItems as item}
+      <li>
+        <button
+          class="nav-item"
+          class:active={currentRoute === item.id}
+          onclick={() => navigate(item.id)}
+        >
+          <span class="nav-icon" aria-hidden="true">{item.icon}</span>
+          <span class="nav-label">{item.label}</span>
+        </button>
+      </li>
+    {/each}
+  </ul>
+  <div class="menu-footer">
+    <button
+      class="nav-item"
+      class:active={currentRoute === "about"}
+      onclick={() => navigate("about")}
+    >
+      <span class="nav-icon" aria-hidden="true">ⓘ</span>
+      <span class="nav-label">About</span>
+    </button>
+    <button
+      class="nav-item"
+      onclick={cycleTheme}
+      title="Theme: {themeMeta[theme.preference].label} (click to change)"
+      aria-label="Switch theme, currently {themeMeta[theme.preference].label}"
+    >
+      <span class="nav-icon" aria-hidden="true">{themeMeta[theme.preference].icon}</span>
+      <span class="nav-label">{themeMeta[theme.preference].label}</span>
+    </button>
+  </div>
+{/snippet}
+
 {#if showWizard === true}
   <Wizard onComplete={finishWizard} />
 {:else if showWizard === false}
-  <div class="app-shell">
-    <nav class="sidebar">
-      <button class="sidebar-logo" onclick={() => (currentRoute = "dashboard")} aria-label="Go to dashboard">
-        <svg class="logo-mark" viewBox="0 0 100 100" aria-hidden="true">
-          <rect width="100" height="100" rx="22" fill="#1A1A1A" />
-          <circle cx="50" cy="50" r="30" fill="none" stroke="#D97757" stroke-width="4" opacity="0.35" />
-          <circle cx="50" cy="50" r="20" fill="none" stroke="#D97757" stroke-width="4.5" opacity="0.65" />
-          <circle cx="50" cy="50" r="8" fill="#D97757" />
-        </svg>
-        <span class="logo-text">Claudar</span>
-      </button>
-      <ul class="nav-list">
-        {#each navItems as item}
-          <li>
-            <button
-              class="nav-item"
-              class:active={currentRoute === item.id}
-              onclick={() => (currentRoute = item.id)}
-            >
-              <span class="nav-icon" aria-hidden="true">{item.icon}</span>
-              <span class="nav-label">{item.label}</span>
-            </button>
-          </li>
-        {/each}
-      </ul>
-      <div class="sidebar-footer">
-        <button
-          class="theme-toggle"
-          class:active={currentRoute === "about"}
-          onclick={() => (currentRoute = "about")}
-          title="About Claudar"
-          aria-label="About Claudar"
-        >
-          <span class="nav-icon" aria-hidden="true">ⓘ</span>
-          <span class="nav-label">About</span>
+  <div class="app-shell" class:wide>
+    {#if wide}
+      <!-- Roomy: persistent sidebar, no hamburger -->
+      <nav class="sidebar">
+        <button class="sidebar-logo" onclick={() => navigate("dashboard")} aria-label="Go to dashboard">
+          {@render logo()}
+          <span class="logo-text">Claudar</span>
         </button>
+        {@render navMenu()}
+      </nav>
+    {:else}
+      <!-- Narrow: top bar + slide-out drawer -->
+      <header class="topbar">
         <button
-          class="theme-toggle"
-          onclick={cycleTheme}
-          title="Theme: {themeMeta[theme.preference].label} (click to change)"
-          aria-label="Switch theme, currently {themeMeta[theme.preference].label}"
+          class="hamburger"
+          class:open={menuOpen}
+          onclick={() => (menuOpen = !menuOpen)}
+          aria-label={menuOpen ? "Close menu" : "Open menu"}
+          aria-expanded={menuOpen}
         >
-          <span class="nav-icon" aria-hidden="true">{themeMeta[theme.preference].icon}</span>
-          <span class="nav-label">{themeMeta[theme.preference].label}</span>
+          <span></span><span></span><span></span>
         </button>
-      </div>
-    </nav>
+        <button class="topbar-brand" onclick={() => navigate("dashboard")} aria-label="Go to dashboard">
+          {@render logo()}
+          <span class="topbar-title">{routeTitles[currentRoute]}</span>
+        </button>
+      </header>
 
-    <div class="main-column">
-      <main class="content">
-        {#if currentRoute === "dashboard"}
-          <Dashboard />
-        {:else if currentRoute === "history"}
-          <History />
-        {:else if currentRoute === "accounts"}
-          <Accounts />
-        {:else if currentRoute === "settings"}
-          <Settings />
-        {:else if currentRoute === "about"}
-          <About />
-        {/if}
-      </main>
-    </div>
+      {#if menuOpen}
+        <button class="scrim" onclick={() => (menuOpen = false)} aria-label="Close menu"></button>
+        <nav class="drawer">
+          {@render navMenu()}
+        </nav>
+      {/if}
+    {/if}
+
+    <main class="content" class:no-scroll-x={currentRoute === "dashboard"}>
+      {#if currentRoute === "dashboard"}
+        <Dashboard />
+      {:else if currentRoute === "history"}
+        <History />
+      {:else if currentRoute === "accounts"}
+        <Accounts />
+      {:else if currentRoute === "settings"}
+        <Settings />
+      {:else if currentRoute === "about"}
+        <About />
+      {/if}
+    </main>
   </div>
 {/if}
 
 <style>
   .app-shell {
     display: flex;
+    flex-direction: column;
     height: 100vh;
     overflow: hidden;
   }
 
+  /* Wide: sidebar sits beside the content instead of stacking. */
+  .app-shell.wide {
+    flex-direction: row;
+  }
+
+  /* ── Persistent sidebar (wide layout) ───────────────────────────── */
   .sidebar {
-    width: var(--sidebar-width, 220px);
+    width: 220px;
+    flex-shrink: 0;
     background-color: hsl(222.2 84% 4.9%);
     color: hsl(210 40% 98%);
     display: flex;
     flex-direction: column;
-    flex-shrink: 0;
   }
 
   .sidebar-logo {
@@ -216,16 +282,118 @@
     background-color: rgba(255, 255, 255, 0.06);
   }
 
+  .logo-text {
+    font-size: 0.9rem;
+    letter-spacing: 0.01em;
+  }
+
+  /* ── Top bar with hamburger ─────────────────────────────────────── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    height: 48px;
+    flex-shrink: 0;
+    padding: 0 0.5rem;
+    background-color: hsl(222.2 84% 4.9%);
+    color: hsl(210 40% 98%);
+    z-index: 30;
+  }
+
+  .hamburger {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    width: 2.25rem;
+    height: 2.25rem;
+    padding: 0 0.5rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .hamburger span {
+    display: block;
+    height: 2px;
+    width: 1.15rem;
+    background: hsl(210 40% 92%);
+    border-radius: 2px;
+    transition: transform 0.2s ease, opacity 0.2s ease;
+  }
+
+  .hamburger.open span:nth-child(1) {
+    transform: translateY(6px) rotate(45deg);
+  }
+  .hamburger.open span:nth-child(2) {
+    opacity: 0;
+  }
+  .hamburger.open span:nth-child(3) {
+    transform: translateY(-6px) rotate(-45deg);
+  }
+
+  .topbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 0.25rem;
+    min-width: 0;
+  }
+
   .logo-mark {
-    width: 1.5rem;
-    height: 1.5rem;
+    width: 1.35rem;
+    height: 1.35rem;
     flex-shrink: 0;
     display: block;
   }
 
-  .logo-text {
-    font-size: 0.9rem;
+  .topbar-title {
+    font-size: 0.95rem;
+    font-weight: 600;
     letter-spacing: 0.01em;
+    white-space: nowrap;
+  }
+
+  /* ── Slide-out drawer ───────────────────────────────────────────── */
+  .scrim {
+    position: fixed;
+    inset: 48px 0 0 0;
+    background: rgba(0, 0, 0, 0.45);
+    border: none;
+    cursor: default;
+    z-index: 20;
+    animation: fade-in 0.15s ease;
+  }
+
+  .drawer {
+    position: fixed;
+    top: 48px;
+    left: 0;
+    bottom: 0;
+    width: 220px;
+    max-width: 80vw;
+    background-color: hsl(222.2 84% 4.9%);
+    color: hsl(210 40% 98%);
+    display: flex;
+    flex-direction: column;
+    z-index: 25;
+    box-shadow: 2px 0 12px rgba(0, 0, 0, 0.35);
+    animation: slide-in 0.2s ease;
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes slide-in {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(0); }
   }
 
   .nav-list {
@@ -238,17 +406,17 @@
   .nav-item {
     display: flex;
     align-items: center;
-    gap: 0.625rem;
+    gap: 0.75rem;
     width: 100%;
-    padding: 0.6rem 1rem;
+    padding: 0.7rem 1rem;
     background: none;
     border: none;
     color: hsl(215.4 16.3% 70%);
-    font-size: 0.875rem;
+    font-size: 0.9rem;
+    font-family: inherit;
     text-align: left;
     cursor: pointer;
     transition: background-color 0.15s, color 0.15s;
-    border-radius: 0;
   }
 
   .nav-item:hover {
@@ -264,55 +432,25 @@
   .nav-icon {
     width: 1.25rem;
     text-align: center;
-    font-size: 0.75rem;
+    font-size: 0.85rem;
   }
 
-  .sidebar-footer {
+  .menu-footer {
     padding-bottom: 0.5rem;
     border-top: 1px solid rgba(255, 255, 255, 0.1);
     padding-top: 0.5rem;
   }
 
-  .theme-toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    width: 100%;
-    padding: 0.6rem 1rem;
-    background: none;
-    border: none;
-    color: hsl(215.4 16.3% 70%);
-    font-size: 0.875rem;
-    font-family: inherit;
-    text-align: left;
-    cursor: pointer;
-    transition: background-color 0.15s, color 0.15s;
-  }
-
-  .theme-toggle:hover {
-    background-color: rgba(255, 255, 255, 0.06);
-    color: hsl(210 40% 98%);
-  }
-
-  .theme-toggle.active {
-    background-color: rgba(255, 255, 255, 0.1);
-    color: hsl(210 40% 98%);
-  }
-
-  .theme-toggle .nav-icon {
-    font-size: 0.9rem;
-  }
-
-  .main-column {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-
+  /* ── Content ────────────────────────────────────────────────────── */
   .content {
     flex: 1;
     overflow-y: auto;
+    overflow-x: auto;
     background-color: hsl(var(--background));
+  }
+
+  /* Dashboard must fit the narrow window — never scroll sideways. */
+  .content.no-scroll-x {
+    overflow-x: hidden;
   }
 </style>

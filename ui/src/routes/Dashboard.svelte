@@ -18,26 +18,37 @@
   };
 
   let instances = $state<InstanceInfo[]>([]);
-  let selected = $state<string | null>(null);
+  let showPaceDelta = $state(false);
   let usageByInstance = $state<Record<string, UsagePayload>>({});
   let errorByInstance = $state<Record<string, string>>({});
   let now = $state(Date.now());
   let lastUpdateByInstance = $state<Record<string, number>>({});
+  // Bumped on every fresh payload — drives the "just updated" shimmer.
+  let refreshSeqByInstance = $state<Record<string, number>>({});
 
   let unlistenUsage: UnlistenFn | undefined;
   let unlistenError: UnlistenFn | undefined;
   let tickInterval: ReturnType<typeof setInterval> | undefined;
   let refreshing = $state(false);
 
-  let usage = $derived(selected ? usageByInstance[selected] : undefined);
-  let error = $derived(selected ? errorByInstance[selected] : undefined);
-  let lastUpdate = $derived(selected ? lastUpdateByInstance[selected] : undefined);
+  // Newest update across every instance, for the single header timestamp.
+  let lastUpdate = $derived(
+    Object.values(lastUpdateByInstance).reduce((a, b) => Math.max(a, b), 0) || undefined,
+  );
+
+  function markUpdated(instance: string) {
+    lastUpdateByInstance = { ...lastUpdateByInstance, [instance]: Date.now() };
+    refreshSeqByInstance = {
+      ...refreshSeqByInstance,
+      [instance]: (refreshSeqByInstance[instance] ?? 0) + 1,
+    };
+  }
 
   async function fetchUsage(instance: string) {
     try {
       const payload = await invoke<UsagePayload>("get_usage", { instance });
       usageByInstance = { ...usageByInstance, [instance]: payload };
-      lastUpdateByInstance = { ...lastUpdateByInstance, [instance]: Date.now() };
+      markUpdated(instance);
       if (instance in errorByInstance) {
         const next = { ...errorByInstance };
         delete next[instance];
@@ -48,35 +59,37 @@
     }
   }
 
-  async function loadInitialUsage(instance: string) {
-    if (usageByInstance[instance]) return;
-    await fetchUsage(instance);
+  function loadInstance(inst: InstanceInfo) {
+    if (inst.has_session) {
+      if (!usageByInstance[inst.name]) fetchUsage(inst.name);
+    } else {
+      errorByInstance = {
+        ...errorByInstance,
+        [inst.name]: "No session configured — open Settings to sign in",
+      };
+    }
   }
 
   async function refresh() {
-    if (!selected || refreshing) return;
+    if (refreshing) return;
     refreshing = true;
     try {
-      await fetchUsage(selected);
+      await Promise.all(
+        instances.filter((i) => i.has_session).map((i) => fetchUsage(i.name)),
+      );
     } finally {
       refreshing = false;
     }
   }
 
-  function selectInstance(name: string) {
-    selected = name;
-    const inst = instances.find(i => i.name === name);
-    if (inst?.has_session) {
-      loadInitialUsage(name);
-    } else {
-      errorByInstance = { ...errorByInstance, [name]: "No session configured — open Settings to sign in" };
-    }
-  }
+  const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
+  const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
+
+  const clampPct = (n: number) => Math.max(0, Math.min(100, n));
 
   function formatCountdown(iso: string | null | undefined): string {
     if (!iso) return "—";
-    const target = new Date(iso).getTime();
-    const diffMs = target - now;
+    const diffMs = new Date(iso).getTime() - now;
     if (diffMs <= 0) return "resetting…";
     const minutes = Math.floor(diffMs / 60_000);
     const hours = Math.floor(minutes / 60);
@@ -85,15 +98,6 @@
     if (hours > 0) return `${hours}h ${minutes % 60}m`;
     return `${minutes}m`;
   }
-
-  function formatAbsoluteTime(iso: string | null | undefined): string {
-    if (!iso) return "";
-    const d = new Date(iso);
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  }
-
-  const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
-  const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
 
   function timeElapsedPct(iso: string | null | undefined, windowMs: number): number {
     if (!iso) return 0;
@@ -104,19 +108,21 @@
     return Math.min(100, (elapsed / windowMs) * 100);
   }
 
-  // Mirrors the Rust pace::calculate_pace_info logic (±10% dead band)
-  function paceInfo(usagePct: number, timePct: number): { label: string; kind: "over" | "under" | "on" } {
-    const diff = usagePct - timePct;
-    if (diff > 10) return { label: `${diff.toFixed(1)}% over pace`, kind: "over" };
-    if (diff < -10) return { label: `${Math.abs(diff).toFixed(1)}% under pace`, kind: "under" };
-    return { label: "On pace", kind: "on" };
+  // Where usage lands by reset if the current rate holds. Prefer the backend's
+  // prediction (5-hour); otherwise extrapolate linearly, but only once enough of
+  // the window has elapsed that the rate is meaningful (avoids early false alarms).
+  function projectedPeak(pct: number, timePct: number, predicted: number | null): number {
+    if (predicted != null) return predicted;
+    if (timePct < 8) return pct;
+    return (pct / timePct) * 100;
   }
 
-  function statusInfo(pct: number): { label: string; kind: "ok" | "elevated" | "warning" | "critical" } {
-    if (pct >= 90) return { label: "Critical", kind: "critical" };
-    if (pct >= 70) return { label: "Warning", kind: "warning" };
-    if (pct >= 50) return { label: "Elevated", kind: "elevated" };
-    return { label: "OK", kind: "ok" };
+  // Bar colour = the verdict. Projected peak vs. the cap tells the story.
+  function verdictKind(pct: number, peak: number): "ok" | "warn" | "crit" {
+    if (pct >= 99) return "crit";
+    if (peak > 100) return "crit";
+    if (peak >= 85) return "warn";
+    return "ok";
   }
 
   function formatTimeSince(timestamp: number | undefined): string {
@@ -134,17 +140,22 @@
   onMount(async () => {
     try {
       instances = await invoke<InstanceInfo[]>("get_instances");
-      if (instances.length > 0 && selected === null) {
-        selectInstance(instances[0].name);
-      }
+      for (const inst of instances) loadInstance(inst);
     } catch (e) {
       console.error("get_instances failed", e);
+    }
+
+    try {
+      const cfg = await invoke<{ general: { show_pace_delta: boolean } }>("get_config", {});
+      showPaceDelta = cfg.general.show_pace_delta;
+    } catch (e) {
+      console.error("get_config failed", e);
     }
 
     unlistenUsage = await listen<UsagePayload>("usage-update", (event) => {
       const payload = event.payload;
       usageByInstance = { ...usageByInstance, [payload.instance]: payload };
-      lastUpdateByInstance = { ...lastUpdateByInstance, [payload.instance]: Date.now() };
+      markUpdated(payload.instance);
       if (payload.instance in errorByInstance) {
         const next = { ...errorByInstance };
         delete next[payload.instance];
@@ -172,167 +183,138 @@
   });
 </script>
 
-<div class="page">
-  <div class="page-header">
-    <div>
-      <h1>Dashboard</h1>
-      <p class="subtitle">Live usage across your Claude.ai limits.</p>
+{#snippet limit(label: string, pct: number, resetsAt: string | null, windowMs: number, predicted: number | null, seq: number)}
+  {@const timePct = timeElapsedPct(resetsAt, windowMs)}
+  {@const peak = projectedPeak(pct, timePct, predicted)}
+  {@const kind = verdictKind(pct, peak)}
+  {@const over = peak > 100}
+  {@const capped = pct >= 99}
+  {@const fillW = clampPct(pct)}
+  {@const peakEnd = clampPct(peak)}
+  {@const ghostW = Math.max(0, peakEnd - fillW)}
+  {@const nowPos = Math.max(7, Math.min(93, fillW))}
+  {@const peakPos = Math.max(7, Math.min(95, peakEnd))}
+  {@const gapOk = peakPos - nowPos >= 13}
+  {@const showPeak = !capped && peak - pct >= 3 && (over || gapOk)}
+  {@const showNow = !capped && (!over || peakPos - nowPos >= 13)}
+  {@const delta = Math.round(pct - timePct)}
+  {@const showDelta = showPaceDelta && !(pct <= 0 && timePct <= 0)}
+  {@const deltaAtEnd = fillW < 3}
+  {@const deltaInside = fillW >= 12}
+  {@const deltaTone = delta > 0 ? kind : "ok"}
+  {@const timePos = clampPct(timePct)}
+  {@const showTimeTick = timePct > 0.5 && timePct < 99.5}
+  <div class="limit">
+    <div class="limit-head">
+      <span class="win">{label}</span>
+      <span class="reset">
+        <span class="reset-word">resets</span>
+        <span class="reset-val">{formatCountdown(resetsAt)}</span>
+      </span>
     </div>
-    <div class="controls">
-      {#if instances.length > 1}
-        <div class="tabs" role="tablist">
-          {#each instances as inst (inst.name)}
-            <button
-              class="tab"
-              class:active={selected === inst.name}
-              role="tab"
-              aria-selected={selected === inst.name}
-              onclick={() => selectInstance(inst.name)}>{inst.name}</button
-            >
-          {/each}
-        </div>
+
+    <div class="bar-wrap">
+      {#if capped}
+        <div class="mark mark-now tone-crit" style="left: {nowPos}%">100%</div>
+      {:else}
+        {#if showNow}
+          <div class="mark mark-now" style="left: {nowPos}%">{pct.toFixed(0)}%</div>
+        {/if}
+        {#if showPeak}
+          <div class="mark mark-peak tone-{kind}" style="left: {peakPos}%">{Math.round(peak)}%</div>
+        {/if}
       {/if}
-      {#if usage}
-        <span class="updated">Updated {formatTimeSince(lastUpdate)}</span>
-      {/if}
-      <button class="refresh-btn" class:spinning={refreshing} onclick={refresh} disabled={refreshing} aria-label="Refresh">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M13.5 8A5.5 5.5 0 1 1 10 3.07"/>
-          <polyline points="10 1 10 4 13 4"/>
-        </svg>
-      </button>
+
+      <div class="track">
+        <div class="bar-fill bar-{kind}" style="width: {fillW}%"></div>
+        {#if showTimeTick}
+          <div class="time-tick" style="left: {timePos}%" title="{timePct.toFixed(0)}% of window elapsed"></div>
+        {/if}
+        {#if ghostW > 0.4}
+          <div class="bar-ghost" class:over style="left: {fillW}%; width: {ghostW}%"></div>
+        {/if}
+        {#if over}<div class="overflow-nub"></div>{/if}
+        {#if showDelta}
+          <div
+            class="delta tone-{deltaTone}"
+            class:delta-end={deltaAtEnd}
+            class:delta-inside={deltaInside && !deltaAtEnd}
+            style={deltaAtEnd ? "" : `left: ${fillW}%`}
+          >
+            {delta > 0 ? `+${delta}` : delta < 0 ? `−${Math.abs(delta)}` : "0"}%
+          </div>
+        {/if}
+        {#key seq}
+          <div class="sweep" aria-hidden="true"></div>
+        {/key}
+      </div>
     </div>
   </div>
+{/snippet}
 
-  {#if error}
-    <div class="error-banner" role="alert">⚠ {error}</div>
-  {/if}
+<div class="page">
+  <div class="page-header">
+    {#if lastUpdate}
+      <span class="updated">Updated {formatTimeSince(lastUpdate)}</span>
+    {:else}
+      <span class="updated">Loading…</span>
+    {/if}
+    <button class="refresh-btn" class:spinning={refreshing} onclick={refresh} disabled={refreshing} aria-label="Refresh all">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M13.5 8A5.5 5.5 0 1 1 10 3.07"/>
+        <polyline points="10 1 10 4 13 4"/>
+      </svg>
+    </button>
+  </div>
 
-  {#if !usage && !error}
+  {#if instances.length === 0}
     <div class="loading">
       <div class="spinner" aria-hidden="true"></div>
-      <p>Waiting for the first usage update…</p>
-    </div>
-  {:else if usage}
-    {@const fiveTimePct = timeElapsedPct(usage.resets_at, FIVE_HOUR_MS)}
-    {@const sevenTimePct = timeElapsedPct(usage.seven_day_resets_at, SEVEN_DAY_MS)}
-    {@const fivePace = paceInfo(usage.five_hour_pct, fiveTimePct)}
-    {@const sevenPace = paceInfo(usage.seven_day_pct, sevenTimePct)}
-    {@const fiveStatus = statusInfo(usage.five_hour_pct)}
-    {@const sevenStatus = statusInfo(usage.seven_day_pct)}
-
-    <div class="limit-cards">
-      <!-- 5-hour card -->
-      <div class="limit-card">
-        <div class="card-header">
-          <span class="card-title">5-Hour Limit</span>
-          <span class="status-badge status-{fiveStatus.kind}">{fiveStatus.label}</span>
-          <span class="pace-badge pace-{fivePace.kind}">{fivePace.label}</span>
-        </div>
-
-        <div class="bars">
-          <div class="bar-row">
-            <span class="bar-icon" title="Time elapsed">⏱</span>
-            <div class="bar-track">
-              <div class="bar-fill bar-time" style="width: {fiveTimePct}%"></div>
-            </div>
-            <span class="bar-pct muted">{fiveTimePct.toFixed(1)}%</span>
-          </div>
-          <div class="bar-row">
-            <span class="bar-icon" title="Tokens used">💬</span>
-            <div class="bar-track">
-              <div class="bar-fill bar-usage bar-usage-{fiveStatus.kind}" style="width: {usage.five_hour_pct}%"></div>
-            </div>
-            <span class="bar-pct">{usage.five_hour_pct.toFixed(1)}%</span>
-          </div>
-        </div>
-
-        <div class="card-footer">
-          Resets in <strong>{formatCountdown(usage.resets_at)}</strong>
-          {#if usage.resets_at}
-            <span class="muted">· at {formatAbsoluteTime(usage.resets_at)}</span>
-          {/if}
-          {#if usage.predicted_pct != null}
-            <span class="muted">· predicted peak {usage.predicted_pct.toFixed(0)}%</span>
-          {/if}
-        </div>
-      </div>
-
-      <!-- 7-day card -->
-      <div class="limit-card">
-        <div class="card-header">
-          <span class="card-title">7-Day Limit</span>
-          <span class="status-badge status-{sevenStatus.kind}">{sevenStatus.label}</span>
-          <span class="pace-badge pace-{sevenPace.kind}">{sevenPace.label}</span>
-        </div>
-
-        <div class="bars">
-          <div class="bar-row">
-            <span class="bar-icon" title="Time elapsed">⏱</span>
-            <div class="bar-track">
-              <div class="bar-fill bar-time" style="width: {sevenTimePct}%"></div>
-            </div>
-            <span class="bar-pct muted">{sevenTimePct.toFixed(1)}%</span>
-          </div>
-          <div class="bar-row">
-            <span class="bar-icon" title="Tokens used">💬</span>
-            <div class="bar-track">
-              <div class="bar-fill bar-usage bar-usage-{sevenStatus.kind}" style="width: {usage.seven_day_pct}%"></div>
-            </div>
-            <span class="bar-pct">{usage.seven_day_pct.toFixed(1)}%</span>
-          </div>
-        </div>
-
-        <div class="card-footer">
-          Resets in <strong>{formatCountdown(usage.seven_day_resets_at)}</strong>
-          {#if usage.seven_day_resets_at}
-            <span class="muted">· at {formatAbsoluteTime(usage.seven_day_resets_at)}</span>
-          {/if}
-        </div>
-      </div>
+      <p>Loading accounts…</p>
     </div>
   {/if}
+
+  {#each instances as inst (inst.name)}
+    {@const usage = usageByInstance[inst.name]}
+    {@const error = errorByInstance[inst.name]}
+    {@const seq = refreshSeqByInstance[inst.name] ?? 0}
+    <section class="instance">
+      {#if instances.length > 1}
+        <h2 class="instance-name">{inst.name}</h2>
+      {/if}
+
+      {#if error}
+        <div class="error-banner" role="alert">⚠ {error}</div>
+      {:else if !usage}
+        <div class="instance-loading">
+          <div class="spinner small" aria-hidden="true"></div>
+          <span>Waiting for first update…</span>
+        </div>
+      {:else}
+        {@render limit("5-hour", usage.five_hour_pct, usage.resets_at, FIVE_HOUR_MS, usage.predicted_pct, seq)}
+        {@render limit("7-day", usage.seven_day_pct, usage.seven_day_resets_at, SEVEN_DAY_MS, null, seq)}
+      {/if}
+    </section>
+  {/each}
 </div>
 
 <style>
   .page {
-    padding: 2rem;
-    max-width: 680px;
+    padding: 0.85rem;
   }
 
   .page-header {
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 1rem;
-    margin-bottom: 1.25rem;
-  }
-
-  .controls {
-    display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 0.75rem;
-    flex-wrap: wrap;
-    justify-content: flex-end;
+    margin-bottom: 0.85rem;
   }
 
   .updated {
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     color: hsl(var(--muted-foreground));
     white-space: nowrap;
-  }
-
-  h1 {
-    font-size: 1.5rem;
-    font-weight: 600;
-    margin: 0 0 0.2rem;
-    color: hsl(var(--foreground));
-  }
-
-  .subtitle {
-    color: hsl(var(--muted-foreground));
-    font-size: 0.875rem;
-    margin: 0;
   }
 
   .refresh-btn {
@@ -354,7 +336,6 @@
   .refresh-btn:hover:not(:disabled) {
     background: hsl(var(--muted));
     color: hsl(var(--foreground));
-    border-color: hsl(var(--border));
   }
 
   .refresh-btn:disabled {
@@ -371,45 +352,14 @@
     animation: spin 0.7s linear infinite;
   }
 
-  /* Instance tabs (segmented, matches History) */
-  .tabs {
-    display: flex;
-    gap: 0.25rem;
-    border: 1px solid hsl(var(--border));
-    border-radius: 6px;
-    padding: 2px;
-    background: hsl(var(--muted));
-  }
-
-  .tab {
-    padding: 0.3rem 0.75rem;
-    background: none;
-    border: none;
-    border-radius: 4px;
-    font-size: 0.8125rem;
-    color: hsl(var(--muted-foreground));
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s;
-  }
-
-  .tab:hover { color: hsl(var(--foreground)); }
-
-  .tab.active {
-    background: hsl(var(--card));
-    color: hsl(var(--foreground));
-    font-weight: 600;
-    box-shadow: 0 1px 3px hsl(222.2 84% 4.9% / 0.08);
-  }
-
   /* Error / loading */
   .error-banner {
     background-color: hsl(var(--danger-bg));
     color: hsl(var(--danger-strong));
     border: 1px solid hsl(var(--danger-border));
     border-radius: var(--radius);
-    padding: 0.75rem 1rem;
-    font-size: 0.875rem;
-    margin-bottom: 1.5rem;
+    padding: 0.5rem 0.7rem;
+    font-size: 0.8rem;
   }
 
   .loading {
@@ -422,6 +372,15 @@
     font-size: 0.875rem;
   }
 
+  .instance-loading {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem 0;
+    color: hsl(var(--muted-foreground));
+    font-size: 0.8rem;
+  }
+
   .spinner {
     width: 2rem;
     height: 2rem;
@@ -431,124 +390,247 @@
     animation: spin 0.8s linear infinite;
   }
 
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* Cards */
-  .limit-cards {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    margin-bottom: 1.25rem;
+  .spinner.small {
+    width: 1rem;
+    height: 1rem;
+    border-width: 2px;
   }
 
-  .limit-card {
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Per-instance section ───────────────────────────────────────── */
+  .instance {
     background: hsl(var(--card, var(--background)));
     border: 1px solid hsl(var(--border));
     border-radius: var(--radius);
-    padding: 1rem 1.25rem;
+    padding: 0.85rem 0.95rem;
+    margin-bottom: 0.7rem;
     display: flex;
     flex-direction: column;
-    gap: 0.85rem;
+    gap: 1.25rem;
   }
 
-  /* Card header */
-  .card-header {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-  }
-
-  .card-title {
-    font-weight: 600;
-    font-size: 0.95rem;
-    color: hsl(var(--foreground));
-    flex: 1;
-  }
-
-  /* Status badge */
-  .status-badge {
+  .instance-name {
     font-size: 0.72rem;
-    font-weight: 600;
-    padding: 0.15rem 0.5rem;
-    border-radius: 99px;
-    letter-spacing: 0.03em;
+    font-weight: 700;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+    margin: 0 0 -0.4rem;
   }
 
-  .status-ok       { background: hsl(var(--success-bg)); color: hsl(var(--success-strong)); }
-  .status-elevated { background: hsl(var(--warning-bg)); color: hsl(var(--warning-strong)); }
-  .status-warning  { background: hsl(var(--warning-bg)); color: hsl(var(--warning-strong)); }
-  .status-critical { background: hsl(var(--danger-bg));  color: hsl(var(--danger-strong));  }
+  /* ── One limit ── */
+  .limit {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
 
-  /* Pace badge */
-  .pace-badge {
-    font-size: 0.78rem;
+  .limit-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  .win {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
     color: hsl(var(--muted-foreground));
   }
 
-  .pace-over  { color: hsl(var(--warning-strong)); }
-  .pace-under { color: hsl(var(--success-strong)); }
-  .pace-on    { color: hsl(var(--muted-foreground)); }
-
-  /* Progress bars */
-  .bars {
-    display: flex;
-    flex-direction: column;
-    gap: 0.45rem;
+  .reset {
+    margin-left: auto;
+    font-size: 0.72rem;
   }
 
-  .bar-row {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
+  .reset-word {
+    color: hsl(var(--muted-foreground));
+    opacity: 0.7;
   }
 
-  .bar-icon {
-    width: 1.25rem;
-    text-align: center;
-    font-size: 0.85rem;
-    flex-shrink: 0;
+  .reset-val {
+    font-weight: 700;
+    color: hsl(var(--foreground));
+    font-variant-numeric: tabular-nums;
+    margin-left: 0.2rem;
   }
 
-  .bar-track {
-    flex: 1;
-    height: 8px;
+  /* ── Bar + its anchored number marks ── */
+  .bar-wrap {
+    position: relative;
+    padding-top: 1.2rem; /* room for the marks that sit above the bar */
+  }
+
+  .mark {
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+    font-size: 0.72rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    transition: left 0.45s ease, color 0.3s ease;
+  }
+
+  /* little caret tying the number to its spot on the bar */
+  .mark::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-top: 1px;
+    border-left: 3px solid transparent;
+    border-right: 3px solid transparent;
+    border-top: 3px solid currentColor;
+  }
+
+  .mark-now { color: hsl(var(--foreground)); }
+  .mark-now.tone-crit { color: hsl(var(--danger-strong)); }
+
+  .mark-peak { font-weight: 600; color: hsl(var(--muted-foreground)); }
+  .mark-peak.tone-warn { color: hsl(var(--warning-strong)); }
+  .mark-peak.tone-crit { color: hsl(var(--danger-strong)); }
+
+  /* ── The bar is the hero: tall, rounded, colour = health ── */
+  .track {
+    position: relative;
+    height: 16px;
     background: hsl(var(--muted));
     border-radius: 99px;
-    overflow: hidden;
+    box-shadow: inset 0 1px 2px hsl(0 0% 0% / 0.10);
   }
 
   .bar-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
     height: 100%;
+    box-sizing: border-box;
     border-radius: 99px;
-    transition: width 0.4s ease;
+    transition: width 0.45s ease, background 0.3s ease, border-color 0.3s ease;
   }
 
-  .bar-time {
-    background: hsl(var(--muted-foreground));
+  /* Pill styling: pastel fill, stronger tone reserved for text/border — same
+     pairing used by badges elsewhere (error-banner, etc). */
+  .bar-ok   { background: hsl(var(--success-bg)); border: 1px solid hsl(var(--success-border)); }
+  .bar-warn { background: hsl(var(--warning-bg)); border: 1px solid hsl(var(--warning-border)); }
+  .bar-crit { background: hsl(var(--danger-bg));  border: 1px solid hsl(var(--danger-border)); }
+
+  /* ── Pace delta (usage% − time-elapsed%): anchored to the fill's own edge so
+     it tracks the bar without measuring text width. ── */
+  .delta {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.66rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    pointer-events: none;
+    transition: left 0.45s ease, color 0.3s ease;
   }
 
-  .bar-usage-ok       { background: hsl(var(--success)); }
-  .bar-usage-elevated { background: hsl(var(--warning)); }
-  .bar-usage-warning  { background: hsl(var(--warning)); }
-  .bar-usage-critical { background: hsl(var(--danger)); }
-
-  .bar-pct {
-    font-size: 0.78rem;
-    font-weight: 500;
-    width: 3.5rem;
-    text-align: right;
-    flex-shrink: 0;
-    color: hsl(var(--foreground));
+  /* Enough room in the fill: sit inside it, inset from its trailing edge. */
+  .delta.delta-inside {
+    transform: translate(calc(-100% - 6px), -50%);
   }
 
-  /* Card footer */
-  .card-footer {
-    font-size: 0.8rem;
-    color: hsl(var(--foreground));
+  /* Not enough room: sit just outside the fill's trailing edge. */
+  .delta:not(.delta-inside):not(.delta-end) {
+    transform: translate(6px, -50%);
   }
 
-  .muted {
-    color: hsl(var(--muted-foreground));
+  /* Fill is ~0%: nothing to anchor to, pin to the end of the track instead. */
+  .delta.delta-end {
+    left: auto;
+    right: 6px;
+  }
+
+  .delta.tone-ok   { color: hsl(var(--success-strong)); }
+  .delta.tone-warn { color: hsl(var(--warning-strong)); }
+  .delta.tone-crit { color: hsl(var(--danger-strong)); }
+
+  /* Time-elapsed tick: where usage "should" be if it tracked the window evenly. */
+  .time-tick {
+    position: absolute;
+    top: -3px;
+    bottom: -3px;
+    width: 2px;
+    background: hsl(var(--foreground) / 0.55);
+    transform: translateX(-50%);
+    transition: left 0.45s ease;
+    pointer-events: none;
+  }
+
+  /* Projected peak: hatched extension beyond the current fill. */
+  .bar-ghost {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-radius: 0 99px 99px 0;
+    background-color: hsl(var(--foreground) / 0.05);
+    background-image: repeating-linear-gradient(
+      135deg,
+      hsl(var(--foreground) / 0.30) 0 3px,
+      transparent 3px 7px
+    );
+    transition: left 0.45s ease, width 0.45s ease;
+  }
+
+  .bar-ghost.over {
+    background-image: repeating-linear-gradient(
+      135deg,
+      hsl(var(--danger) / 0.55) 0 3px,
+      transparent 3px 7px
+    );
+  }
+
+  /* Projected to blow past the cap — arrow poking off the end. */
+  .overflow-nub {
+    position: absolute;
+    right: -9px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 0;
+    height: 0;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    border-left: 7px solid hsl(var(--danger));
+  }
+
+  /* ── "Just updated" shimmer: one light pass across the bar ── */
+  .sweep {
+    position: absolute;
+    inset: 0;
+    border-radius: 99px;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .sweep::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 45%;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      hsl(0 0% 100% / 0.45),
+      transparent
+    );
+    transform: translateX(-140%);
+    animation: sweep 0.65s ease-out;
+  }
+
+  @keyframes sweep {
+    to { transform: translateX(360%); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sweep::after { animation: none; }
+    .bar-fill, .bar-ghost, .mark, .delta { transition: none; }
   }
 </style>

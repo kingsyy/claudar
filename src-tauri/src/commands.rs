@@ -60,10 +60,13 @@ pub fn get_config(_instance: Option<String>) -> Result<Config, String> {
     Config::load().map_err(|e| e.to_string())
 }
 
-/// Persist a modified config to disk.
+/// Persist a modified config to disk, then restart the web dashboard so
+/// changes to `web.enabled`/`bind`/`port` take effect without an app restart.
 #[tauri::command]
-pub fn set_config(_instance: Option<String>, config: Config) -> Result<(), String> {
-    config.save().map_err(|e| e.to_string())
+pub fn set_config(app: AppHandle, _instance: Option<String>, config: Config) -> Result<(), String> {
+    config.save().map_err(|e| e.to_string())?;
+    crate::web_server::restart_web_server(app);
+    Ok(())
 }
 
 /// On-demand usage fetch for a single instance (bypasses the background loop).

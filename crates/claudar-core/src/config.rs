@@ -10,6 +10,50 @@ pub struct Config {
     pub instances: Vec<InstanceConfig>,
     #[serde(default)]
     pub history: HistoryConfig,
+    #[serde(default)]
+    pub web: WebConfig,
+}
+
+/// Optional read-only HTTP dashboard, e.g. for checking usage from a phone over Tailscale.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebConfig {
+    /// Whether to serve the dashboard (default: false — opt-in).
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Address to bind to. Defaults to loopback-only; set this to a Tailscale IP
+    /// (e.g. `tailscale ip -4`) to expose it on that network. Never defaults to
+    /// `0.0.0.0` — exposure must be a deliberate choice.
+    #[serde(default = "default_web_bind")]
+    pub bind: String,
+
+    #[serde(default = "default_web_port")]
+    pub port: u16,
+
+    /// Whether to also serve `/api/agent`, a minimal machine-readable endpoint
+    /// meant for other agents/tools to poll (default: false — opt-in, and only
+    /// takes effect while `enabled` is also true).
+    #[serde(default)]
+    pub agent_api_enabled: bool,
+}
+
+fn default_web_bind() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_web_port() -> u16 {
+    4317
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bind: default_web_bind(),
+            port: default_web_port(),
+            agent_api_enabled: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +97,10 @@ pub struct GeneralConfig {
     /// of opening the window. Has no effect on manual launches (default: false).
     #[serde(default)]
     pub start_minimized: bool,
+    /// Show each usage bar's pace delta (usage% minus time-elapsed%) alongside
+    /// the existing now/peak marks (default: false).
+    #[serde(default)]
+    pub show_pace_delta: bool,
 }
 
 fn default_timezone() -> String {
@@ -110,6 +158,7 @@ impl Default for Config {
                 timezone: "local".to_string(),
                 show_tray_icon: false,
                 start_minimized: false,
+                show_pace_delta: false,
             },
             thresholds: ThresholdsConfig {
                 five_hour: vec![50, 75, 90, 100],
@@ -129,6 +178,7 @@ impl Default for Config {
             },
             instances: Vec::new(),
             history: HistoryConfig::default(),
+            web: WebConfig::default(),
         }
     }
 }

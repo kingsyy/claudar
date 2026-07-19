@@ -4,7 +4,7 @@
   import Switch from "../lib/Switch.svelte";
 
   type Config = {
-    general: { poll_interval_seconds: number; timezone: string; show_tray_icon: boolean; start_minimized: boolean };
+    general: { poll_interval_seconds: number; timezone: string; show_tray_icon: boolean; start_minimized: boolean; show_pace_delta: boolean };
     thresholds: { five_hour: number[]; seven_day: number[] };
     notifications: {
       sound: boolean;
@@ -20,18 +20,20 @@
     };
     instances: { name: string }[];
     history: { enabled: boolean; max_records: number };
+    web: { enabled: boolean; bind: string; port: number; agent_api_enabled: boolean };
   };
 
   let config = $state<Config | null>(null);
   let loading = $state(true);
   let loadError = $state<string | null>(null);
-  let activeTab = $state<"general" | "notifications" | "thresholds" | "capacity">("general");
+  let activeTab = $state<"general" | "notifications" | "thresholds" | "capacity" | "web">("general");
 
   // Form-bound values
   let pollIntervalMinutes = $state(15);
   let timezone = $state("local");
   let trayIconEnabled = $state(false);
   let startMinimized = $state(false);
+  let showPaceDelta = $state(false);
 
   // Polling more often than this hammers Claude's servers without giving more
   // accurate readings, so we surface a warning below the field.
@@ -60,6 +62,11 @@
 
   let historyEnabled = $state(false);
   let historyDays = $state(14);
+
+  let webEnabled = $state(false);
+  let webBind = $state("127.0.0.1");
+  let webPort = $state(4317);
+  let agentApiEnabled = $state(false);
 
   const BYTES_PER_RECORD = 200;
 
@@ -99,6 +106,7 @@
       timezone = config.general.timezone;
       trayIconEnabled = config.general.show_tray_icon;
       startMinimized = config.general.start_minimized;
+      showPaceDelta = config.general.show_pace_delta;
       fiveHourThresholdStr = config.thresholds.five_hour.join(",");
       sevenDayThresholdStr = config.thresholds.seven_day.join(",");
 
@@ -122,6 +130,11 @@
 
       historyEnabled = config.history.enabled;
       historyDays = Math.max(1, Math.round(config.history.max_records / ((24 * 60) / Math.round(config.general.poll_interval_seconds / 60))));
+
+      webEnabled = config.web.enabled;
+      webBind = config.web.bind;
+      webPort = config.web.port;
+      agentApiEnabled = config.web.agent_api_enabled;
     } catch (e) {
       loadError = String(e);
     } finally {
@@ -190,6 +203,13 @@
     persist((c) => {
       c.general.start_minimized = startMinimized;
     }, startMinimized ? "Start minimized at login enabled" : "Start minimized at login disabled");
+  }
+
+  function toggleShowPaceDelta() {
+    showPaceDelta = !showPaceDelta;
+    persist((c) => {
+      c.general.show_pace_delta = showPaceDelta;
+    }, showPaceDelta ? "Pace delta shown on bars" : "Pace delta hidden");
   }
 
   function parseCsvThresholds(csv: string): number[] | null {
@@ -323,6 +343,45 @@
     }, "History retention updated");
   }
 
+  function toggleWebEnabled() {
+    webEnabled = !webEnabled;
+    persist((c) => {
+      c.web.enabled = webEnabled;
+    }, webEnabled ? `Web dashboard enabled at http://${webBind}:${webPort}` : "Web dashboard disabled");
+  }
+
+  function saveWebBind() {
+    const bind = webBind.trim();
+    if (!bind) {
+      showToast("Bind address cannot be empty", "error");
+      webBind = config?.web.bind ?? "127.0.0.1";
+      return;
+    }
+    persist((c) => {
+      c.web.bind = bind;
+    }, "Web dashboard address updated");
+  }
+
+  function saveWebPort() {
+    const port = Math.round(webPort);
+    if (isNaN(port) || port < 1 || port > 65535) {
+      showToast("Port must be between 1 and 65535", "error");
+      webPort = config?.web.port ?? 4317;
+      return;
+    }
+    webPort = port;
+    persist((c) => {
+      c.web.port = port;
+    }, "Web dashboard port updated");
+  }
+
+  function toggleAgentApi() {
+    agentApiEnabled = !agentApiEnabled;
+    persist((c) => {
+      c.web.agent_api_enabled = agentApiEnabled;
+    }, agentApiEnabled ? "Agent API enabled at /api/agent" : "Agent API disabled");
+  }
+
   async function toggleAutostart() {
     const next = !autostartEnabled;
     autostartError = null;
@@ -393,6 +452,13 @@
         onclick={() => (activeTab = "capacity")}
       >
         Unused Capacity
+      </button>
+      <button
+        class="tab-button"
+        class:active={activeTab === "web"}
+        onclick={() => (activeTab = "web")}
+      >
+        Web
       </button>
     </div>
 
@@ -495,6 +561,24 @@
         </section>
 
         <section class="card">
+          <h2>Dashboard</h2>
+          <div class="toggle-row">
+            <div>
+              <span class="toggle-label">Show pace delta</span>
+              <p class="hint">
+                On each usage bar, show how far usage is running ahead or behind the
+                elapsed time in the window (e.g. "+8%" or "−8%").
+              </p>
+            </div>
+            <Switch
+              checked={showPaceDelta}
+              label="Toggle pace delta"
+              onToggle={toggleShowPaceDelta}
+            />
+          </div>
+        </section>
+
+        <section class="card">
           <h2>Usage History</h2>
           <div class="toggle-row">
             <div>
@@ -539,6 +623,7 @@
             ≈ {recordsFromDays(historyDays).toLocaleString()} records · ~{formatSize(recordsFromDays(historyDays) * BYTES_PER_RECORD)} · older records deleted automatically
           </p>
         </section>
+
       {/if}
 
       {#if activeTab === "thresholds"}
@@ -789,6 +874,85 @@
             </div>
           </div>
           <p class="hint">Leave either field blank to disable this alert.</p>
+        </section>
+      {/if}
+
+      {#if activeTab === "web"}
+        <section class="card">
+          <h2>Web Dashboard</h2>
+          <div class="toggle-row">
+            <div>
+              <span class="toggle-label">Serve a read-only dashboard</span>
+              <p class="hint">
+                Check usage from another device (e.g. your phone over Tailscale) at
+                <code>http://{webBind}:{webPort}</code>. No login required, so only bind
+                this to a network you trust.
+              </p>
+            </div>
+            <Switch
+              checked={webEnabled}
+              label="Toggle web dashboard"
+              onToggle={toggleWebEnabled}
+            />
+          </div>
+
+          <div class="field-row">
+            <label for="web-bind" class:label-disabled={!webEnabled}>Bind address</label>
+            <input
+              id="web-bind"
+              type="text"
+              placeholder="127.0.0.1"
+              bind:value={webBind}
+              onchange={saveWebBind}
+              disabled={!webEnabled}
+            />
+          </div>
+          <p class="hint">
+            Defaults to loopback-only (127.0.0.1). Set this to your Tailscale IP
+            (run <code>tailscale ip -4</code> on this machine) to reach it from other
+            devices on your tailnet — avoid 0.0.0.0, which exposes it on every network
+            this machine is connected to.
+          </p>
+
+          <div class="field-row">
+            <label for="web-port" class:label-disabled={!webEnabled}>Port</label>
+            <input
+              id="web-port"
+              type="number"
+              min="1"
+              max="65535"
+              bind:value={webPort}
+              onchange={saveWebPort}
+              disabled={!webEnabled}
+            />
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Agent API</h2>
+          <div class="toggle-row">
+            <div>
+              <span class="toggle-label" class:label-disabled={!webEnabled}>Expose a minimal JSON endpoint for agents</span>
+              <p class="hint">
+                Adds <code>GET /api/agent</code> alongside the dashboard — a compact,
+                machine-readable snapshot per instance (usage %, pace vs. time elapsed,
+                reset countdown, predicted peak) meant for other tools or agents to poll
+                cheaply, e.g. to decide when to throttle work. No history, no HTML.
+                {#if !webEnabled}Enable the web dashboard above to use this.{/if}
+              </p>
+            </div>
+            <Switch
+              checked={agentApiEnabled}
+              disabled={!webEnabled}
+              label="Toggle agent API"
+              onToggle={toggleAgentApi}
+            />
+          </div>
+          {#if agentApiEnabled && webEnabled}
+            <p class="hint">
+              Available at <code>http://{webBind}:{webPort}/api/agent</code>
+            </p>
+          {/if}
         </section>
       {/if}
 

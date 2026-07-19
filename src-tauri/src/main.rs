@@ -4,6 +4,7 @@ mod chrome_auth;
 mod commands;
 mod monitor_loop;
 mod tauri_notifier;
+mod web_server;
 mod webview_fetch;
 
 use claudar_core::config::Config;
@@ -45,6 +46,7 @@ fn main() {
         .manage(monitor_loop::MonitorTasks::default())
         .manage(monitor_loop::TrayUsage::default())
         .manage(commands::AuthPorts::default())
+        .manage(web_server::WebServerTask::default())
         .setup(|app| {
             // If opened at login and the user asked to start minimized, hide the
             // window as early as possible to avoid a visible flash. Manual launches
@@ -63,6 +65,9 @@ fn main() {
 
             // Spawn one background polling task per configured instance.
             monitor_loop::spawn_monitor_tasks(app.handle().clone());
+
+            // Optional read-only HTTP dashboard (off by default, see config.web).
+            web_server::restart_web_server(app.handle().clone());
 
             Ok(())
         })

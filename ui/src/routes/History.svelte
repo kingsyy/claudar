@@ -1817,4 +1817,80 @@
   /* 7-day reset row spans full width and stands out */
   .rt-row-7d { border-color: hsl(var(--accent-purple)); background: hsl(var(--accent-purple) / 0.08); }
   .rt-desc { font-size: 0.8rem; color: hsl(var(--foreground)); }
+
+  /* ── Narrow window (hamburger layout) ───────────────────────────────────────── */
+  @media (max-width: 680px) {
+    .page {
+      padding: 0.85rem;
+    }
+
+    /* Header stacks; controls sit below the title and wrap freely */
+    .page-header {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.6rem;
+      margin-bottom: 0.85rem;
+    }
+
+    .controls {
+      justify-content: flex-start;
+    }
+
+    h1 {
+      font-size: 1.2rem;
+    }
+
+    .range-selector {
+      flex: 1;
+    }
+
+    .range-btn {
+      flex: 1;
+      text-align: center;
+    }
+
+    /* Stat / tile grids reflow to fit the narrow column */
+    .stats-row {
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .reset-tiles {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .section {
+      margin-bottom: 1.5rem;
+    }
+
+    /* 5h burndown stats: wrap instead of one tight row */
+    .window-stats {
+      gap: 1rem 1.5rem;
+      flex-wrap: wrap;
+    }
+
+    /* Week-over-week: shrink the label/total gutters */
+    .week-row {
+      grid-template-columns: 58px 1fr 40px;
+      gap: 0.4rem;
+    }
+
+    .week-label {
+      font-size: 0.68rem;
+    }
+
+    /* Reset timeline: day label becomes a heading above its rows */
+    .rt-day {
+      display: block;
+    }
+
+    .rt-day-label {
+      padding-top: 0;
+      margin-bottom: 0.4rem;
+      position: static;
+    }
+  }
 </style>

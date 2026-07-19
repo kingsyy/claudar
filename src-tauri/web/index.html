@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claudar</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 1.5rem 1rem 3rem;
+    background: #fff;
+    color: #111;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #16181c; color: #eee; }
+    .card { background: #1f2226 !important; border-color: #333 !important; }
+    .bar-track { background: #333 !important; }
+  }
+  h1 { font-size: 1.25rem; margin: 0 0 0.25rem; }
+  .updated { font-size: 0.8rem; color: #888; margin: 0 0 1.25rem; }
+  .card {
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 1rem 1.1rem;
+    margin-bottom: 1rem;
+    background: #fafafa;
+  }
+  .card h2 {
+    font-size: 1rem;
+    margin: 0 0 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+  .pace-badge { font-size: 0.75rem; font-weight: 600; }
+  .pace-over { color: #e2a04a; }
+  .pace-under { color: #3f9b5e; }
+  .pace-on { color: #888; }
+  .row { margin-bottom: 0.85rem; }
+  .row:last-child { margin-bottom: 0; }
+  .row-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    margin-bottom: 0.3rem;
+  }
+  .row-label .pct { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .subrow {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.3rem;
+  }
+  .subrow:last-child { margin-bottom: 0; }
+  .subrow-icon { font-size: 0.75rem; width: 1rem; text-align: center; flex-shrink: 0; }
+  .subrow .bar-track { flex: 1; }
+  .subrow-pct {
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    width: 3.2rem;
+    text-align: right;
+    flex-shrink: 0;
+    color: #888;
+  }
+  .subrow-pct.usage { color: inherit; font-weight: 600; }
+  .bar-track {
+    background: #e5e5e5;
+    border-radius: 999px;
+    height: 8px;
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: #4a90e2;
+    transition: width 0.3s ease;
+  }
+  .bar-fill.time { background: #aaa; }
+  .bar-fill.warn { background: #e2a04a; }
+  .bar-fill.danger { background: #e24a4a; }
+  .resets { font-size: 0.78rem; color: #888; margin-top: 0.4rem; }
+  #refresh {
+    display: block;
+    width: 100%;
+    padding: 0.7rem;
+    margin: 0.5rem 0 1rem;
+    font-size: 0.95rem;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    background: #fff;
+    cursor: pointer;
+  }
+  #refresh:disabled { opacity: 0.6; }
+  #empty, #error { font-size: 0.85rem; color: #888; }
+  #error { color: #c0392b; }
+</style>
+</head>
+<body>
+  <h1>Claudar</h1>
+  <p class="updated" id="updated">Loading…</p>
+  <button id="refresh">Refresh</button>
+  <div id="cards"></div>
+  <p id="empty" style="display:none">No usage data yet — waiting for the first poll.</p>
+  <p id="error" style="display:none"></p>
+
+<script>
+  const REFRESH_INTERVAL_MS = 30000;
+  let timer = null;
+
+  const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
+  const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
+
+  function barClass(pct) {
+    if (pct >= 90) return "danger";
+    if (pct >= 75) return "warn";
+    return "";
+  }
+
+  // Mirrors the desktop dashboard's pace calculation (±10% dead band).
+  function paceInfo(usagePct, timePct) {
+    const diff = usagePct - timePct;
+    if (diff > 10) return { label: `${diff.toFixed(1)}% over pace`, kind: "over" };
+    if (diff < -10) return { label: `${Math.abs(diff).toFixed(1)}% under pace`, kind: "under" };
+    return { label: "On pace", kind: "on" };
+  }
+
+  function timeElapsedPct(iso, windowMs) {
+    if (!iso) return 0;
+    const remaining = Date.parse(iso) - Date.now();
+    if (Number.isNaN(remaining) || remaining <= 0) return 100;
+    const elapsed = windowMs - remaining;
+    if (elapsed <= 0) return 0;
+    return Math.min(100, (elapsed / windowMs) * 100);
+  }
+
+  function formatResetsIn(iso) {
+    if (!iso) return "—";
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) return "—";
+    const ms = t - Date.now();
+    if (ms <= 0) return "now";
+    const mins = Math.round(ms / 60000);
+    if (mins < 60) return `in ${mins}m`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `in ${hours}h ${mins % 60}m`;
+    const days = Math.floor(hours / 24);
+    return `in ${days}d ${hours % 24}h`;
+  }
+
+  function renderWindow(label, pct, resetsAt, windowMs, predictedPct) {
+    const timePct = timeElapsedPct(resetsAt, windowMs);
+    const pace = paceInfo(pct, timePct);
+    const cls = barClass(pct);
+    const predicted = predictedPct != null
+      ? ` · predicted peak ${predictedPct.toFixed(0)}%`
+      : "";
+    return `
+      <div class="row">
+        <div class="row-label">
+          <span>${label}</span>
+          <span class="pace-badge pace-${pace.kind}">${pace.label}</span>
+        </div>
+        <div class="subrow" title="Time elapsed">
+          <span class="subrow-icon">⏱</span>
+          <div class="bar-track"><div class="bar-fill time" style="width:${timePct}%"></div></div>
+          <span class="subrow-pct">${timePct.toFixed(1)}%</span>
+        </div>
+        <div class="subrow" title="Usage">
+          <span class="subrow-icon">💬</span>
+          <div class="bar-track"><div class="bar-fill ${cls}" style="width:${Math.min(pct, 100)}%"></div></div>
+          <span class="subrow-pct usage">${pct.toFixed(1)}%</span>
+        </div>
+        <div class="resets">resets ${formatResetsIn(resetsAt)}${predicted}</div>
+      </div>`;
+  }
+
+  function render(instances) {
+    const cards = document.getElementById("cards");
+    const empty = document.getElementById("empty");
+    if (!instances.length) {
+      cards.innerHTML = "";
+      empty.style.display = "block";
+      return;
+    }
+    empty.style.display = "none";
+    cards.innerHTML = instances.map((p) => `
+      <div class="card">
+        <h2>${p.instance}</h2>
+        ${renderWindow("5-hour", p.five_hour_pct, p.resets_at, FIVE_HOUR_MS, p.predicted_pct)}
+        ${renderWindow("7-day", p.seven_day_pct, p.seven_day_resets_at, SEVEN_DAY_MS, null)}
+      </div>`).join("");
+  }
+
+  async function refresh() {
+    const btn = document.getElementById("refresh");
+    const errorEl = document.getElementById("error");
+    btn.disabled = true;
+    btn.textContent = "Refreshing…";
+    try {
+      const res = await fetch("/api/usage", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      render(data);
+      errorEl.style.display = "none";
+      document.getElementById("updated").textContent =
+        "Updated " + new Date().toLocaleTimeString();
+    } catch (e) {
+      errorEl.textContent = "Couldn't reach Claudar: " + e.message;
+      errorEl.style.display = "block";
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Refresh";
+    }
+  }
+
+  // Manual refresh restarts the 30s auto-refresh clock so we don't double-fetch
+  // right after a click.
+  function scheduleAutoRefresh() {
+    if (timer) clearInterval(timer);
+    timer = setInterval(refresh, REFRESH_INTERVAL_MS);
+  }
+
+  document.getElementById("refresh").addEventListener("click", async () => {
+    await refresh();
+    scheduleAutoRefresh();
+  });
+
+  refresh().then(scheduleAutoRefresh);
+</script>
+</body>
+</html>
