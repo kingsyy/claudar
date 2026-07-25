@@ -29,3 +29,6 @@ beginning.md
 config.toml
 session.json
 *.enc
+
+# Claude Code agent worktrees (nested checkouts — never commit these)
+.claude/worktrees/
