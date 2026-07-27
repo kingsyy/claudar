@@ -38,8 +38,11 @@
   // Polling more often than this hammers Claude's servers without giving more
   // accurate readings, so we surface a warning below the field.
   const MIN_RECOMMENDED_INTERVAL = 5;
-  let fiveHourThresholdStr = $state("50,75,90,100");
-  let sevenDayThresholdStr = $state("50,75,90,100");
+  const MAX_THRESHOLDS = 5;
+  let fiveHourThresholds = $state<number[]>([50, 75, 90, 100]);
+  let sevenDayThresholds = $state<number[]>([50, 75, 90, 100]);
+  let fiveHourNewThreshold = $state("");
+  let sevenDayNewThreshold = $state("");
 
   const SOUND_OPTIONS = [
     "Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero",
@@ -107,8 +110,8 @@
       trayIconEnabled = config.general.show_tray_icon;
       startMinimized = config.general.start_minimized;
       showPaceDelta = config.general.show_pace_delta;
-      fiveHourThresholdStr = config.thresholds.five_hour.join(",");
-      sevenDayThresholdStr = config.thresholds.seven_day.join(",");
+      fiveHourThresholds = [...config.thresholds.five_hour].sort((a, b) => a - b);
+      sevenDayThresholds = [...config.thresholds.seven_day].sort((a, b) => a - b);
 
       soundEnabled = config.notifications.sound;
       soundName = config.notifications.sound_name;
@@ -212,35 +215,69 @@
     }, showPaceDelta ? "Pace delta shown on bars" : "Pace delta hidden");
   }
 
-  function parseCsvThresholds(csv: string): number[] | null {
-    try {
-      const parts = csv.split(",").map((s) => {
-        const n = parseInt(s.trim(), 10);
-        if (isNaN(n) || n < 0 || n > 100) throw new Error(`Invalid percentage: ${s}`);
-        return n;
-      });
-      if (parts.length === 0) throw new Error("At least one threshold required");
-      return parts;
-    } catch (e) {
-      showToast(String(e), "error");
-      return null;
+  type ThresholdLimit = "five_hour" | "seven_day";
+
+  function thresholdsFor(limit: ThresholdLimit): number[] {
+    return limit === "five_hour" ? fiveHourThresholds : sevenDayThresholds;
+  }
+
+  function setThresholdsFor(limit: ThresholdLimit, values: number[]) {
+    if (limit === "five_hour") {
+      fiveHourThresholds = values;
+    } else {
+      sevenDayThresholds = values;
     }
   }
 
-  function saveFiveHourThresholds() {
-    const thresholds = parseCsvThresholds(fiveHourThresholdStr);
-    if (!thresholds) return;
+  function persistThresholds(limit: ThresholdLimit, values: number[], message: string) {
     persist((c) => {
-      c.thresholds.five_hour = thresholds;
-    }, "5-hour thresholds updated");
+      if (limit === "five_hour") {
+        c.thresholds.five_hour = values;
+      } else {
+        c.thresholds.seven_day = values;
+      }
+    }, message);
   }
 
-  function saveSevenDayThresholds() {
-    const thresholds = parseCsvThresholds(sevenDayThresholdStr);
-    if (!thresholds) return;
-    persist((c) => {
-      c.thresholds.seven_day = thresholds;
-    }, "7-day thresholds updated");
+  function addThreshold(limit: ThresholdLimit) {
+    const raw = limit === "five_hour" ? fiveHourNewThreshold : sevenDayNewThreshold;
+    const current = thresholdsFor(limit);
+    const label = limit === "five_hour" ? "5-hour" : "7-day";
+
+    const n = parseInt(raw, 10);
+    if (raw.trim() === "" || isNaN(n) || n < 0 || n > 100) {
+      showToast("Threshold must be a whole number between 0 and 100", "error");
+      return;
+    }
+    if (current.length >= MAX_THRESHOLDS) {
+      showToast(`A limit can have at most ${MAX_THRESHOLDS} thresholds`, "error");
+      return;
+    }
+    if (current.includes(n)) {
+      showToast(`${n}% is already in the ${label} list`, "error");
+      return;
+    }
+
+    const next = [...current, n].sort((a, b) => a - b);
+    setThresholdsFor(limit, next);
+    if (limit === "five_hour") {
+      fiveHourNewThreshold = "";
+    } else {
+      sevenDayNewThreshold = "";
+    }
+    persistThresholds(limit, next, `${label} thresholds updated`);
+  }
+
+  function removeThreshold(limit: ThresholdLimit, value: number) {
+    const current = thresholdsFor(limit);
+    const label = limit === "five_hour" ? "5-hour" : "7-day";
+    if (current.length <= 1) {
+      showToast("At least 1 threshold is required", "error");
+      return;
+    }
+    const next = current.filter((v) => v !== value);
+    setThresholdsFor(limit, next);
+    persistThresholds(limit, next, `${label} thresholds updated`);
   }
 
   function toggleSound() {
@@ -629,37 +666,91 @@
       {#if activeTab === "thresholds"}
         <section class="card">
           <h2>5-Hour Limit Thresholds</h2>
+          <ul class="threshold-chips">
+            {#each fiveHourThresholds as t (t)}
+              <li class="chip">
+                <span>{t}%</span>
+                <button
+                  type="button"
+                  class="chip-remove"
+                  aria-label={`Remove ${t}% threshold`}
+                  onclick={() => removeThreshold("five_hour", t)}
+                  disabled={fiveHourThresholds.length <= 1}
+                >×</button>
+              </li>
+            {/each}
+          </ul>
           <div class="field-row">
-            <label for="five-hour-thresholds">Alert at (comma-separated %)</label>
-            <input
-              id="five-hour-thresholds"
-              type="text"
-              placeholder="50,70,90,100"
-              bind:value={fiveHourThresholdStr}
-              onchange={saveFiveHourThresholds}
-              class="threshold-input"
-            />
+            <label for="five-hour-new-threshold">Add threshold</label>
+            <div class="input-with-suffix">
+              <input
+                id="five-hour-new-threshold"
+                type="number"
+                min="0"
+                max="100"
+                placeholder="e.g. 85"
+                bind:value={fiveHourNewThreshold}
+                onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); addThreshold("five_hour"); } }}
+                disabled={fiveHourThresholds.length >= MAX_THRESHOLDS}
+              />
+              <span class="suffix">%</span>
+              <button
+                type="button"
+                class="add-threshold-button"
+                onclick={() => addThreshold("five_hour")}
+                disabled={fiveHourThresholds.length >= MAX_THRESHOLDS}
+              >Add</button>
+            </div>
           </div>
           <p class="hint">
-            You'll be notified each time usage crosses one of these percentages. Example: 50,70,90,100
+            You'll be notified each time usage crosses one of these percentages. Keep 1–5 thresholds;
+            they're kept sorted automatically.
+            {#if fiveHourThresholds.length >= MAX_THRESHOLDS}Maximum of {MAX_THRESHOLDS} reached — remove one to add another.{/if}
           </p>
         </section>
 
         <section class="card">
           <h2>7-Day Limit Thresholds</h2>
+          <ul class="threshold-chips">
+            {#each sevenDayThresholds as t (t)}
+              <li class="chip">
+                <span>{t}%</span>
+                <button
+                  type="button"
+                  class="chip-remove"
+                  aria-label={`Remove ${t}% threshold`}
+                  onclick={() => removeThreshold("seven_day", t)}
+                  disabled={sevenDayThresholds.length <= 1}
+                >×</button>
+              </li>
+            {/each}
+          </ul>
           <div class="field-row">
-            <label for="seven-day-thresholds">Alert at (comma-separated %)</label>
-            <input
-              id="seven-day-thresholds"
-              type="text"
-              placeholder="50,70,90,100"
-              bind:value={sevenDayThresholdStr}
-              onchange={saveSevenDayThresholds}
-              class="threshold-input"
-            />
+            <label for="seven-day-new-threshold">Add threshold</label>
+            <div class="input-with-suffix">
+              <input
+                id="seven-day-new-threshold"
+                type="number"
+                min="0"
+                max="100"
+                placeholder="e.g. 85"
+                bind:value={sevenDayNewThreshold}
+                onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); addThreshold("seven_day"); } }}
+                disabled={sevenDayThresholds.length >= MAX_THRESHOLDS}
+              />
+              <span class="suffix">%</span>
+              <button
+                type="button"
+                class="add-threshold-button"
+                onclick={() => addThreshold("seven_day")}
+                disabled={sevenDayThresholds.length >= MAX_THRESHOLDS}
+              >Add</button>
+            </div>
           </div>
           <p class="hint">
-            You'll be notified each time usage crosses one of these percentages. Example: 50,70,90,100
+            You'll be notified each time usage crosses one of these percentages. Keep 1–5 thresholds;
+            they're kept sorted automatically.
+            {#if sevenDayThresholds.length >= MAX_THRESHOLDS}Maximum of {MAX_THRESHOLDS} reached — remove one to add another.{/if}
           </p>
         </section>
       {/if}
@@ -1091,9 +1182,72 @@
     cursor: not-allowed;
   }
 
-  .threshold-input {
-    width: 100%;
-    max-width: 300px;
+  .threshold-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    list-style: none;
+    margin: 0 0 1rem;
+    padding: 0;
+  }
+
+  .chip {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.3rem 0.3rem 0.75rem;
+    border-radius: 999px;
+    background-color: hsl(var(--muted));
+    color: hsl(var(--foreground));
+    font-size: 0.825rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .chip-remove {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: hsl(var(--muted-foreground));
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: all 0.12s;
+  }
+
+  .chip-remove:hover:not(:disabled) {
+    background-color: hsl(var(--danger-bg));
+    color: hsl(var(--danger-strong));
+  }
+
+  .chip-remove:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  .add-threshold-button {
+    padding: 0.4rem 0.9rem;
+    background-color: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+    border: none;
+    border-radius: var(--radius);
+    font-size: 0.825rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.15s;
+  }
+
+  .add-threshold-button:hover:not(:disabled) {
+    background-color: hsl(var(--primary-hover));
+  }
+
+  .add-threshold-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .input-with-suffix {
