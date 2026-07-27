@@ -113,6 +113,35 @@ pub struct ThresholdsConfig {
     pub seven_day: Vec<u8>,
 }
 
+impl ThresholdsConfig {
+    /// Validate a single limit's threshold list: 1-5 entries, each 0-100,
+    /// strictly increasing (i.e. sorted ascending with no duplicates).
+    fn validate_list(label: &str, values: &[u8]) -> Result<(), String> {
+        if values.is_empty() {
+            return Err(format!("{label} thresholds: at least 1 threshold is required"));
+        }
+        if values.len() > 5 {
+            return Err(format!("{label} thresholds: at most 5 thresholds are allowed"));
+        }
+        if values.iter().any(|&v| v > 100) {
+            return Err(format!("{label} thresholds: values must be between 0 and 100"));
+        }
+        if values.windows(2).any(|w| w[0] >= w[1]) {
+            return Err(format!(
+                "{label} thresholds: values must be sorted ascending with no duplicates"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Validate both limits' threshold lists.
+    pub fn validate(&self) -> Result<(), String> {
+        Self::validate_list("5-hour", &self.five_hour)?;
+        Self::validate_list("7-day", &self.seven_day)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationsConfig {
     pub sound: bool,
@@ -264,6 +293,53 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thresholds_validate_default_config() {
+        assert!(Config::default().thresholds.validate().is_ok());
+    }
+
+    #[test]
+    fn thresholds_validate_rejects_empty_list() {
+        let thresholds = ThresholdsConfig { five_hour: vec![], seven_day: vec![50] };
+        assert!(thresholds.validate().is_err());
+    }
+
+    #[test]
+    fn thresholds_validate_rejects_more_than_five() {
+        let thresholds = ThresholdsConfig { five_hour: vec![10, 20, 30, 40, 50, 60], seven_day: vec![50] };
+        assert!(thresholds.validate().is_err());
+    }
+
+    #[test]
+    fn thresholds_validate_accepts_exactly_five() {
+        let thresholds = ThresholdsConfig { five_hour: vec![10, 20, 30, 40, 50], seven_day: vec![50] };
+        assert!(thresholds.validate().is_ok());
+    }
+
+    #[test]
+    fn thresholds_validate_rejects_value_over_100() {
+        let thresholds = ThresholdsConfig { five_hour: vec![50, 101], seven_day: vec![50] };
+        assert!(thresholds.validate().is_err());
+    }
+
+    #[test]
+    fn thresholds_validate_rejects_unsorted() {
+        let thresholds = ThresholdsConfig { five_hour: vec![90, 50], seven_day: vec![50] };
+        assert!(thresholds.validate().is_err());
+    }
+
+    #[test]
+    fn thresholds_validate_rejects_duplicates() {
+        let thresholds = ThresholdsConfig { five_hour: vec![50, 50, 90], seven_day: vec![50] };
+        assert!(thresholds.validate().is_err());
+    }
+
+    #[test]
+    fn thresholds_validate_accepts_single_value() {
+        let thresholds = ThresholdsConfig { five_hour: vec![100], seven_day: vec![0] };
+        assert!(thresholds.validate().is_ok());
+    }
 
     #[test]
     fn default_config_values() {
