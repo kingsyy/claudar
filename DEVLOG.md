@@ -1,3 +1,19 @@
+## 2026-07-28 · Phase 8 wrap-up: accept optimistic-UI tradeoff, close out the build plan
+
+**What:** Closing pass over the Phase 8 (threshold list editing) agent-loop run. Three loose ends from the review, plus doc hygiene:
+1. **Accepted the optimistic-UI-without-rollback pattern app-wide.** `addThreshold`/`removeThreshold` mutate local state then fire `persist(...)` without awaiting, so an IPC failure toasts an error but leaves the chips showing unsaved state until reload. No code change.
+2. **`step="1"` added to both "Add threshold" inputs** (`ui/src/routes/Settings.svelte`). They were `type="number"` with `min`/`max` but no step, so `85.7` was silently truncated to `85` by `parseInt`.
+3. **Wrote `docs/tasks/phase-8-threshold-editing.md` retroactively** — `docs/todo.md` linked to it but it never existed, unlike Phases 1–7.
+4. **Pruned `docs/human-todo.md`**, which still had every box unchecked including pre-Phase-2 setup from June. Rewrote as still-open / done / decisions-made.
+
+**Why:** On (1), the frontend's own guards (max 5, min 1, dedup, 0–100, ascending sort) already satisfy everything `ThresholdsConfig::validate_list` checks, so a `set_config` rejection is close to unreachable — and the same fire-and-forget pattern is used by every other toggle in the file (`toggleTrayIcon`, `toggleStartMinimized`, …). Rejected two alternatives: awaiting + rolling back everywhere (a real consistency win, but it touches every mutation in Settings for a failure mode that's near-impossible), and fixing thresholds alone (leaves the file internally inconsistent for no real gain). Revisit if a persist failure is ever actually observed.
+
+Also confirmed two older review items are already resolved in the current tree and need no action: the unused `reqwest` `blocking` feature (Phase 1) is gone from `Cargo.toml`, and `has_session` (Phase 4) is now read in `Dashboard.svelte:63`. Phase 6's threshold complaint is what Phase 8 fixed.
+
+**Verification:** `vite build` clean — the one `Wizard.svelte` `state_referenced_locally` warning is pre-existing and unrelated. The `step` attribute is not runtime-verified (browser-native validation, no webview here).
+
+**Next:** All 8 phases done. Remaining work is distribution + verification, not features: document the CLI+GUI double-notify caveat in the README (decided in `03-decisions.md:61`, never actually written), runtime-verify notifications/login/start-minimized/web dashboard on macOS and Windows, and code-sign/notarize if distributing.
+
 ## 2026-07-19 · Optional read-only web dashboard for remote/agent access
 
 **What:** Added an opt-in HTTP server (`src-tauri/src/web_server.rs`, new `config.web` section: `enabled`, `bind`, `port`, `agent_api_enabled`) so usage can be checked from outside the desktop app — e.g. a phone over Tailscale, or another agent polling programmatically. Off by default; binds to `127.0.0.1` by default and never defaults to `0.0.0.0` — exposing it beyond loopback (e.g. to a Tailscale IP) is a deliberate config change, not an accident. Routes: `/` (static HTML dashboard), `/healthz`, `/api/usage` (raw per-instance payloads), `/api/history` (returns `[]` rather than erroring when `history.enabled` is off), and `/api/agent` — a separate opt-in, minimal machine-readable endpoint (usage %, pace vs. time-elapsed, reset countdown, predicted peak) meant for other tools/agents to poll for throttling decisions, gated independently of the human dashboard since it's for unattended access. Settings gained a new "Web" tab to toggle/configure all four fields; `set_config` now restarts the server after every save so bind/port/enabled changes take effect without an app restart.
