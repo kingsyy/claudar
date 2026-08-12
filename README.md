@@ -145,6 +145,18 @@ claudar uninstall-service
 
 **Note**: After installing as a service, it will automatically start monitoring in the background. On macOS, logs are written to `/tmp/claudar.log` and `/tmp/claudar.error.log`.
 
+**Don't run the background service and the GUI app at the same time.** The GUI app bundles its own
+monitor loop, so with both running you have two independent monitors polling the same account and
+you will get **every notification twice**. They also keep separate notification state, so silencing
+one has no effect on the other. Pick one:
+
+- **GUI app** — use "Open at login" in Settings and don't install the CLI service. If you already
+  installed it, run `claudar uninstall-service`.
+- **CLI service** (headless machines, servers, or if you prefer no desktop app) — keep the service
+  and leave the GUI app closed.
+
+Nothing warns you about this today; the check is on you.
+
 ### Manage Configuration
 
 ```bash

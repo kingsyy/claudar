@@ -1,3 +1,40 @@
+## 2026-08-12 · Un-deprecate the CLI `setup` command; document the CLI+GUI double-notify
+
+**What:** Applied the three claudar edits from the 2026-08-11 decisions sitting
+(`~/Repos/personal/management/DECISIONS.md`).
+1. `src/cli.rs:17` — dropped `[DEPRECATED]`; the subcommand now reads "Minimal setup instructions
+   for headless/SSH use (no GUI required)".
+2. `src/setup.rs` — banner reframed from a deprecation warning to a minimal/headless path. Deleted
+   the stale "the interactive setup wizard will be available in the GUI app (coming soon)" line —
+   the wizard shipped in Phase 5 (`ui/src/routes/Wizard.svelte`, in-app webview auth) — and now
+   points at it as an *available* alternative. Manual session-file instructions kept verbatim.
+3. `README.md` — new note under "Install as Background Service": running the launchd/systemd service
+   and the GUI app together gives you two independent monitors on one account, so every notification
+   fires twice and their notification state is separate. Spells out the two either/or setups.
+
+**Why:** The GUI cannot serve headless or SSH users, so the CLI path is being *kept* — and a
+deprecation banner discourages the exact use case being kept. The README note executes
+`docs/03-decisions.md:61` ("Document that running both simultaneously would double-notify"), which
+was decided when the monitor loop moved in-process and never landed.
+
+**Deliberately not done:** the GUI still can't warn about the double-notify — `is_service_running()`
+(`src/service.rs:32`) exists but isn't exposed as a Tauri command. Documentation only, per the
+decision; the README says outright that nothing warns you.
+
+**Also noticed, not touched (both pre-existing, out of this scope):** README's "## Setup" section
+still describes `claudar setup` as an interactive wizard that opens Chrome and extracts cookies —
+it does none of that, it only prints instructions. That section should be rewritten when the tracked
+follow-up (turn `setup` into a real prompt-and-paste flow) lands, since it changes again then.
+Separately, both the README and the `setup` output hardcode `~/.config/claudar/...`, which is wrong
+on macOS (`~/Library/Application Support/claudar/`) and Windows.
+
+**Verification:** `cargo build` clean; `cargo test --workspace` green (36 CLI + 106 core, 0 failed).
+Ran `claudar setup` and `claudar --help` to confirm the new copy renders.
+
+**Next:** the tracked follow-up — make `setup` a real prompt-and-paste flow (ask for `org_id` /
+`session_key` / cookie string, validate with a live API call, write the session file). A fully
+automatic headless flow is impossible; obtaining the cookie needs a browser.
+
 ## 2026-07-19 · Optional read-only web dashboard for remote/agent access
 
 **What:** Added an opt-in HTTP server (`src-tauri/src/web_server.rs`, new `config.web` section: `enabled`, `bind`, `port`, `agent_api_enabled`) so usage can be checked from outside the desktop app — e.g. a phone over Tailscale, or another agent polling programmatically. Off by default; binds to `127.0.0.1` by default and never defaults to `0.0.0.0` — exposing it beyond loopback (e.g. to a Tailscale IP) is a deliberate config change, not an accident. Routes: `/` (static HTML dashboard), `/healthz`, `/api/usage` (raw per-instance payloads), `/api/history` (returns `[]` rather than erroring when `history.enabled` is off), and `/api/agent` — a separate opt-in, minimal machine-readable endpoint (usage %, pace vs. time-elapsed, reset countdown, predicted peak) meant for other tools/agents to poll for throttling decisions, gated independently of the human dashboard since it's for unattended access. Settings gained a new "Web" tab to toggle/configure all four fields; `set_config` now restarts the server after every save so bind/port/enabled changes take effect without an app restart.

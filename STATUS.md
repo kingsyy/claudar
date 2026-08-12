@@ -2,9 +2,9 @@
 intent: share
 stage: complete
 share_target: maintained
-next: Runtime-verify the new web dashboard (bind/restart-on-config-change/agent API gating) and notifications/login/start-minimized on macOS/Windows; code-sign/notarize for distribution; or Phase 8 (threshold list editing UI)
+next: Turn `claudar setup` into a real prompt-and-paste flow (org_id / session_key / cookie, validate via API, write the session file) and rewrite README's stale "## Setup" section with it; runtime-verify the web dashboard (bind/restart-on-config-change/agent API gating), the threshold-list editing UI, and notifications/login/start-minimized on macOS/Windows; code-sign/notarize for distribution
 blocker: null
-updated: 2026-07-19
+updated: 2026-08-12
 ---
 
 # Claudar — Monitor Claude.ai usage limits with native desktop notifications
@@ -16,6 +16,13 @@ A lightweight Rust daemon that fetches real-time Claude.ai usage data (bypassing
 ## Current state
 
 **GUI app is functionally complete.** All 7 original build phases are done (Phase 1: workspace refactor, Phase 2: Tauri skeleton, Phase 3: monitor loop integration, Phase 4: Dashboard screen, Phase 5: wizard, Phase 6: History/Accounts/Settings, Phase 7: icons/builds). The Tauri app bundles the monitor loop and runs it as a background tokio task. Screens include Dashboard (5h/7d gauges, reset countdowns, predicted burn), History (SVG chart, 7-day stats), Accounts (multi-account list, add/remove with wizard re-use), Settings (poll interval, thresholds, notifications toggle, autostart). Wizard guides new users through login (in-app webview auth), threshold setup, and autostart toggle.
+
+**2026-08-12:** The CLI `setup` command is **no longer deprecated** — it's the supported minimal /
+headless path for users with no desktop session, and its banner now points at the shipped GUI wizard
+rather than promising one. The README documents that running the launchd/systemd service alongside
+the GUI app double-notifies (two monitors, one account); the GUI can't detect this itself because
+`is_service_running()` isn't exposed as a Tauri command. Tracked follow-up: `setup` still only
+*prints* instructions — it should prompt-and-paste and write the session file.
 
 **Post-phase review completed** — agent-loop run found 2 bugs (fixed during review), locked in 6 UX decisions (CLI deprecation, instance naming, welcome copy, dashboard UX, simultaneous CLI/GUI warning), and identified 1 remaining task: **Phase 8 — threshold list editing.** Settings currently only exposes the 4th (highest) of 4 hardcoded thresholds per limit, which creates non-monotonic configs and surprise notifications from hidden thresholds. Phase 8 will add a proper editable list UI: users can add/delete 1–5 thresholds per limit, kept sorted.
 

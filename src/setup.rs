@@ -1,5 +1,5 @@
-/// The interactive browser-based setup wizard has been moved to the GUI application
-/// (Phase 5). The CLI `setup` command is deprecated.
+/// Minimal, GUI-free setup path — kept deliberately for headless and SSH use, where
+/// the GUI wizard (`ui/src/routes/Wizard.svelte`, in-app webview auth) cannot run.
 ///
 /// To authenticate manually, create a session file at
 /// `~/.config/claudar/sessions/default.json` with the following structure:
@@ -17,9 +17,11 @@
 /// 2. Opening DevTools (F12) → Application → Cookies
 /// 3. Copying the `sessionKey` cookie value and the full Cookie header from any API request
 pub fn run_setup(_verbose: bool, _instance_name: Option<String>) -> anyhow::Result<()> {
-    println!("\n⚠️  The `setup` command is deprecated.");
+    println!("\nClaudar — minimal setup (no GUI required).");
     println!();
-    println!("The interactive setup wizard will be available in the GUI app (coming soon).");
+    println!("This is the headless/SSH path: it tells you how to write the session file by hand.");
+    println!("If you have a desktop session, the Claudar GUI app has an interactive setup wizard");
+    println!("that logs you in and writes this file for you.");
     println!();
     println!("To set up manually, create a session file at:");
     println!("  ~/.config/claudar/sessions/default.json");
