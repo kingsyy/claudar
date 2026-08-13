@@ -203,6 +203,17 @@
   {@const deltaTone = delta > 0 ? kind : "ok"}
   {@const timePos = clampPct(timePct)}
   {@const showTimeTick = timePct > 0.5 && timePct < 99.5}
+  <!-- The bar encodes usage, elapsed time, and predicted peak purely visually, and
+       the detail tooltip is hover-only. Spell the same figures out for assistive
+       tech so the numbers aren't lost with the marks that happen to be visible. -->
+  {@const barDescription = [
+    `${pct.toFixed(0)}% of tokens used`,
+    `${timePct.toFixed(0)}% of the window elapsed`,
+    showPeak ? `predicted peak ${Math.round(peak)}%` : null,
+    resetsAt ? `resets in ${formatCountdown(resetsAt)}` : null,
+  ]
+    .filter(Boolean)
+    .join(", ")}
   <div class="limit">
     <div class="limit-head">
       <span class="win">{label}</span>
@@ -232,17 +243,25 @@
 
     <div class="bar-wrap">
       {#if capped}
-        <div class="mark mark-now tone-crit" style="left: {nowPos}%">100%</div>
+        <div class="mark mark-now tone-crit" style="left: {nowPos}%" aria-hidden="true">100%</div>
       {:else}
         {#if showNow}
-          <div class="mark mark-now" style="left: {nowPos}%">{pct.toFixed(0)}%</div>
+          <div class="mark mark-now" style="left: {nowPos}%" aria-hidden="true">{pct.toFixed(0)}%</div>
         {/if}
         {#if showPeak}
-          <div class="mark mark-peak tone-{kind}" style="left: {peakPos}%">{Math.round(peak)}%</div>
+          <div class="mark mark-peak tone-{kind}" style="left: {peakPos}%" aria-hidden="true">{Math.round(peak)}%</div>
         {/if}
       {/if}
 
-      <div class="track">
+      <div
+        class="track"
+        role="progressbar"
+        aria-label={`${label} limit usage`}
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow={Math.round(pct)}
+        aria-valuetext={barDescription}
+      >
         <div class="bar-fill bar-{kind}" style="width: {fillW}%"></div>
         {#if showTimeTick}
           <div class="time-tick" style="left: {timePos}%" title="{timePct.toFixed(0)}% of window elapsed"></div>
@@ -257,6 +276,7 @@
             class:delta-end={deltaAtEnd}
             class:delta-inside={deltaInside && !deltaAtEnd}
             style={deltaAtEnd ? "" : `left: ${fillW}%`}
+            aria-hidden="true"
           >
             {delta > 0 ? `+${delta}` : delta < 0 ? `−${Math.abs(delta)}` : "0"}%
           </div>
