@@ -3,18 +3,30 @@
 // in app.css switch consistently, and `resolved` is exported for the few
 // components (charts/heatmap) that must branch their colors in JS.
 
-export type ThemePref = "system" | "light" | "dark";
+export type ThemePref = "system" | "light" | "dark" | "super-dark";
+export type ThemeResolved = "light" | "dark" | "super-dark";
 
 const STORAGE_KEY = "claudar-theme";
 
+export function normalizeThemePref(value: unknown): ThemePref {
+  return value === "light" || value === "dark" || value === "super-dark" || value === "system"
+    ? value
+    : "system";
+}
+
+export function resolveThemePreference(pref: ThemePref, systemDark: boolean): ThemeResolved {
+  if (pref === "super-dark") return "super-dark";
+  if (pref === "dark" || (pref === "system" && systemDark)) return "dark";
+  return "light";
+}
+
 function readStored(): ThemePref {
   try {
-    const v = localStorage.getItem(STORAGE_KEY);
-    if (v === "light" || v === "dark" || v === "system") return v;
+    return normalizeThemePref(localStorage.getItem(STORAGE_KEY));
   } catch {
     // localStorage unavailable (private mode, etc.) — fall back to system.
+    return "system";
   }
-  return "system";
 }
 
 function systemPrefersDark(): boolean {
@@ -23,15 +35,17 @@ function systemPrefersDark(): boolean {
 
 // Reactive runes-backed state. `preference` is what the user picked;
 // `resolved` is the concrete mode currently in effect.
-const state = $state<{ preference: ThemePref; resolved: "light" | "dark" }>({
+const state = $state<{ preference: ThemePref; resolved: ThemeResolved }>({
   preference: "system",
   resolved: "light",
 });
 
 function applyResolved() {
-  const dark = state.preference === "dark" || (state.preference === "system" && systemPrefersDark());
-  state.resolved = dark ? "dark" : "light";
+  state.resolved = resolveThemePreference(state.preference, systemPrefersDark());
+  const dark = state.resolved === "dark" || state.resolved === "super-dark";
+  const superDark = state.resolved === "super-dark";
   document.documentElement.classList.toggle("dark", dark);
+  document.documentElement.classList.toggle("super-dark", superDark);
   // Keep native controls (scrollbars, date pickers, form fields) in sync.
   document.documentElement.style.colorScheme = dark ? "dark" : "light";
 }
@@ -47,9 +61,9 @@ export function initTheme() {
 }
 
 export function setTheme(pref: ThemePref) {
-  state.preference = pref;
+  state.preference = normalizeThemePref(pref);
   try {
-    localStorage.setItem(STORAGE_KEY, pref);
+    localStorage.setItem(STORAGE_KEY, state.preference);
   } catch {
     // ignore persistence failures
   }
@@ -58,7 +72,7 @@ export function setTheme(pref: ThemePref) {
 
 /** Cycle through light → dark → system for a single toggle button. */
 export function cycleTheme() {
-  const order: ThemePref[] = ["light", "dark", "system"];
+  const order: ThemePref[] = ["light", "dark", "super-dark", "system"];
   const next = order[(order.indexOf(state.preference) + 1) % order.length];
   setTheme(next);
 }
@@ -71,6 +85,6 @@ export const theme = {
     return state.resolved;
   },
   get isDark() {
-    return state.resolved === "dark";
+    return state.resolved === "dark" || state.resolved === "super-dark";
   },
 };

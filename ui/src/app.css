@@ -26,6 +26,15 @@
     --radius: 0.5rem;
     --sidebar-width: 220px;
 
+    /* Nav chrome (sidebar, topbar, drawer). Deliberately dark in light mode too,
+       so it's its own token set rather than a reuse of --background. Only
+       super-dark overrides these; `dark` inherits this navy. */
+    --sidebar-bg: 222.2 84% 4.9%;
+    --sidebar-fg: 210 40% 98%;
+    --sidebar-muted: 215.4 16.3% 70%;
+    /* Matches the bg so the divider is invisible unless a theme brightens it. */
+    --sidebar-border: 222.2 84% 4.9%;
+
     /* ── Semantic status ─────────────────────────────────────────── */
     /* `*-bg`/`*-border` are soft tints for banners/badges; the base and
        `*-strong` are for text and solid fills. */
@@ -134,6 +143,80 @@
     --heat-hi: 222 90% 70%;
   }
 
+  /* Super dark is the OLED mode: a true black ground, every surface neutral
+     (saturation 0, so nothing reads as blue or brown), and every accent pulled
+     *below* its dark-mode brightness so the screen stays quiet in the dark. */
+  :root.super-dark {
+    /* ── Structural ──────────────────────────────────────────────── */
+    --background: 0 0% 0%;
+    --foreground: 0 0% 92%;
+    --card: 0 0% 5%;
+    --card-foreground: 0 0% 92%;
+    --popover: 0 0% 7%;
+    --popover-foreground: 0 0% 92%;
+    --primary: 0 0% 88%;
+    --primary-foreground: 0 0% 4%;
+    --primary-hover: 0 0% 76%;
+    --secondary: 0 0% 9%;
+    --secondary-foreground: 0 0% 88%;
+    --muted: 0 0% 10%;
+    --muted-foreground: 0 0% 58%;
+    --accent: 0 0% 12%;
+    --accent-foreground: 0 0% 92%;
+    --destructive: 0 55% 45%;
+    --destructive-foreground: 0 0% 96%;
+    --border: 0 0% 14%;
+    --input: 0 0% 20%;
+    --ring: 0 0% 72%;
+
+    /* Sidebar/topbar drop to the same black; the border does the separating. */
+    --sidebar-bg: 0 0% 0%;
+    --sidebar-fg: 0 0% 90%;
+    --sidebar-muted: 0 0% 56%;
+    --sidebar-border: 0 0% 14%;
+
+    /* ── Semantic status ─────────────────────────────────────────── */
+    /* Dimmer and less saturated than `dark` — same meaning, less glare. */
+    --success: 142 40% 44%;
+    --success-strong: 142 42% 54%;
+    --success-bg: 142 30% 7%;
+    --success-border: 142 25% 23%;
+
+    --warning: 38 55% 48%;
+    --warning-strong: 38 58% 58%;
+    --warning-bg: 38 35% 7%;
+    --warning-border: 38 30% 24%;
+
+    --danger: 0 50% 48%;
+    --danger-strong: 0 55% 60%;
+    --danger-bg: 0 35% 8%;
+    --danger-border: 0 30% 25%;
+
+    --info: 213 45% 55%;
+    --info-strong: 213 48% 64%;
+    --accent-purple: 265 35% 58%;
+    --switch-on: 142 40% 38%;
+
+    /* ── Chart ───────────────────────────────────────────────────── */
+    --chart-surface: 0 0% 5%;
+    --chart-grid: 0 0% 13%;
+    --chart-axis: 0 0% 50%;
+    --chart-reset: 0 0% 34%;
+    --chart-5h: 213 45% 55%;
+    --chart-5h-soft: 213 38% 44%;
+    --chart-7d: 28 52% 50%;
+    --chart-pred: 213 45% 55%;
+    --chart-bar-track: 0 0% 9%;
+    --chart-bar: 213 45% 50%;
+    --heat-empty: 0 0% 7%;
+    --heat-lo: 213 38% 14%;
+    --heat-hi: 213 52% 56%;
+
+    --tooltip-bg: 0 0% 8%;
+    --tooltip-fg: 0 0% 96%;
+    --tooltip-muted: 0 0% 70%;
+  }
+
   * {
     border-color: hsl(var(--border));
   }
@@ -143,5 +226,82 @@
     color: hsl(var(--foreground));
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     margin: 0;
+  }
+
+  /* Explicit accessibility controls: applied at the root so every route inherits them. */
+  :root.high-contrast {
+    --foreground: 0 0% 0%;
+    --card-foreground: 0 0% 0%;
+    --muted-foreground: 0 0% 25%;
+    --border: 0 0% 28%;
+    --input: 0 0% 28%;
+    --ring: 0 0% 0%;
+    --success-strong: 142 80% 22%;
+    --success-bg: 142 100% 93%;
+    --success-border: 142 80% 28%;
+    --warning-strong: 30 100% 22%;
+    --warning-bg: 45 100% 90%;
+    --warning-border: 30 100% 32%;
+    --danger-strong: 0 85% 32%;
+    --danger-bg: 0 100% 94%;
+    --danger-border: 0 85% 40%;
+  }
+
+  :root.dark.high-contrast {
+    --foreground: 0 0% 100%;
+    --card-foreground: 0 0% 100%;
+    --muted-foreground: 0 0% 82%;
+    --border: 0 0% 70%;
+    --input: 0 0% 70%;
+    --ring: 0 0% 100%;
+    --success-strong: 142 85% 72%;
+    --success-bg: 142 70% 11%;
+    --success-border: 142 80% 62%;
+    --warning-strong: 45 100% 76%;
+    --warning-bg: 38 75% 13%;
+    --warning-border: 45 100% 65%;
+    --danger-strong: 0 100% 80%;
+    --danger-bg: 0 70% 14%;
+    --danger-border: 0 90% 68%;
+  }
+
+  /* Blue, orange, and violet retain separation for common red/green deficiencies. */
+  :root.status-colorblind {
+    --success: 203 100% 38%;
+    --success-strong: 203 100% 28%;
+    --success-bg: 203 100% 95%;
+    --success-border: 203 90% 58%;
+    --warning: 36 100% 46%;
+    --warning-strong: 32 100% 28%;
+    --warning-bg: 42 100% 94%;
+    --warning-border: 36 95% 55%;
+    --danger: 294 75% 44%;
+    --danger-strong: 294 75% 30%;
+    --danger-bg: 294 75% 96%;
+    --danger-border: 294 60% 66%;
+  }
+
+  :root.dark.status-colorblind {
+    --success: 203 100% 68%;
+    --success-strong: 203 100% 76%;
+    --success-bg: 203 70% 14%;
+    --success-border: 203 65% 38%;
+    --warning: 42 100% 64%;
+    --warning-strong: 42 100% 74%;
+    --warning-bg: 38 65% 14%;
+    --warning-border: 42 70% 42%;
+    --danger: 294 75% 70%;
+    --danger-strong: 294 80% 78%;
+    --danger-bg: 294 45% 17%;
+    --danger-border: 294 45% 38%;
+  }
+
+  :root.reduce-motion *,
+  :root.reduce-motion *::before,
+  :root.reduce-motion *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
   }
 }

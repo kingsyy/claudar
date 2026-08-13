@@ -557,6 +557,22 @@
   let maxHeatmapCell = $derived(
     Math.max(1, ...heatmap.flat().filter((v): v is number => v !== null))
   );
+
+  // Cell shading is a lightness ramp, so it can't come straight from the
+  // --heat-* tokens the way the legend bar does — it mirrors them per theme
+  // instead. Super dark keeps its own, dimmer ramp so the grid doesn't glow.
+  const HEAT_RAMPS = {
+    light: { hue: 222, sat: 84, from: 95, to: 40, empty: "hsl(214 20% 95%)" },
+    dark: { hue: 222, sat: 80, from: 20, to: 75, empty: "hsl(217 32% 13%)" },
+    "super-dark": { hue: 213, sat: 45, from: 12, to: 56, empty: "hsl(0 0% 7%)" },
+  } as const;
+
+  function heatCellColor(val: number | null): string {
+    const ramp = HEAT_RAMPS[theme.resolved];
+    if (val == null) return ramp.empty;
+    const t = val / maxHeatmapCell;
+    return `hsl(${ramp.hue} ${ramp.sat}% ${Math.round(ramp.from + (ramp.to - ramp.from) * t)}%)`;
+  }
 </script>
 
 <div class="page">
@@ -963,11 +979,7 @@
                   <div
                     class="heatmap-cell"
                     class:heatmap-cell-active={heatTooltip?.label === `${DOW_LABELS[dow]} · ${hourLabel(h)}`}
-                    style:background={val != null
-                      ? (theme.isDark
-                          ? `hsl(222 80% ${Math.round(20 + (val / maxHeatmapCell) * 55)}%)`
-                          : `hsl(222 84% ${Math.round(95 - (val / maxHeatmapCell) * 55)}%)`)
-                      : (theme.isDark ? "hsl(217 32% 13%)" : "hsl(214 20% 95%)")}
+                    style:background={heatCellColor(val)}
                     role="presentation"
                     onmousemove={(e) => onHeatMove(e, dow, h, val)}
                   ></div>

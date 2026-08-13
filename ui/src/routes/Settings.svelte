@@ -2,6 +2,14 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import Switch from "../lib/Switch.svelte";
+  import { setTheme, theme, type ThemePref } from "../lib/theme.svelte";
+  import {
+    setHighContrast,
+    setReduceMotion,
+    setStatusPalette,
+    visuals,
+    type StatusPalette,
+  } from "../lib/visuals.svelte";
 
   type Config = {
     general: { poll_interval_seconds: number; timezone: string; show_tray_icon: boolean; start_minimized: boolean; show_pace_delta: boolean };
@@ -26,7 +34,7 @@
   let config = $state<Config | null>(null);
   let loading = $state(true);
   let loadError = $state<string | null>(null);
-  let activeTab = $state<"general" | "notifications" | "thresholds" | "capacity" | "web">("general");
+  let activeTab = $state<"general" | "visuals" | "notifications" | "thresholds" | "capacity" | "web">("general");
 
   // Form-bound values
   let pollIntervalMinutes = $state(15);
@@ -47,6 +55,13 @@
   const SOUND_OPTIONS = [
     "Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero",
     "Morse", "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink",
+  ];
+
+  const THEME_OPTIONS: { preference: ThemePref; label: string }[] = [
+    { preference: "system", label: "System" },
+    { preference: "light", label: "Light" },
+    { preference: "dark", label: "Dark" },
+    { preference: "super-dark", label: "Super dark" },
   ];
 
   let soundEnabled = $state(true);
@@ -213,6 +228,14 @@
     persist((c) => {
       c.general.show_pace_delta = showPaceDelta;
     }, showPaceDelta ? "Pace delta shown on bars" : "Pace delta hidden");
+  }
+
+  function toggleReduceMotion() {
+    setReduceMotion(!visuals.reduceMotion);
+  }
+
+  function toggleHighContrast() {
+    setHighContrast(!visuals.highContrast);
   }
 
   type ThresholdLimit = "five_hour" | "seven_day";
@@ -471,6 +494,13 @@
       </button>
       <button
         class="tab-button"
+        class:active={activeTab === "visuals"}
+        onclick={() => (activeTab = "visuals")}
+      >
+        Visuals
+      </button>
+      <button
+        class="tab-button"
         class:active={activeTab === "notifications"}
         onclick={() => (activeTab = "notifications")}
       >
@@ -598,24 +628,6 @@
         </section>
 
         <section class="card">
-          <h2>Dashboard</h2>
-          <div class="toggle-row">
-            <div>
-              <span class="toggle-label">Show pace delta</span>
-              <p class="hint">
-                On each usage bar, show how far usage is running ahead or behind the
-                elapsed time in the window (e.g. "+8%" or "−8%").
-              </p>
-            </div>
-            <Switch
-              checked={showPaceDelta}
-              label="Toggle pace delta"
-              onToggle={toggleShowPaceDelta}
-            />
-          </div>
-        </section>
-
-        <section class="card">
           <h2>Usage History</h2>
           <div class="toggle-row">
             <div>
@@ -661,6 +673,91 @@
           </p>
         </section>
 
+      {/if}
+
+      {#if activeTab === "visuals"}
+        <section class="card">
+          <h2>Theme</h2>
+          <p class="hint">Choose how Claudar looks. System follows your device appearance.</p>
+          <div class="theme-options" role="radiogroup" aria-label="Colour theme">
+            {#each THEME_OPTIONS as option}
+              <button
+                type="button"
+                class="theme-option"
+                class:selected={theme.preference === option.preference}
+                role="radio"
+                aria-checked={theme.preference === option.preference}
+                onclick={() => setTheme(option.preference)}
+              >
+                {option.label}
+              </button>
+            {/each}
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Accessibility</h2>
+          <div class="toggle-row">
+            <div>
+              <span class="toggle-label">Reduce motion</span>
+              <p class="hint">Stop interface animations and transitions. Your system motion preference is always respected too.</p>
+            </div>
+            <Switch
+              checked={visuals.reduceMotion}
+              label="Toggle reduced motion"
+              onToggle={toggleReduceMotion}
+            />
+          </div>
+          <div class="toggle-row">
+            <div>
+              <span class="toggle-label">High contrast</span>
+              <p class="hint">Strengthen text, borders, and status treatment for easier reading.</p>
+            </div>
+            <Switch
+              checked={visuals.highContrast}
+              label="Toggle high contrast"
+              onToggle={toggleHighContrast}
+            />
+          </div>
+          <div class="status-palette-row">
+            <div>
+              <span class="toggle-label">Status colours</span>
+              <p class="hint">Choose a status palette that is easier for you to distinguish.</p>
+            </div>
+            <div class="palette-options" role="radiogroup" aria-label="Status colour palette">
+              {#each (["standard", "colorblind"] as StatusPalette[]) as palette}
+                <button
+                  type="button"
+                  class="palette-option"
+                  class:selected={visuals.statusPalette === palette}
+                  role="radio"
+                  aria-checked={visuals.statusPalette === palette}
+                  onclick={() => setStatusPalette(palette)}
+                >
+                  {palette === "standard" ? "Standard" : "Colour-blind friendly"}
+                </button>
+              {/each}
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Dashboard</h2>
+          <div class="toggle-row">
+            <div>
+              <span class="toggle-label">Show pace delta</span>
+              <p class="hint">
+                On each usage bar, show how far usage is running ahead or behind the
+                elapsed time in the window (e.g. "+8%" or "−8%").
+              </p>
+            </div>
+            <Switch
+              checked={showPaceDelta}
+              label="Toggle pace delta"
+              onToggle={toggleShowPaceDelta}
+            />
+          </div>
+        </section>
       {/if}
 
       {#if activeTab === "thresholds"}
@@ -1083,7 +1180,6 @@
     font-weight: 600;
     margin: 1rem 0 0.25rem;
     padding-top: 0.75rem;
-    border-top: 1px solid hsl(var(--border));
     color: hsl(var(--foreground));
   }
 
@@ -1097,7 +1193,6 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
-    border-bottom: 2px solid hsl(var(--border));
     margin-bottom: 1.5rem;
   }
 
@@ -1105,7 +1200,7 @@
     padding: 0.65rem 1rem;
     background: none;
     border: none;
-    border-bottom: 3px solid transparent;
+    border-radius: var(--radius);
     font-size: 0.875rem;
     color: hsl(var(--muted-foreground));
     cursor: pointer;
@@ -1119,7 +1214,7 @@
 
   .tab-button.active {
     color: hsl(var(--foreground));
-    border-bottom-color: hsl(var(--foreground));
+    background: hsl(var(--muted));
   }
 
   .tab-content {
@@ -1146,6 +1241,83 @@
     border-radius: var(--radius);
     padding: 1.25rem;
     margin-bottom: 1rem;
+  }
+
+  .theme-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .theme-option {
+    min-width: 5.5rem;
+    padding: 0.55rem 0.8rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font: inherit;
+    font-size: 0.875rem;
+    cursor: pointer;
+  }
+
+  .theme-option:hover {
+    background: hsl(var(--muted));
+  }
+
+  .theme-option.selected {
+    border-color: hsl(var(--foreground));
+    background: hsl(var(--foreground));
+    color: hsl(var(--background));
+    font-weight: 600;
+  }
+
+  .theme-option:focus-visible,
+  .palette-option:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  .status-palette-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.8rem 0 0;
+  }
+
+  .status-palette-row .hint {
+    margin-bottom: 0;
+    max-width: 360px;
+  }
+
+  .palette-options {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+
+  .palette-option {
+    padding: 0.45rem 0.65rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+
+  .palette-option:hover {
+    background: hsl(var(--muted));
+  }
+
+  .palette-option.selected {
+    border-color: hsl(var(--foreground));
+    background: hsl(var(--foreground));
+    color: hsl(var(--background));
+    font-weight: 600;
   }
 
   .field-row {

@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { formatResetTimestamp, paceVerdict, projectedPeak } from "$lib/dashboard";
 
   type UsagePayload = {
     instance: string;
@@ -29,7 +30,9 @@
   let unlistenUsage: UnlistenFn | undefined;
   let unlistenError: UnlistenFn | undefined;
   let tickInterval: ReturnType<typeof setInterval> | undefined;
+  let copyFeedbackTimeout: ReturnType<typeof setTimeout> | undefined;
   let refreshing = $state(false);
+  let copiedReset = $state<string | null>(null);
 
   // Newest update across every instance, for the single header timestamp.
   let lastUpdate = $derived(
@@ -99,6 +102,16 @@
     return `${minutes}m`;
   }
 
+  async function copyResetTimestamp(iso: string, key: string) {
+    const text = formatResetTimestamp(iso);
+    await navigator.clipboard.writeText(text);
+    copiedReset = key;
+    if (copyFeedbackTimeout) clearTimeout(copyFeedbackTimeout);
+    copyFeedbackTimeout = setTimeout(() => {
+      copiedReset = null;
+    }, 1800);
+  }
+
   function timeElapsedPct(iso: string | null | undefined, windowMs: number): number {
     if (!iso) return 0;
     const remaining = new Date(iso).getTime() - now;
@@ -108,22 +121,7 @@
     return Math.min(100, (elapsed / windowMs) * 100);
   }
 
-  // Where usage lands by reset if the current rate holds. Prefer the backend's
-  // prediction (5-hour); otherwise extrapolate linearly, but only once enough of
-  // the window has elapsed that the rate is meaningful (avoids early false alarms).
-  function projectedPeak(pct: number, timePct: number, predicted: number | null): number {
-    if (predicted != null) return predicted;
-    if (timePct < 8) return pct;
-    return (pct / timePct) * 100;
-  }
-
-  // Bar colour = the verdict. Projected peak vs. the cap tells the story.
-  function verdictKind(pct: number, peak: number): "ok" | "warn" | "crit" {
-    if (pct >= 99) return "crit";
-    if (peak > 100) return "crit";
-    if (peak >= 85) return "warn";
-    return "ok";
-  }
+  // Colour distinguishes acceptable pace, a moderate overage, and a large overage.
 
   function formatTimeSince(timestamp: number | undefined): string {
     if (!timestamp) return "Never";
@@ -180,13 +178,14 @@
     unlistenUsage?.();
     unlistenError?.();
     if (tickInterval) clearInterval(tickInterval);
+    if (copyFeedbackTimeout) clearTimeout(copyFeedbackTimeout);
   });
 </script>
 
-{#snippet limit(label: string, pct: number, resetsAt: string | null, windowMs: number, predicted: number | null, seq: number)}
+{#snippet limit(label: string, pct: number, resetsAt: string | null, windowMs: number, predicted: number | null, seq: number, copyKey: string)}
   {@const timePct = timeElapsedPct(resetsAt, windowMs)}
   {@const peak = projectedPeak(pct, timePct, predicted)}
-  {@const kind = verdictKind(pct, peak)}
+  {@const kind = paceVerdict(pct, peak)}
   {@const over = peak > 100}
   {@const capped = pct >= 99}
   {@const fillW = clampPct(pct)}
@@ -209,7 +208,25 @@
       <span class="win">{label}</span>
       <span class="reset">
         <span class="reset-word">resets</span>
-        <span class="reset-val">{formatCountdown(resetsAt)}</span>
+        {#if resetsAt}
+          <span class="reset-control">
+            <button
+              type="button"
+              class="reset-val"
+              onclick={() => copyResetTimestamp(resetsAt, copyKey)}
+              aria-label={`Reset in ${formatCountdown(resetsAt)}. Copy exact expiry time.`}
+            >{formatCountdown(resetsAt)}</button>
+            <span class="reset-tooltip" role="status">
+              <span class="reset-tooltip-label">{copiedReset === copyKey ? "Copied" : "Expires"}</span>
+              <time datetime={resetsAt}>{formatResetTimestamp(resetsAt)}</time>
+              <span class="reset-tooltip-hint">
+                {copiedReset === copyKey ? "Copied to clipboard" : "Click countdown to copy"}
+              </span>
+            </span>
+          </span>
+        {:else}
+          <span class="reset-val reset-unavailable">—</span>
+        {/if}
       </span>
     </div>
 
@@ -231,9 +248,9 @@
           <div class="time-tick" style="left: {timePos}%" title="{timePct.toFixed(0)}% of window elapsed"></div>
         {/if}
         {#if ghostW > 0.4}
-          <div class="bar-ghost" class:over style="left: {fillW}%; width: {ghostW}%"></div>
+          <div class="bar-ghost tone-{kind}" style="left: {fillW}%; width: {ghostW}%"></div>
         {/if}
-        {#if over}<div class="overflow-nub"></div>{/if}
+        {#if over}<div class="overflow-nub tone-{kind}"></div>{/if}
         {#if showDelta}
           <div
             class="delta tone-{deltaTone}"
@@ -291,8 +308,8 @@
           <span>Waiting for first update…</span>
         </div>
       {:else}
-        {@render limit("5-hour", usage.five_hour_pct, usage.resets_at, FIVE_HOUR_MS, usage.predicted_pct, seq)}
-        {@render limit("7-day", usage.seven_day_pct, usage.seven_day_resets_at, SEVEN_DAY_MS, null, seq)}
+        {@render limit("5-hour", usage.five_hour_pct, usage.resets_at, FIVE_HOUR_MS, usage.predicted_pct, seq, `${inst.name}-5h`)}
+        {@render limit("7-day", usage.seven_day_pct, usage.seven_day_resets_at, SEVEN_DAY_MS, null, seq, `${inst.name}-7d`)}
       {/if}
     </section>
   {/each}
@@ -443,6 +460,9 @@
   .reset {
     margin-left: auto;
     font-size: 0.72rem;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.2rem;
   }
 
   .reset-word {
@@ -454,7 +474,87 @@
     font-weight: 700;
     color: hsl(var(--foreground));
     font-variant-numeric: tabular-nums;
-    margin-left: 0.2rem;
+  }
+
+  button.reset-val {
+    appearance: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-weight: 700;
+    color: hsl(var(--foreground));
+    cursor: copy;
+    border-radius: 3px;
+  }
+
+  button.reset-val:hover,
+  button.reset-val:focus-visible {
+    color: hsl(var(--ring));
+    outline: none;
+  }
+
+  button.reset-val:focus-visible {
+    box-shadow: 0 0 0 2px hsl(var(--ring) / 0.35);
+  }
+
+  .reset-control {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .reset-tooltip {
+    position: absolute;
+    z-index: 20;
+    right: 0;
+    bottom: calc(100% + 0.5rem);
+    width: max-content;
+    max-width: min(19rem, calc(100vw - 2rem));
+    padding: 0.55rem 0.65rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.12rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: 6px;
+    background: hsl(var(--popover, var(--card, var(--background))));
+    color: hsl(var(--foreground));
+    box-shadow: 0 8px 24px hsl(0 0% 0% / 0.18);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(3px);
+    pointer-events: none;
+    transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
+  }
+
+  .reset-control:hover .reset-tooltip,
+  .reset-control:focus-within .reset-tooltip {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
+
+  .reset-tooltip-label {
+    color: hsl(var(--muted-foreground));
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .reset-tooltip time {
+    font-size: 0.76rem;
+    font-weight: 650;
+    white-space: nowrap;
+  }
+
+  .reset-tooltip-hint {
+    color: hsl(var(--muted-foreground));
+    font-size: 0.66rem;
+  }
+
+  .reset-unavailable {
+    margin-left: 0;
   }
 
   /* ── Bar + its anchored number marks ── */
@@ -579,7 +679,23 @@
     transition: left 0.45s ease, width 0.45s ease;
   }
 
-  .bar-ghost.over {
+  .bar-ghost.tone-ok {
+    background-image: repeating-linear-gradient(
+      135deg,
+      hsl(var(--success) / 0.55) 0 3px,
+      transparent 3px 7px
+    );
+  }
+
+  .bar-ghost.tone-warn {
+    background-image: repeating-linear-gradient(
+      135deg,
+      hsl(var(--warning) / 0.55) 0 3px,
+      transparent 3px 7px
+    );
+  }
+
+  .bar-ghost.tone-crit {
     background-image: repeating-linear-gradient(
       135deg,
       hsl(var(--danger) / 0.55) 0 3px,
@@ -597,8 +713,12 @@
     height: 0;
     border-top: 5px solid transparent;
     border-bottom: 5px solid transparent;
-    border-left: 7px solid hsl(var(--danger));
+    border-left: 7px solid transparent;
   }
+
+  .overflow-nub.tone-ok { border-left-color: hsl(var(--success)); }
+  .overflow-nub.tone-warn { border-left-color: hsl(var(--warning)); }
+  .overflow-nub.tone-crit { border-left-color: hsl(var(--danger)); }
 
   /* ── "Just updated" shimmer: one light pass across the bar ── */
   .sweep {

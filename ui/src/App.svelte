@@ -8,13 +8,7 @@
   import Settings from "./routes/Settings.svelte";
   import About from "./routes/About.svelte";
   import Wizard from "./routes/Wizard.svelte";
-  import { theme, cycleTheme } from "./lib/theme.svelte";
-
-  const themeMeta: Record<string, { icon: string; label: string }> = {
-    light: { icon: "☀", label: "Light" },
-    dark: { icon: "☾", label: "Dark" },
-    system: { icon: "◐", label: "System" },
-  };
+  import { readSidebarCollapsed, saveSidebarCollapsed } from "./lib/sidebar";
 
   type Route = "dashboard" | "history" | "accounts" | "settings" | "about";
 
@@ -25,6 +19,7 @@
 
   let currentRoute: Route = $state("dashboard");
   let menuOpen = $state(false);
+  let navCollapsed = $state(false);
 
   // Responsive: persistent sidebar when there's room, hamburger drawer when narrow.
   // Breakpoint fits the 220px sidebar + a comfortable content column.
@@ -45,7 +40,6 @@
   }
 
   const navItems: { id: Route; label: string; icon: string }[] = [
-    { id: "dashboard", label: "Dashboard", icon: "▦" },
     { id: "history", label: "History", icon: "📈" },
     { id: "accounts", label: "Accounts", icon: "👤" },
     { id: "settings", label: "Settings", icon: "⚙" },
@@ -54,6 +48,11 @@
   function navigate(route: Route) {
     currentRoute = route;
     menuOpen = false;
+  }
+
+  function toggleNavCollapsed() {
+    navCollapsed = !navCollapsed;
+    saveSidebarCollapsed(navCollapsed);
   }
 
   const routeTitles: Record<Route, string> = {
@@ -92,6 +91,7 @@
 
   onMount(async () => {
     await checkFirstRun();
+    navCollapsed = readSidebarCollapsed();
     window.addEventListener("resize", onResize);
 
     unlistenAuthComplete = await listen<{ instance: string }>("auth-complete", () => {
@@ -146,13 +146,16 @@
   </svg>
 {/snippet}
 
-{#snippet navMenu()}
+{#snippet navMenu(collapsed = false)}
   <ul class="nav-list">
     {#each navItems as item}
       <li>
         <button
           class="nav-item"
+          class:collapsed
           class:active={currentRoute === item.id}
+          title={collapsed ? item.label : undefined}
+          aria-label={collapsed ? item.label : undefined}
           onclick={() => navigate(item.id)}
         >
           <span class="nav-icon" aria-hidden="true">{item.icon}</span>
@@ -164,20 +167,14 @@
   <div class="menu-footer">
     <button
       class="nav-item"
+      class:collapsed
       class:active={currentRoute === "about"}
+      title={collapsed ? "About" : undefined}
+      aria-label={collapsed ? "About" : undefined}
       onclick={() => navigate("about")}
     >
       <span class="nav-icon" aria-hidden="true">ⓘ</span>
       <span class="nav-label">About</span>
-    </button>
-    <button
-      class="nav-item"
-      onclick={cycleTheme}
-      title="Theme: {themeMeta[theme.preference].label} (click to change)"
-      aria-label="Switch theme, currently {themeMeta[theme.preference].label}"
-    >
-      <span class="nav-icon" aria-hidden="true">{themeMeta[theme.preference].icon}</span>
-      <span class="nav-label">{themeMeta[theme.preference].label}</span>
     </button>
   </div>
 {/snippet}
@@ -188,12 +185,25 @@
   <div class="app-shell" class:wide>
     {#if wide}
       <!-- Roomy: persistent sidebar, no hamburger -->
-      <nav class="sidebar">
+      <nav class="sidebar" class:collapsed={navCollapsed} aria-label="Primary navigation">
         <button class="sidebar-logo" onclick={() => navigate("dashboard")} aria-label="Go to dashboard">
           {@render logo()}
           <span class="logo-text">Claudar</span>
         </button>
-        {@render navMenu()}
+        {@render navMenu(navCollapsed)}
+        <!-- Sits at the very bottom: it's chrome, not navigation, so it stays out
+             of the way of the items people actually click. -->
+        <button
+          class="collapse-toggle"
+          class:collapsed={navCollapsed}
+          onclick={toggleNavCollapsed}
+          aria-expanded={!navCollapsed}
+          aria-label={navCollapsed ? "Expand navigation" : "Collapse navigation"}
+          title={navCollapsed ? "Expand navigation" : "Collapse navigation"}
+        >
+          <span class="collapse-icon" aria-hidden="true">{navCollapsed ? "›" : "‹"}</span>
+          <span class="collapse-label">Collapse</span>
+        </button>
       </nav>
     {:else}
       <!-- Narrow: top bar + slide-out drawer -->
@@ -215,7 +225,7 @@
 
       {#if menuOpen}
         <button class="scrim" onclick={() => (menuOpen = false)} aria-label="Close menu"></button>
-        <nav class="drawer">
+        <nav class="drawer" aria-label="Primary navigation">
           {@render navMenu()}
         </nav>
       {/if}
@@ -252,25 +262,29 @@
 
   /* ── Persistent sidebar (wide layout) ───────────────────────────── */
   .sidebar {
-    width: 220px;
+    width: var(--sidebar-width);
     flex-shrink: 0;
-    background-color: hsl(222.2 84% 4.9%);
-    color: hsl(210 40% 98%);
+    background-color: hsl(var(--sidebar-bg));
+    color: hsl(var(--sidebar-fg));
+    border-right: 1px solid hsl(var(--sidebar-border));
     display: flex;
     flex-direction: column;
+    transition: width 0.18s ease;
+  }
+
+  .sidebar.collapsed {
+    --sidebar-width: 64px;
   }
 
   .sidebar-logo {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 1.25rem 1rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    min-height: 4rem;
+    padding: 1rem;
     font-weight: 600;
     background: none;
-    border-top: none;
-    border-left: none;
-    border-right: none;
+    border: none;
     color: inherit;
     width: 100%;
     text-align: left;
@@ -285,6 +299,62 @@
   .logo-text {
     font-size: 0.9rem;
     letter-spacing: 0.01em;
+    white-space: nowrap;
+  }
+
+  .sidebar.collapsed .sidebar-logo {
+    justify-content: center;
+    padding-inline: 0.75rem;
+  }
+
+  .sidebar.collapsed .logo-text {
+    display: none;
+  }
+
+  /* Bottom rail: full-bleed row on a hairline, so it reads as a footer control
+     rather than a nav entry. */
+  .collapse-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    margin-top: auto;
+    padding: 0.7rem 1rem;
+    border: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.09);
+    background: none;
+    color: hsl(var(--sidebar-muted));
+    font: inherit;
+    font-size: 0.8rem;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s;
+  }
+
+  .collapse-toggle:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+    color: hsl(var(--sidebar-fg));
+  }
+
+  .collapse-icon {
+    width: 1.25rem;
+    text-align: center;
+    font-size: 1.1rem;
+    line-height: 1;
+  }
+
+  .collapse-label {
+    white-space: nowrap;
+  }
+
+  .collapse-toggle.collapsed {
+    justify-content: center;
+    gap: 0;
+    padding-inline: 0.5rem;
+  }
+
+  .collapse-toggle.collapsed .collapse-label {
+    display: none;
   }
 
   /* ── Top bar with hamburger ─────────────────────────────────────── */
@@ -295,8 +365,9 @@
     height: 48px;
     flex-shrink: 0;
     padding: 0 0.5rem;
-    background-color: hsl(222.2 84% 4.9%);
-    color: hsl(210 40% 98%);
+    background-color: hsl(var(--sidebar-bg));
+    color: hsl(var(--sidebar-fg));
+    border-bottom: 1px solid hsl(var(--sidebar-border));
     z-index: 30;
   }
 
@@ -318,7 +389,7 @@
     display: block;
     height: 2px;
     width: 1.15rem;
-    background: hsl(210 40% 92%);
+    background: hsl(var(--sidebar-fg));
     border-radius: 2px;
     transition: transform 0.2s ease, opacity 0.2s ease;
   }
@@ -377,8 +448,9 @@
     bottom: 0;
     width: 220px;
     max-width: 80vw;
-    background-color: hsl(222.2 84% 4.9%);
-    color: hsl(210 40% 98%);
+    background-color: hsl(var(--sidebar-bg));
+    color: hsl(var(--sidebar-fg));
+    border-right: 1px solid hsl(var(--sidebar-border));
     display: flex;
     flex-direction: column;
     z-index: 25;
@@ -411,33 +483,61 @@
     padding: 0.7rem 1rem;
     background: none;
     border: none;
-    color: hsl(215.4 16.3% 70%);
+    color: hsl(var(--sidebar-muted));
     font-size: 0.9rem;
     font-family: inherit;
     text-align: left;
     cursor: pointer;
     transition: background-color 0.15s, color 0.15s;
+    min-height: 2.6rem;
   }
 
   .nav-item:hover {
     background-color: rgba(255, 255, 255, 0.06);
-    color: hsl(210 40% 98%);
+    color: hsl(var(--sidebar-fg));
   }
 
   .nav-item.active {
     background-color: rgba(255, 255, 255, 0.1);
-    color: hsl(210 40% 98%);
+    color: hsl(var(--sidebar-fg));
+  }
+
+  .nav-item:focus-visible,
+  .sidebar-logo:focus-visible,
+  .topbar-brand:focus-visible,
+  .hamburger:focus-visible,
+  .collapse-toggle:focus-visible {
+    outline: 2px solid hsl(var(--sidebar-fg));
+    outline-offset: -2px;
+  }
+
+  .nav-item.collapsed {
+    justify-content: center;
+    gap: 0;
+    padding-inline: 0.5rem;
+  }
+
+  .nav-item.collapsed.active {
+    box-shadow: inset 3px 0 0 hsl(var(--sidebar-fg));
   }
 
   .nav-icon {
     width: 1.25rem;
     text-align: center;
     font-size: 0.85rem;
+    flex-shrink: 0;
+  }
+
+  .nav-label {
+    white-space: nowrap;
+  }
+
+  .nav-item.collapsed .nav-label {
+    display: none;
   }
 
   .menu-footer {
     padding-bottom: 0.5rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
     padding-top: 0.5rem;
   }
 
