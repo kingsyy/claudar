@@ -3,15 +3,19 @@
 Tasks only you can do — external setup, credentials, platform config, decisions. agent-loop
 cannot do these. Clear the blocking ones before running the phase they gate.
 
+> **Ticked 2026-08-10 from direct local evidence, not from memory.** The evidence is named on
+> every new tick. An unticked box is not proof of undone work: it may be genuinely open or not
+> verifiable from this machine, so check before repeating one.
+
 ## Before starting
 
-- [ ] Install Tauri CLI: `cargo install tauri-cli --version "^2.0"`
-- [ ] Install Node.js ≥ 20 and npm/pnpm (required for the Svelte frontend build)
-- [ ] Confirm `cargo build` still passes on the existing codebase before handing off to Phase 1
+- [x] Install Tauri CLI: `cargo install tauri-cli --version "^2.0"` — done, `cargo tauri --version` returned `tauri-cli 2.11.2`, verified 2026-08-10.
+- [x] Install Node.js ≥ 20 and npm/pnpm (required for the Svelte frontend build) — done, `node`, `npm`, and `pnpm` are on PATH, verified 2026-08-10.
+- [x] Confirm `cargo build` still passes on the existing codebase before handing off to Phase 1 — done, `cargo build` exited 0, verified 2026-08-10.
 
 ## Before Phase 2 — Tauri App Skeleton
 
-- [ ] Run `create-tauri-app` or copy the `alysonhower/tauri2-svelte5-shadcn` template as the starting point for `src-tauri/` and `ui/` — agent-loop will adapt it, but the scaffold must exist before it begins
+- [x] Run `create-tauri-app` or copy the `alysonhower/tauri2-svelte5-shadcn` template as the starting point for `src-tauri/` and `ui/` — agent-loop will adapt it, but the scaffold must exist before it begins. — done, `src-tauri/Cargo.toml` and `ui/package.json` exist, verified 2026-08-10.
 - [ ] Decide: do you want the main window to open at a fixed size or resizable? (Default: resizable with a minimum of ~800×600)
 
 ## Before Phase 7 — Cross-Platform Build + Icons + Polish

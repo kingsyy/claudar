@@ -4,7 +4,7 @@ stage: complete
 share_target: maintained
 next: Runtime-verify the new web dashboard (bind/restart-on-config-change/agent API gating) and notifications/login/start-minimized on macOS/Windows; code-sign/notarize for distribution; or Phase 8 (threshold list editing UI)
 blocker: null
-updated: 2026-07-19
+updated: 2026-08-07
 ---
 
 # Claudar — Monitor Claude.ai usage limits with native desktop notifications
