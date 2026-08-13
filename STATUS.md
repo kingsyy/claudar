@@ -2,7 +2,7 @@
 intent: share
 stage: complete
 share_target: maintained
-next: Ship the tray main-thread crash fix (branch worktree-fix-tray-main-thread) as 0.4.5 and confirm the tray icon/menu still update live; then runtime-verify the web dashboard (bind/restart-on-config-change/agent API gating) and notifications/login/start-minimized on macOS/Windows; code-sign/notarize for distribution
+next: Ship the tray main-thread crash fix as 0.4.5 and confirm the tray icon/menu still update live; then runtime-verify the web dashboard (bind/restart-on-config-change/agent API gating) and notifications/login/start-minimized on macOS/Windows; code-sign/notarize for distribution
 blocker: null
 updated: 2026-08-13
 ---
@@ -15,9 +15,11 @@ A lightweight Rust daemon that fetches real-time Claude.ai usage data (bypassing
 
 ## Current state
 
-**GUI app is functionally complete.** All 7 original build phases are done (Phase 1: workspace refactor, Phase 2: Tauri skeleton, Phase 3: monitor loop integration, Phase 4: Dashboard screen, Phase 5: wizard, Phase 6: History/Accounts/Settings, Phase 7: icons/builds). The Tauri app bundles the monitor loop and runs it as a background tokio task. Screens include Dashboard (5h/7d gauges, reset countdowns, predicted burn), History (SVG chart, 7-day stats), Accounts (multi-account list, add/remove with wizard re-use), Settings (poll interval, thresholds, notifications toggle, autostart). Wizard guides new users through login (in-app webview auth), threshold setup, and autostart toggle.
+**GUI app is functionally complete.** All 8 build phases are done (Phase 1: workspace refactor, Phase 2: Tauri skeleton, Phase 3: monitor loop integration, Phase 4: Dashboard screen, Phase 5: wizard, Phase 6: History/Accounts/Settings, Phase 7: icons/builds, Phase 8: threshold list editing). The Tauri app bundles the monitor loop and runs it as a background tokio task. Screens include Dashboard (5h/7d gauges, reset countdowns, predicted burn), History (SVG chart, 7-day stats), Accounts (multi-account list, add/remove with wizard re-use), Settings (poll interval, thresholds, notifications toggle, autostart). Wizard guides new users through login (in-app webview auth), threshold setup, and autostart toggle.
 
-**Post-phase review completed** — agent-loop run found 2 bugs (fixed during review), locked in 6 UX decisions (CLI deprecation, instance naming, welcome copy, dashboard UX, simultaneous CLI/GUI warning), and identified 1 remaining task: **Phase 8 — threshold list editing.** Settings currently only exposes the 4th (highest) of 4 hardcoded thresholds per limit, which creates non-monotonic configs and surprise notifications from hidden thresholds. Phase 8 will add a proper editable list UI: users can add/delete 1–5 thresholds per limit, kept sorted.
+**Phase 8 shipped and wrapped up (2026-07-28).** Settings previously exposed only the highest of 4 thresholds per limit, which produced non-monotonic configs and surprise notifications from hidden thresholds. It now edits the full list: add/remove 1–5 thresholds per limit, kept sorted ascending and deduped, with matching backend validation in `ThresholdsConfig::validate_list` enforced on `set_config`. The wrap-up pass accepted the app-wide optimistic-UI-without-rollback pattern as a deliberate tradeoff (see DEVLOG), added `step="1"` to the threshold inputs, and pruned the stale `docs/human-todo.md`.
+
+No feature work remains in the build plan. What's left is distribution and verification — see `docs/human-todo.md`.
 
 `cargo tauri build` produces a working `.app` locally (verified by launching). Code-signing/notarization (for distribution outside the dev machine) is out of scope for this phase but required before real release.
 

@@ -24,6 +24,22 @@ Rejected: guarding only the drop (e.g. `std::mem::forget`, or holding the handle
 
 **Verification:** `npm test` (15 passed), `vite build` clean, `cargo tauri build` → DMG. Screenshotted dark + super dark + collapsed in Chrome against the vite dev server (Tauri `invoke` fails there, so the shell renders but the Dashboard stays on its loading state) — layout and chrome confirmed, but the Dashboard/History colours with real data are only visible in the built app.
 
+## 2026-07-28 · Phase 8 wrap-up: accept optimistic-UI tradeoff, close out the build plan
+
+**What:** Closing pass over the Phase 8 (threshold list editing) agent-loop run. Three loose ends from the review, plus doc hygiene:
+1. **Accepted the optimistic-UI-without-rollback pattern app-wide.** `addThreshold`/`removeThreshold` mutate local state then fire `persist(...)` without awaiting, so an IPC failure toasts an error but leaves the chips showing unsaved state until reload. No code change.
+2. **`step="1"` added to both "Add threshold" inputs** (`ui/src/routes/Settings.svelte`). They were `type="number"` with `min`/`max` but no step, so `85.7` was silently truncated to `85` by `parseInt`.
+3. **Wrote `docs/tasks/phase-8-threshold-editing.md` retroactively** — `docs/todo.md` linked to it but it never existed, unlike Phases 1–7.
+4. **Pruned `docs/human-todo.md`**, which still had every box unchecked including pre-Phase-2 setup from June. Rewrote as still-open / done / decisions-made.
+
+**Why:** On (1), the frontend's own guards (max 5, min 1, dedup, 0–100, ascending sort) already satisfy everything `ThresholdsConfig::validate_list` checks, so a `set_config` rejection is close to unreachable — and the same fire-and-forget pattern is used by every other toggle in the file (`toggleTrayIcon`, `toggleStartMinimized`, …). Rejected two alternatives: awaiting + rolling back everywhere (a real consistency win, but it touches every mutation in Settings for a failure mode that's near-impossible), and fixing thresholds alone (leaves the file internally inconsistent for no real gain). Revisit if a persist failure is ever actually observed.
+
+Also confirmed two older review items are already resolved in the current tree and need no action: the unused `reqwest` `blocking` feature (Phase 1) is gone from `Cargo.toml`, and `has_session` (Phase 4) is now read in `Dashboard.svelte:63`. Phase 6's threshold complaint is what Phase 8 fixed.
+
+**Verification:** `vite build` clean — the one `Wizard.svelte` `state_referenced_locally` warning is pre-existing and unrelated. The `step` attribute is not runtime-verified (browser-native validation, no webview here).
+
+**Next:** All 8 phases done. Remaining work is distribution + verification, not features: document the CLI+GUI double-notify caveat in the README (decided in `03-decisions.md:61`, never actually written), runtime-verify notifications/login/start-minimized/web dashboard on macOS and Windows, and code-sign/notarize if distributing.
+
 
 ## 2026-07-19 · Optional read-only web dashboard for remote/agent access
 

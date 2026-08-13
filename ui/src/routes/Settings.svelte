@@ -785,6 +785,7 @@
                 type="number"
                 min="0"
                 max="100"
+                step="1"
                 placeholder="e.g. 85"
                 bind:value={fiveHourNewThreshold}
                 onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); addThreshold("five_hour"); } }}
@@ -830,6 +831,7 @@
                 type="number"
                 min="0"
                 max="100"
+                step="1"
                 placeholder="e.g. 85"
                 bind:value={sevenDayNewThreshold}
                 onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); addThreshold("seven_day"); } }}

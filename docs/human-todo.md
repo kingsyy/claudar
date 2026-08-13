@@ -1,33 +1,46 @@
 # Human to-do — Claudar GUI
 
 Tasks only you can do — external setup, credentials, platform config, decisions. agent-loop
-cannot do these. Clear the blocking ones before running the phase they gate.
+cannot do these.
 
-> **Ticked 2026-08-10 from direct local evidence, not from memory.** The evidence is named on
-> every new tick. An unticked box is not proof of undone work: it may be genuinely open or not
-> verifiable from this machine, so check before repeating one.
+*Pruned 2026-07-28 during loop-wrapup: Phases 1–8 have all shipped, so the per-phase setup
+items below are done, and every open decision has been made. What's left is distribution work
+and one piece of documentation.*
 
-## Before starting
+> An unticked box is not proof of undone work — it may be genuinely open, or simply not
+> verifiable from this machine. Check before repeating one.
 
-- [x] Install Tauri CLI: `cargo install tauri-cli --version "^2.0"` — done, `cargo tauri --version` returned `tauri-cli 2.11.2`, verified 2026-08-10.
-- [x] Install Node.js ≥ 20 and npm/pnpm (required for the Svelte frontend build) — done, `node`, `npm`, and `pnpm` are on PATH, verified 2026-08-10.
-- [x] Confirm `cargo build` still passes on the existing codebase before handing off to Phase 1 — done, `cargo build` exited 0, verified 2026-08-10.
+## Still open
 
-## Before Phase 2 — Tauri App Skeleton
+- [ ] **macOS code signing / notarization** — ad-hoc signing works for personal use (no account
+      needed) and is what the current builds use. Distributing to other people needs an Apple
+      Developer account. Blocks public release, nothing else.
+- [ ] **Document the CLI + GUI double-notify caveat in the README.** The decision was made
+      (document it, don't detect it — `03-decisions.md:61`), but no user-facing docs actually say
+      so yet. Running the launchd service *and* the GUI app at once sends two of every
+      notification.
+- [ ] **Runtime verification on a real machine** — notifications, in-app login, start-minimized,
+      and the web dashboard (bind address, restart-on-config-change, agent API gating) have not
+      been exercised end-to-end on macOS or Windows.
 
-- [x] Run `create-tauri-app` or copy the `alysonhower/tauri2-svelte5-shadcn` template as the starting point for `src-tauri/` and `ui/` — agent-loop will adapt it, but the scaffold must exist before it begins. — done, `src-tauri/Cargo.toml` and `ui/package.json` exist, verified 2026-08-10.
-- [ ] Decide: do you want the main window to open at a fixed size or resizable? (Default: resizable with a minimum of ~800×600)
+## Done
 
-## Before Phase 7 — Cross-Platform Build + Icons + Polish
+Setup prerequisites (Tauri CLI, Node ≥ 20, baseline `cargo build`), the Tauri/Svelte scaffold,
+the source app icon, and the tray icon set were all completed before their respective phases.
+Window sizing landed as resizable with a minimum size. CI shipped as a real GitHub Actions
+workflow (`.github/workflows/release.yml`) rather than documentation-only.
 
-- [ ] Provide a source app icon (PNG or SVG, ≥1024×1024). The `tauri icon` command generates all platform sizes from this one file.
-- [ ] Provide tray icon designs — or confirm: agent-loop generates plain filled-colour SVGs (green/yellow/orange/red/grey circles with a small "C" or usage indicator). Just say the word.
-- [ ] macOS code signing: for personal use, ad-hoc signing is fine (no account needed). For distribution, you'll need an Apple Developer account.
-- [ ] Decide: GitHub Actions CI matrix for Linux/Windows builds, or document manual steps only? (Default: document only)
+Re-confirmed 2026-08-10 from direct local evidence: `cargo tauri --version` → `tauri-cli 2.11.2`;
+`node`, `npm`, and `pnpm` all on `$PATH`; `cargo build` exited 0; `src-tauri/Cargo.toml` and
+`ui/package.json` both present.
 
-## Decisions you'll need to make
+## Decisions made
 
-- [ ] **CLI `setup` command**: with the new GUI, the old `claudar setup` command (which launched a visible Chrome window) is no longer needed by GUI users. Options: (a) remove it from the CLI, (b) keep it but mark it deprecated, (c) keep it working as-is. Which do you prefer?
-- [ ] **Instance name for the default account**: the CLI uses `"default"` internally — confirm this carries forward as the display name in the wizard, or choose something friendlier (e.g. "My Claude account").
-- [ ] **Simultaneous CLI + GUI use**: running both the CLI daemon and the GUI app would double-notify. Do you want the GUI to detect and warn the user if a launchd service is already running, or just document it?
-- [ ] **Welcome copy**: the Step 1 headline and explanation in the wizard are placeholder language in the task file. If you have a preferred tone or specific wording, share it before Phase 5 runs — otherwise agent-loop will write reasonable copy and you can edit it after.
+- **CLI `setup` command** → kept but deprecated (`src/cli.rs:17`). Option (b).
+- **Default instance name** → `"default"` carries through as-is.
+- **Simultaneous CLI + GUI use** → document it; no runtime detection or warning in the GUI.
+  (The documentation itself is still outstanding — see "Still open" above.)
+- **Welcome copy** → written during Phase 5 ("Never hit a rate limit by surprise"); edit in
+  `ui/src/routes/Wizard.svelte` if you want a different tone.
+- **Threshold editing UX** → full add/remove list, 1–5 per limit, sorted ascending (Phase 8).
+- **Optimistic UI without rollback** → accepted app-wide; see DEVLOG 2026-07-28.
