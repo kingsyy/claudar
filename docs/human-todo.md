@@ -5,7 +5,7 @@ cannot do these.
 
 *Pruned 2026-07-28 during loop-wrapup: Phases 1–8 have all shipped, so the per-phase setup
 items below are done, and every open decision has been made. What's left is distribution work
-and one piece of documentation.*
+and runtime verification.*
 
 > An unticked box is not proof of undone work — it may be genuinely open, or simply not
 > verifiable from this machine. Check before repeating one.
@@ -15,13 +15,11 @@ and one piece of documentation.*
 - [ ] **macOS code signing / notarization** — ad-hoc signing works for personal use (no account
       needed) and is what the current builds use. Distributing to other people needs an Apple
       Developer account. Blocks public release, nothing else.
-- [ ] **Document the CLI + GUI double-notify caveat in the README.** The decision was made
-      (document it, don't detect it — `03-decisions.md:61`), but no user-facing docs actually say
-      so yet. Running the launchd service *and* the GUI app at once sends two of every
-      notification.
 - [ ] **Runtime verification on a real machine** — notifications, in-app login, start-minimized,
-      and the web dashboard (bind address, restart-on-config-change, agent API gating) have not
-      been exercised end-to-end on macOS or Windows.
+      the threshold-list editing UI, and the web dashboard (bind address,
+      restart-on-config-change, agent API gating) have not been exercised end-to-end on macOS or
+      Windows. Also confirm the tray icon/menu still update live after the 2026-08-13
+      main-thread fix.
 
 ## Done
 
@@ -36,10 +34,12 @@ Re-confirmed 2026-08-10 from direct local evidence: `cargo tauri --version` → 
 
 ## Decisions made
 
-- **CLI `setup` command** → kept but deprecated (`src/cli.rs:17`). Option (b).
+- **CLI `setup` command** → kept, and **un-deprecated 2026-08-12** as the supported minimal /
+  headless path for machines with no desktop session (`src/cli.rs`).
 - **Default instance name** → `"default"` carries through as-is.
 - **Simultaneous CLI + GUI use** → document it; no runtime detection or warning in the GUI.
-  (The documentation itself is still outstanding — see "Still open" above.)
+  Documented in the README 2026-08-12; the GUI still can't warn, because
+  `is_service_running()` (`src/service.rs`) isn't exposed as a Tauri command.
 - **Welcome copy** → written during Phase 5 ("Never hit a rate limit by surprise"); edit in
   `ui/src/routes/Wizard.svelte` if you want a different tone.
 - **Threshold editing UX** → full add/remove list, 1–5 per limit, sorted ascending (Phase 8).
