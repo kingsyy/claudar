@@ -2,9 +2,9 @@
 intent: share
 stage: complete
 share_target: maintained
-next: Runtime-verify the new web dashboard (bind/restart-on-config-change/agent API gating) and notifications/login/start-minimized on macOS/Windows; code-sign/notarize for distribution; or Phase 8 (threshold list editing UI)
+next: Ship the tray main-thread crash fix (branch worktree-fix-tray-main-thread) as 0.4.5 and confirm the tray icon/menu still update live; then runtime-verify the web dashboard (bind/restart-on-config-change/agent API gating) and notifications/login/start-minimized on macOS/Windows; code-sign/notarize for distribution
 blocker: null
-updated: 2026-08-07
+updated: 2026-08-13
 ---
 
 # Claudar — Monitor Claude.ai usage limits with native desktop notifications
@@ -25,8 +25,10 @@ A lightweight Rust daemon that fetches real-time Claude.ai usage data (bypassing
 
 **v0.4.0 (2026-06-22):** cross-platform hardening pass — rewrote browser detection (machine-wide + per-user locations for Chrome/Edge/Brave/Chromium with a `$PATH` fallback), unified the notifier onto `tauri-plugin-notification` for all OSes, plus a Dashboard header redesign. `cargo check`/core tests green; GUI notification + login paths on real macOS/Windows still need a manual runtime check.
 
+**Tray crash fixed (2026-08-13, unreleased):** v0.4.4 crashed after 6 days up (SIGTRAP, `claudar-app-2026-08-13-011938.ips`). The poll task was mutating the tray from a tokio worker, racing the non-atomic `Rc` refcount inside `tray_icon::TrayIcon` that Tauri only marks `Send` on the promise it stays on the main thread; a lost update drove it to zero and the status item was torn down off-thread. `set_tray_icon`/`refresh_tray_menu` now dispatch via `run_on_main_thread`. See DEVLOG 2026-08-13. Builds and tests clean; live tray behaviour still wants a manual check.
+
 ## Next
 
-- **Option A:** Run Phase 8 (threshold list editing UI) — well-defined, moderate scope, improves the Settings experience.
+- **Option A:** Ship the tray fix as 0.4.5 and confirm the icon/menu still update on the running app.
 - **Option B:** Code-sign/notarize the macOS `.app` for testable distribution, then run Linux/Windows builds on actual hardware (`docs/building.md` has the steps).
 - **Option C:** Test the current build on real hardware as-is (no code-signing, local distribution only).

@@ -274,19 +274,27 @@ pub fn stop_instance_task(app_handle: &AppHandle, instance_name: &str) {
 }
 
 /// Swap the tray icon to the colour variant matching the given usage level.
+///
+/// Runs on the main thread — see the note on [`refresh_tray_menu`].
 fn set_tray_icon(app_handle: &AppHandle, level: UsageLevel) {
-    let icon = match tauri::image::Image::from_bytes(level.icon_bytes()) {
-        Ok(icon) => icon,
-        Err(e) => {
-            tracing::warn!("decode tray icon for {:?} failed: {}", level, e);
-            return;
-        }
-    };
+    let handle = app_handle.clone();
+    let dispatched = app_handle.run_on_main_thread(move || {
+        let icon = match tauri::image::Image::from_bytes(level.icon_bytes()) {
+            Ok(icon) => icon,
+            Err(e) => {
+                tracing::warn!("decode tray icon for {:?} failed: {}", level, e);
+                return;
+            }
+        };
 
-    if let Some(tray) = app_handle.tray_by_id("tray") {
-        if let Err(e) = tray.set_icon(Some(icon)) {
-            tracing::warn!("set_tray_icon failed: {}", e);
+        if let Some(tray) = handle.tray_by_id("tray") {
+            if let Err(e) = tray.set_icon(Some(icon)) {
+                tracing::warn!("set_tray_icon failed: {}", e);
+            }
         }
+    });
+    if let Err(e) = dispatched {
+        tracing::warn!("set_tray_icon: main-thread dispatch failed: {}", e);
     }
 }
 
@@ -409,24 +417,38 @@ pub fn build_tray_menu<R: Runtime, M: Manager<R>>(
 
 /// Rebuild the tray menu from the stored snapshots and swap it onto the live tray.
 /// No-op (with a warning) if the tray or state is unavailable.
+///
+/// The whole body is dispatched to the main thread, and callers must keep it that
+/// way. Tray and menu handles wrap a non-atomic `Rc` that Tauri only marks `Send`
+/// on the promise that it is used from the main thread, so every touch — building
+/// the menu, cloning the handle out of `tray_by_id`, and dropping that clone at the
+/// end of scope — has to happen there. Doing it from the poll task races the
+/// refcount; when a lost update drove it to zero the tray tore itself down on a
+/// tokio worker and AppKit answered with a SIGTRAP (see DEVLOG 2026-08-13).
 pub fn refresh_tray_menu(app_handle: &AppHandle) {
-    let Some(state) = app_handle.try_state::<TrayUsage>() else {
-        return;
-    };
-    let menu = {
-        let usage = state.0.lock().unwrap();
-        build_tray_menu(app_handle, &usage)
-    };
-    let menu = match menu {
-        Ok(m) => m,
-        Err(e) => {
-            tracing::warn!("build_tray_menu failed: {}", e);
+    let handle = app_handle.clone();
+    let dispatched = app_handle.run_on_main_thread(move || {
+        let Some(state) = handle.try_state::<TrayUsage>() else {
             return;
+        };
+        let menu = {
+            let usage = state.0.lock().unwrap();
+            build_tray_menu(&handle, &usage)
+        };
+        let menu = match menu {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!("build_tray_menu failed: {}", e);
+                return;
+            }
+        };
+        if let Some(tray) = handle.tray_by_id("tray") {
+            if let Err(e) = tray.set_menu(Some(menu)) {
+                tracing::warn!("set_menu failed: {}", e);
+            }
         }
-    };
-    if let Some(tray) = app_handle.tray_by_id("tray") {
-        if let Err(e) = tray.set_menu(Some(menu)) {
-            tracing::warn!("set_menu failed: {}", e);
-        }
+    });
+    if let Err(e) = dispatched {
+        tracing::warn!("refresh_tray_menu: main-thread dispatch failed: {}", e);
     }
 }

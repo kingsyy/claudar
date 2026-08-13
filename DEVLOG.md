@@ -1,3 +1,17 @@
+## 2026-08-13 · Fix tray crash: all tray access now goes through the main thread
+
+**What:** `monitor_loop::{set_tray_icon, refresh_tray_menu}` touched the tray directly from the poll task, i.e. from a `tokio-runtime-worker`. Both now wrap their whole body in `app_handle.run_on_main_thread(...)`. Diagnosed from `claudar-app-2026-08-13-011938.ips` (v0.4.4, up 6 days, SIGTRAP on thread 9): `set_tray_icon` → `drop_in_place<tauri::tray::TrayIcon>` → `Rc::drop_slow` → `tray_icon::TrayIcon::remove` → `-[NSStatusBar _removeStatusItem:]` → AppKit's `assertBarrierOnQueue` trapping because it wasn't on the main run loop.
+
+**Why:** `tray_icon::TrayIcon` holds an `Rc<RefCell<platform_impl::TrayIcon>>`, and Tauri `unsafe impl Send/Sync` for it on an explicit promise — *"We make sure it always runs on the main thread"* (`tauri-2.11.2/src/tray/mod.rs:414`). We were breaking that promise. `tray_by_id` hands back an owned clone (`Arc::unwrap_or_clone`), so each call did a **non-atomic** refcount increment on the worker and a matching decrement when the clone dropped at end of scope, racing the main thread doing the same. So the crash was a symptom, not the disease: a lost update eventually drove the count to zero while the main thread still held a live reference, which is why it tore the status item down mid-flight — and why it took six days of polling to surface. That also makes it a latent use-after-free, not just an off-thread AppKit call.
+
+Rejected: guarding only the drop (e.g. `std::mem::forget`, or holding the handle in a `OnceCell`) — that would have silenced this backtrace while leaving the refcount race and the UAF intact. Dispatching the whole body is what actually restores Tauri's invariant. Menu building moved inside the closure too: `muda`'s `Menu` is `Rc`-backed and main-thread-affine on the same terms, so `build_tray_menu` had the identical latent bug.
+
+`commands::set_tray_visible` was checked and left alone — it's a sync `#[tauri::command]`, so it already runs on the main thread (only `async` commands get spawned onto the async runtime). Calling the now-dispatching `refresh_tray_menu` from there is still fine: `run_on_main_thread` queues on the event loop rather than blocking, so there's no self-deadlock.
+
+**Verification:** `cargo check`, `cargo build`, and `cargo test` (36 passed) clean. **Not runtime-verified** — a data race that took six days to trip can't be shown absent by a short run, and reproducing it means racing the refcount on purpose. What still wants a manual check on the running app: the icon colour still changes on each poll and the dropdown still repopulates, i.e. that dispatching didn't silently drop the updates.
+
+**Next:** Ship as 0.4.5 and confirm tray icon/menu still update live. Consider auditing for any other main-thread-affine Tauri handle used from the poll task.
+
 ## 2026-08-07 · Super dark goes actually black; sidebar collapse moves to the bottom
 
 **What:** Three changes, all UI.
@@ -9,6 +23,7 @@
 **Why:** Chose to keep light/dark byte-identical rather than tokenise everything to one palette — the dark nav in light mode is a deliberate design, and this was a super-dark complaint, not a redesign request. The label is fixed at "Collapse" now instead of flipping to "Expand" when collapsed; in the collapsed rail only the `‹`/`›` chevron shows, and the flipped text was never visible anyway.
 
 **Verification:** `npm test` (15 passed), `vite build` clean, `cargo tauri build` → DMG. Screenshotted dark + super dark + collapsed in Chrome against the vite dev server (Tauri `invoke` fails there, so the shell renders but the Dashboard stays on its loading state) — layout and chrome confirmed, but the Dashboard/History colours with real data are only visible in the built app.
+
 
 ## 2026-07-19 · Optional read-only web dashboard for remote/agent access
 
