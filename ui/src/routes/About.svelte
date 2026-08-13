@@ -2,6 +2,10 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
 
+  // `embedded` renders this screen as a Settings tab panel — no page chrome and no
+  // second <h1>, since the Settings heading and the active tab already name it.
+  let { embedded = false }: { embedded?: boolean } = $props();
+
   type AboutInfo = {
     version: string;
     git_hash: string;
@@ -30,8 +34,10 @@
   }
 </script>
 
-<div class="page">
-  <h1>About</h1>
+<div class="page" class:embedded>
+  {#if !embedded}
+    <h1>About</h1>
+  {/if}
   <p class="subtitle">Claudar — Claude.ai usage limit monitor.</p>
 
   {#if loadError}
@@ -87,6 +93,12 @@
   .page {
     padding: 2rem;
     max-width: 800px;
+  }
+
+  /* Inside a Settings tab the surrounding page already supplies padding and width. */
+  .page.embedded {
+    padding: 0;
+    max-width: none;
   }
 
   h1 {

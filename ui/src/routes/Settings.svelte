@@ -2,13 +2,18 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import Switch from "../lib/Switch.svelte";
+  import Accounts from "./Accounts.svelte";
+  import About from "./About.svelte";
+  import { nextTabIndex } from "../lib/tabs";
   import { setTheme, theme, type ThemePref } from "../lib/theme.svelte";
   import {
     setHighContrast,
     setReduceMotion,
     setStatusPalette,
+    setTextSize,
     visuals,
     type StatusPalette,
+    type TextSize,
   } from "../lib/visuals.svelte";
 
   type Config = {
@@ -34,7 +39,33 @@
   let config = $state<Config | null>(null);
   let loading = $state(true);
   let loadError = $state<string | null>(null);
-  let activeTab = $state<"general" | "visuals" | "notifications" | "thresholds" | "capacity" | "web">("general");
+
+  // Accounts and About moved in here from the top-level nav; the old "Unused
+  // Capacity" tab folded into Notifications, where it sits next to the pre-reset
+  // reminders it overlaps with.
+  const TABS = [
+    { id: "general", label: "General" },
+    { id: "accounts", label: "Accounts" },
+    { id: "notifications", label: "Notifications" },
+    { id: "thresholds", label: "Thresholds" },
+    { id: "visuals", label: "Visuals" },
+    { id: "web", label: "Web" },
+    { id: "about", label: "About" },
+  ] as const;
+
+  type TabId = (typeof TABS)[number]["id"];
+
+  let activeTab = $state<TabId>("general");
+
+  // Roving-tabindex arrow-key movement, per the ARIA tabs pattern: the tablist is
+  // one tab stop and arrows move between tabs rather than Tab doing it.
+  function onTabKeydown(event: KeyboardEvent, index: number) {
+    const next = nextTabIndex(event.key, index, TABS.length);
+    if (next === null) return;
+    event.preventDefault();
+    activeTab = TABS[next].id;
+    document.getElementById(`settings-tab-${TABS[next].id}`)?.focus();
+  }
 
   // Form-bound values
   let pollIntervalMinutes = $state(15);
@@ -64,6 +95,13 @@
     { preference: "super-dark", label: "Super dark" },
   ];
 
+  const TEXT_SIZE_OPTIONS: { size: TextSize; label: string }[] = [
+    { size: "small", label: "Small" },
+    { size: "default", label: "Default" },
+    { size: "large", label: "Large" },
+    { size: "larger", label: "Larger" },
+  ];
+
   let soundEnabled = $state(true);
   let soundName = $state("Glass");
   let persistentEnabled = $state(false);
@@ -77,6 +115,22 @@
   let capacityWarningFiveHourPercent = $state<string>("");
   let capacityWarningSevenDayMinutes = $state<string>("");
   let capacityWarningSevenDayPercent = $state<string>("");
+
+  // A pre-reset reminder and an unused-capacity nudge for the same limit are two
+  // separate alerts on two separate triggers, so both can fire for one reset. Say
+  // so instead of letting people discover it from duplicate notifications.
+  let fiveHourAlertsOverlap = $derived(
+    notifyResets &&
+      minutesBeforeFiveHourReset.trim() !== "" &&
+      capacityWarningFiveHourMinutes.trim() !== "" &&
+      capacityWarningFiveHourPercent.trim() !== "",
+  );
+  let sevenDayAlertsOverlap = $derived(
+    notifyResets &&
+      minutesBeforeSevenDayReset.trim() !== "" &&
+      capacityWarningSevenDayMinutes.trim() !== "" &&
+      capacityWarningSevenDayPercent.trim() !== "",
+  );
 
   let historyEnabled = $state(false);
   let historyDays = $state(14);
@@ -484,52 +538,30 @@
       <p>Loading settings…</p>
     </div>
   {:else if config}
-    <div class="tabs">
-      <button
-        class="tab-button"
-        class:active={activeTab === "general"}
-        onclick={() => (activeTab = "general")}
-      >
-        General
-      </button>
-      <button
-        class="tab-button"
-        class:active={activeTab === "visuals"}
-        onclick={() => (activeTab = "visuals")}
-      >
-        Visuals
-      </button>
-      <button
-        class="tab-button"
-        class:active={activeTab === "notifications"}
-        onclick={() => (activeTab = "notifications")}
-      >
-        Notifications
-      </button>
-      <button
-        class="tab-button"
-        class:active={activeTab === "thresholds"}
-        onclick={() => (activeTab = "thresholds")}
-      >
-        Thresholds
-      </button>
-      <button
-        class="tab-button"
-        class:active={activeTab === "capacity"}
-        onclick={() => (activeTab = "capacity")}
-      >
-        Unused Capacity
-      </button>
-      <button
-        class="tab-button"
-        class:active={activeTab === "web"}
-        onclick={() => (activeTab = "web")}
-      >
-        Web
-      </button>
+    <div class="tabs" role="tablist" aria-label="Settings sections">
+      {#each TABS as tab, index}
+        <button
+          class="tab-button"
+          class:active={activeTab === tab.id}
+          id={`settings-tab-${tab.id}`}
+          role="tab"
+          aria-selected={activeTab === tab.id}
+          aria-controls="settings-panel"
+          tabindex={activeTab === tab.id ? 0 : -1}
+          onclick={() => (activeTab = tab.id)}
+          onkeydown={(event) => onTabKeydown(event, index)}
+        >
+          {tab.label}
+        </button>
+      {/each}
     </div>
 
-    <div class="tab-content">
+    <div
+      class="tab-content"
+      role="tabpanel"
+      id="settings-panel"
+      aria-labelledby={`settings-tab-${activeTab}`}
+    >
       {#if activeTab === "general"}
         <section class="card">
           <h2>Polling Interval</h2>
@@ -697,6 +729,28 @@
 
         <section class="card">
           <h2>Accessibility</h2>
+          <div class="status-palette-row">
+            <div>
+              <span class="toggle-label">Text size</span>
+              <p class="hint">
+                Scales the whole interface, not just the type, so nothing crops or overlaps.
+              </p>
+            </div>
+            <div class="palette-options" role="radiogroup" aria-label="Text size">
+              {#each TEXT_SIZE_OPTIONS as option}
+                <button
+                  type="button"
+                  class="palette-option"
+                  class:selected={visuals.textSize === option.size}
+                  role="radio"
+                  aria-checked={visuals.textSize === option.size}
+                  onclick={() => setTextSize(option.size)}
+                >
+                  {option.label}
+                </button>
+              {/each}
+            </div>
+          </div>
           <div class="toggle-row">
             <div>
               <span class="toggle-label">Reduce motion</span>
@@ -951,8 +1005,8 @@
           <h3>Pre-Reset Reminders</h3>
           <p class="hint">
             Get a heads-up shortly before a reset happens, so you can plan token-intensive work.
-            These reminders are part of reset notifications above — turn that off and these are
-            disabled too.
+            Fires on the clock alone, whatever your usage is. These reminders are part of reset
+            notifications above — turn that off and these are disabled too.
           </p>
           <div class="field-row">
             <label for="before-five-hour" class:label-disabled={!notifyResets}>Alert X minutes before 5-hour resets</label>
@@ -985,16 +1039,23 @@
             </div>
           </div>
         </section>
-      {/if}
 
-      {#if activeTab === "capacity"}
         <section class="card">
-          <h2>5-Hour Window</h2>
+          <h2>Unused-Capacity Nudges</h2>
           <p class="hint">
-            Send a one-time alert when the 5-hour reset is approaching <strong>and</strong> you
-            still have a lot of tokens left — a nudge to use your remaining capacity before the
-            window resets.
+            Same timing as the pre-reset reminders above, one extra condition: these only fire if
+            a set share of your allowance is still <strong>unspent</strong>. A pre-reset reminder
+            says “a reset is coming”; this says “a reset is coming <em>and</em> you still have
+            tokens to burn”. Use these instead of a pre-reset reminder if you only want to hear
+            about a reset when there's capacity worth spending.
           </p>
+          <p class="hint">
+            Two other differences: these are the only alerts that also report where your
+            <em>other</em> limit stands, and they're independent of the “Notify when limits reset”
+            toggle above — they keep firing with reset notifications switched off.
+          </p>
+
+          <h3>5-hour window</h3>
           <div class="field-row">
             <label for="cap-5h-minutes">Reset is less than</label>
             <div class="input-with-suffix">
@@ -1024,16 +1085,15 @@
               <span class="suffix">% of tokens are still unused</span>
             </div>
           </div>
-          <p class="hint">Leave either field blank to disable this alert.</p>
-        </section>
+          {#if fiveHourAlertsOverlap}
+            <p class="notice notice-warn" role="alert">
+              ⚠ You have both a pre-reset reminder and a capacity nudge set for the 5-hour limit.
+              They're separate alerts, so when a reset arrives with enough left unused you'll get
+              <strong>two</strong> notifications for it. Clear one to hear about it once.
+            </p>
+          {/if}
 
-        <section class="card">
-          <h2>7-Day Window</h2>
-          <p class="hint">
-            Send a one-time alert when the 7-day reset is approaching <strong>and</strong> you
-            still have a lot of tokens left — a nudge to use your remaining capacity before the
-            window resets.
-          </p>
+          <h3>7-day window</h3>
           <div class="field-row">
             <label for="cap-7d-minutes">Reset is less than</label>
             <div class="input-with-suffix">
@@ -1063,7 +1123,14 @@
               <span class="suffix">% of tokens are still unused</span>
             </div>
           </div>
-          <p class="hint">Leave either field blank to disable this alert.</p>
+          {#if sevenDayAlertsOverlap}
+            <p class="notice notice-warn" role="alert">
+              ⚠ You have both a pre-reset reminder and a capacity nudge set for the 7-day limit.
+              They're separate alerts, so when a reset arrives with enough left unused you'll get
+              <strong>two</strong> notifications for it. Clear one to hear about it once.
+            </p>
+          {/if}
+          <p class="hint">Leave either field of a window blank to disable that nudge.</p>
         </section>
       {/if}
 
@@ -1146,7 +1213,13 @@
         </section>
       {/if}
 
+      {#if activeTab === "accounts"}
+        <Accounts embedded />
+      {/if}
 
+      {#if activeTab === "about"}
+        <About embedded />
+      {/if}
     </div>
   {/if}
 </div>
