@@ -304,4 +304,32 @@
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
+
+  /* The same suppression at the CSS layer, so a system motion preference is
+     honoured on first paint rather than only once initVisuals() has run. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  /* Text scaling. Every size in the app is expressed in `rem`, so moving the
+     root size moves type, padding, and control heights together — which keeps
+     layouts intact in a way a font-size-only override would not. */
+  :root.text-small {
+    font-size: 87.5%;
+  }
+
+  :root.text-large {
+    font-size: 112.5%;
+  }
+
+  :root.text-larger {
+    font-size: 125%;
+  }
 }
