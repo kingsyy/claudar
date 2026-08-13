@@ -14,7 +14,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// [DEPRECATED] Use the GUI app instead for interactive setup
+    /// Minimal setup instructions for headless/SSH use (no GUI required)
     Setup {
         /// Instance name to set up (e.g., "work", "personal")
         #[arg(long)]
