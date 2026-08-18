@@ -1,3 +1,35 @@
+## 2026-08-18 · Drag-and-drop account ordering, edited on the Accounts page
+
+**What:** Accounts can now be reordered by dragging rows on the Accounts page. New Tauri command
+`commands::reorder_instances(order: Vec<String>)` rewrites `config.instances` in the given order
+after validating that `order` is an exact permutation of the configured names. The Accounts list
+grew a drag handle, live reorder on `dragover`, and a persist on `dragend`; arrow up/down on the
+focused handle does the same thing from the keyboard.
+
+**Why:** Config order was already the single source of ordering for the Dashboard, tray menu and web
+view (all three iterate `effective_instances()`), so no new "order" field or per-view sort was
+needed — persisting a reordered `instances` vec is the whole feature.
+
+Reordering lives on Accounts rather than on the Dashboard itself: the Dashboard is the narrow tray
+popup where each account is a tall card with a click-to-copy countdown inside it, so dragging there
+would fight the existing interactions and mostly happen off-screen. Accounts is already the
+manage-accounts surface and re-mounts the Dashboard on navigation back, so the new order shows up
+immediately.
+
+The permutation check is deliberately strict (reject, don't merge): the alternative — accepting a
+partial list and appending the rest — would let a stale UI silently drop an account from the config
+after an add/remove elsewhere. On error the UI reloads from the backend rather than keeping its
+optimistic order, which is a narrow exception to the app-wide optimistic-UI-without-rollback pattern
+because a wrong order here would persist and look correct.
+
+**Verification:** `cargo check` on `src-tauri`, `cargo test` (36 passed), `npm run build` in `ui/`
+all clean. **Not runtime-verified** — the actual drag gesture, the drop persisting across an app
+restart, and the tray menu picking up the new order still want a manual pass in the running app.
+`npx svelte-check` is unusable in this repo (it can't find the Svelte plugin in `vite.config`) —
+pre-existing, not introduced here.
+
+**Next:** Manually verify the drag in the running app and confirm the tray menu order follows.
+
 ## 2026-08-13 · Fix tray crash: all tray access now goes through the main thread
 
 **What:** `monitor_loop::{set_tray_icon, refresh_tray_menu}` touched the tray directly from the poll task, i.e. from a `tokio-runtime-worker`. Both now wrap their whole body in `app_handle.run_on_main_thread(...)`. Diagnosed from `claudar-app-2026-08-13-011938.ips` (v0.4.4, up 6 days, SIGTRAP on thread 9): `set_tray_icon` → `drop_in_place<tauri::tray::TrayIcon>` → `Rc::drop_slow` → `tray_icon::TrayIcon::remove` → `-[NSStatusBar _removeStatusItem:]` → AppKit's `assertBarrierOnQueue` trapping because it wasn't on the main run loop.

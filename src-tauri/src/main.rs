@@ -79,6 +79,7 @@ fn main() {
             commands::get_history,
             commands::add_instance,
             commands::remove_instance,
+            commands::reorder_instances,
             commands::start_auth,
             commands::navigate_auth_window,
             commands::set_autostart,

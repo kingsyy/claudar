@@ -26,6 +26,68 @@
   let removing = $state(false);
   let removeError = $state<string | null>(null);
 
+  // Reorder flow — config order is what the dashboard, tray and web view render in.
+  let dragIndex = $state<number | null>(null);
+  let reorderError = $state<string | null>(null);
+
+  function moveItem(from: number, to: number) {
+    if (to < 0 || to >= instances.length || from === to) return;
+    const next = [...instances];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    instances = next;
+  }
+
+  async function persistOrder() {
+    reorderError = null;
+    try {
+      await invoke("reorder_instances", { order: instances.map((i) => i.name) });
+    } catch (e) {
+      reorderError = String(e);
+      // Fall back to whatever the backend actually has, so the list can't lie.
+      await loadInstances();
+    }
+  }
+
+  function handleDragStart(e: DragEvent, index: number) {
+    dragIndex = index;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", instances[index].name);
+    }
+  }
+
+  function handleDragOver(e: DragEvent, index: number) {
+    if (dragIndex === null) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    if (dragIndex === index) return;
+    moveItem(dragIndex, index);
+    dragIndex = index;
+  }
+
+  async function handleDragEnd() {
+    if (dragIndex === null) return;
+    dragIndex = null;
+    await persistOrder();
+  }
+
+  // Keyboard equivalent of the drag: arrows on the focused handle move the row.
+  async function handleHandleKeydown(e: KeyboardEvent, index: number) {
+    const delta = e.key === "ArrowUp" ? -1 : e.key === "ArrowDown" ? 1 : 0;
+    if (delta === 0) return;
+    e.preventDefault();
+    const to = index + delta;
+    if (to < 0 || to >= instances.length) return;
+    moveItem(index, to);
+    await persistOrder();
+    // Keep focus on the handle of the row we just moved.
+    requestAnimationFrame(() => {
+      const handles = document.querySelectorAll<HTMLElement>(".drag-handle");
+      handles[to]?.focus();
+    });
+  }
+
   async function loadInstances() {
     loading = true;
     error = null;
@@ -157,9 +219,38 @@
         <p>No accounts configured yet.</p>
       </div>
     {:else}
+      {#if reorderError}
+        <div class="error-banner" role="alert">⚠ {reorderError}</div>
+      {/if}
+      {#if instances.length > 1}
+        <p class="reorder-hint">Drag an account to change the order it appears in on the dashboard.</p>
+      {/if}
       <ul class="account-list">
-        {#each instances as inst (inst.name)}
-          <li class="account-row">
+        {#each instances as inst, index (inst.name)}
+          <li
+            class="account-row"
+            class:dragging={dragIndex === index}
+            class:reorderable={instances.length > 1}
+            draggable={instances.length > 1}
+            ondragstart={(e) => handleDragStart(e, index)}
+            ondragover={(e) => handleDragOver(e, index)}
+            ondragend={handleDragEnd}
+            ondrop={(e) => e.preventDefault()}
+          >
+            {#if instances.length > 1}
+              <button
+                type="button"
+                class="drag-handle"
+                aria-label={`Reorder ${inst.name}. Position ${index + 1} of ${instances.length}. Use arrow up and arrow down to move.`}
+                onkeydown={(e) => handleHandleKeydown(e, index)}
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+                  <circle cx="6" cy="4" r="1.3" /><circle cx="10" cy="4" r="1.3" />
+                  <circle cx="6" cy="8" r="1.3" /><circle cx="10" cy="8" r="1.3" />
+                  <circle cx="6" cy="12" r="1.3" /><circle cx="10" cy="12" r="1.3" />
+                </svg>
+              </button>
+            {/if}
             <div class="account-info">
               <span class="account-name">{inst.name}</span>
               <span class="account-status" class:active={inst.has_session}>
@@ -394,6 +485,65 @@
     display: flex;
     flex-direction: column;
     gap: 0.3rem;
+    margin-right: auto;
+  }
+
+  .reorder-hint {
+    margin: 0 0 0.75rem;
+    font-size: 0.8rem;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .account-row.reorderable {
+    justify-content: flex-start;
+    transition: opacity 0.12s, box-shadow 0.12s, border-color 0.12s;
+  }
+
+  .account-row.dragging {
+    opacity: 0.55;
+    border-color: hsl(var(--ring));
+    box-shadow: 0 4px 14px hsl(0 0% 0% / 0.12);
+  }
+
+  .drag-handle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.6rem;
+    height: 1.9rem;
+    padding: 0;
+    margin-left: -0.35rem;
+    border: none;
+    border-radius: var(--radius);
+    background: none;
+    color: hsl(var(--muted-foreground));
+    cursor: grab;
+    flex-shrink: 0;
+  }
+
+  .drag-handle:hover {
+    background-color: hsl(var(--muted));
+    color: hsl(var(--foreground));
+  }
+
+  .drag-handle:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px hsl(var(--ring) / 0.45);
+  }
+
+  .account-row.dragging .drag-handle {
+    cursor: grabbing;
+  }
+
+  .drag-handle svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .account-row.reorderable {
+      transition: none;
+    }
   }
 
   .account-actions {

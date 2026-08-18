@@ -1,10 +1,10 @@
 ---
 intent: share
-stage: complete
+stage: shared
 share_target: maintained
-next: Ship the tray main-thread crash fix as 0.4.5 and confirm the tray icon/menu still update live; turn `claudar setup` into a real prompt-and-paste flow (org_id / session_key / cookie, validate via API, write the session file) and rewrite README's stale "## Setup" section with it; runtime-verify the web dashboard (bind/restart-on-config-change/agent API gating), the threshold-list editing UI, and notifications/login/start-minimized on macOS/Windows; code-sign/notarize for distribution
+next: Runtime-verify the new drag-and-drop account ordering (drag gesture, persistence across restart, tray menu order); ship the tray main-thread crash fix as 0.4.5 and confirm the tray icon/menu still update live; turn `claudar setup` into a real prompt-and-paste flow (org_id / session_key / cookie, validate via API, write the session file) and rewrite README's stale "## Setup" section with it; runtime-verify the web dashboard (bind/restart-on-config-change/agent API gating), the threshold-list editing UI, and notifications/login/start-minimized on macOS/Windows; code-sign/notarize for distribution
 blocker: null
-updated: 2026-08-13
+updated: 2026-08-18
 ---
 
 # Claudar — Monitor Claude.ai usage limits with native desktop notifications

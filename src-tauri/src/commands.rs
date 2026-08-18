@@ -130,6 +130,32 @@ pub fn add_instance(app: AppHandle, name: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Reorder the configured instances. `order` must be a permutation of the
+/// existing instance names — anything else is rejected so a stale UI can't drop
+/// or duplicate an account. Config order is what the dashboard, tray, and web
+/// view render in, so this is the single knob for "which account is on top".
+#[tauri::command]
+pub fn reorder_instances(order: Vec<String>) -> Result<(), String> {
+    let mut config = Config::load().map_err(|e| e.to_string())?;
+    let current = config.effective_instances();
+
+    let mut sorted_new = order.clone();
+    sorted_new.sort();
+    let mut sorted_current: Vec<String> = current.iter().map(|i| i.name.clone()).collect();
+    sorted_current.sort();
+    if sorted_new != sorted_current {
+        return Err("Instance order must contain exactly the configured accounts".to_string());
+    }
+
+    config.instances = order
+        .into_iter()
+        .map(|name| InstanceConfig { name })
+        .collect();
+    config.save().map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 /// Stop an instance's monitor task and remove its config entry, session, state,
 /// and history files.
 #[tauri::command]
