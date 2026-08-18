@@ -32,3 +32,10 @@ session.json
 
 # Claude Code agent worktrees (nested checkouts — never commit these)
 .claude/worktrees/
+
+# Node dependencies and build caches. The UI lives in ui/, but tooling run from
+# the repo root leaves a stray root-level node_modules/.vite cache behind.
+node_modules/
+
+# Empty marker file left by an editor/tool run
+docs/.steer

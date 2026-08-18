@@ -4,13 +4,13 @@
   import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
   import Dashboard from "./routes/Dashboard.svelte";
   import History from "./routes/History.svelte";
-  import Accounts from "./routes/Accounts.svelte";
   import Settings from "./routes/Settings.svelte";
-  import About from "./routes/About.svelte";
   import Wizard from "./routes/Wizard.svelte";
   import { readSidebarCollapsed, saveSidebarCollapsed } from "./lib/sidebar";
 
-  type Route = "dashboard" | "history" | "accounts" | "settings" | "about";
+  // Accounts and About live inside Settings as tabs — the top-level nav stays at
+  // the three places you actually move between while using the app.
+  type Route = "dashboard" | "history" | "settings";
 
   type InstanceInfo = {
     name: string;
@@ -40,8 +40,8 @@
   }
 
   const navItems: { id: Route; label: string; icon: string }[] = [
+    { id: "dashboard", label: "Dashboard", icon: "◉" },
     { id: "history", label: "History", icon: "📈" },
-    { id: "accounts", label: "Accounts", icon: "👤" },
     { id: "settings", label: "Settings", icon: "⚙" },
   ];
 
@@ -58,9 +58,7 @@
   const routeTitles: Record<Route, string> = {
     dashboard: "Dashboard",
     history: "History",
-    accounts: "Accounts",
     settings: "Settings",
-    about: "About",
   };
 
   async function testIpc() {
@@ -89,10 +87,20 @@
     if (wide) menuOpen = false; // drawer is meaningless once the sidebar is shown
   }
 
+  // Escape closes the drawer — the scrim is clickable, but a keyboard user
+  // shouldn't have to tab to it to get out.
+  function onKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape" && menuOpen) {
+      menuOpen = false;
+      event.stopPropagation();
+    }
+  }
+
   onMount(async () => {
     await checkFirstRun();
     navCollapsed = readSidebarCollapsed();
     window.addEventListener("resize", onResize);
+    window.addEventListener("keydown", onKeydown);
 
     unlistenAuthComplete = await listen<{ instance: string }>("auth-complete", () => {
       checkFirstRun();
@@ -132,6 +140,7 @@
 
   onDestroy(() => {
     window.removeEventListener("resize", onResize);
+    window.removeEventListener("keydown", onKeydown);
     unlistenAuthComplete?.();
     unlistenWebviewFetch?.();
   });
@@ -154,6 +163,7 @@
           class="nav-item"
           class:collapsed
           class:active={currentRoute === item.id}
+          aria-current={currentRoute === item.id ? "page" : undefined}
           title={collapsed ? item.label : undefined}
           aria-label={collapsed ? item.label : undefined}
           onclick={() => navigate(item.id)}
@@ -164,19 +174,6 @@
       </li>
     {/each}
   </ul>
-  <div class="menu-footer">
-    <button
-      class="nav-item"
-      class:collapsed
-      class:active={currentRoute === "about"}
-      title={collapsed ? "About" : undefined}
-      aria-label={collapsed ? "About" : undefined}
-      onclick={() => navigate("about")}
-    >
-      <span class="nav-icon" aria-hidden="true">ⓘ</span>
-      <span class="nav-label">About</span>
-    </button>
-  </div>
 {/snippet}
 
 {#if showWizard === true}
@@ -236,12 +233,8 @@
         <Dashboard />
       {:else if currentRoute === "history"}
         <History />
-      {:else if currentRoute === "accounts"}
-        <Accounts />
       {:else if currentRoute === "settings"}
         <Settings />
-      {:else if currentRoute === "about"}
-        <About />
       {/if}
     </main>
   </div>
@@ -534,11 +527,6 @@
 
   .nav-item.collapsed .nav-label {
     display: none;
-  }
-
-  .menu-footer {
-    padding-bottom: 0.5rem;
-    padding-top: 0.5rem;
   }
 
   /* ── Content ────────────────────────────────────────────────────── */

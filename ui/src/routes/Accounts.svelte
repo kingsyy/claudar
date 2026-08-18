@@ -3,6 +3,10 @@
   import { invoke } from "@tauri-apps/api/core";
   import Wizard from "./Wizard.svelte";
 
+  // `embedded` renders this screen as a Settings tab panel: no page chrome of its
+  // own, and its heading drops a level to sit under the Settings <h1>.
+  let { embedded = false }: { embedded?: boolean } = $props();
+
   type InstanceInfo = {
     name: string;
     has_session: boolean;
@@ -169,15 +173,26 @@
   onMount(loadInstances);
 </script>
 
-{#if wizardInstance}
-  <Wizard instance={wizardInstance} onComplete={finishWizard} />
-{:else if reloginInstance}
-  <Wizard instance={reloginInstance} relogin onComplete={finishWizard} />
+{#if wizardInstance || reloginInstance}
+  <!-- Embedded as a Settings tab, the wizard would otherwise render as a 100vh
+       block inside the tab panel. Lift it out so the login flow still owns the
+       window, exactly as it does from the top-level route. -->
+  <div class:wizard-overlay={embedded}>
+    {#if wizardInstance}
+      <Wizard instance={wizardInstance} onComplete={finishWizard} />
+    {:else if reloginInstance}
+      <Wizard instance={reloginInstance} relogin onComplete={finishWizard} />
+    {/if}
+  </div>
 {:else}
-  <div class="page">
+  <div class="page" class:embedded>
     <div class="header-row">
       <div>
-        <h1>Accounts</h1>
+        {#if embedded}
+          <h2>Accounts</h2>
+        {:else}
+          <h1>Accounts</h1>
+        {/if}
         <p class="subtitle">Manage the Claude.ai accounts Claudar monitors.</p>
       </div>
       <button class="primary" onclick={startAddAccount} disabled={addingName}>
@@ -304,6 +319,27 @@
   .page {
     padding: 2rem;
     max-width: 720px;
+  }
+
+  /* Inside a Settings tab the surrounding page already supplies padding and width. */
+  .page.embedded {
+    padding: 0;
+    max-width: none;
+  }
+
+  .page.embedded h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.25rem;
+    color: hsl(var(--foreground));
+  }
+
+  .wizard-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    overflow-y: auto;
+    background-color: hsl(var(--background));
   }
 
   .header-row {

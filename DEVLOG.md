@@ -14,7 +14,8 @@ Reordering lives on Accounts rather than on the Dashboard itself: the Dashboard 
 popup where each account is a tall card with a click-to-copy countdown inside it, so dragging there
 would fight the existing interactions and mostly happen off-screen. Accounts is already the
 manage-accounts surface and re-mounts the Dashboard on navigation back, so the new order shows up
-immediately.
+immediately. (Merged alongside the nav pass below, which turns Accounts from a sidebar route into a
+Settings tab — the reorder UI moves with it and is otherwise unaffected.)
 
 The permutation check is deliberately strict (reject, don't merge): the alternative — accepting a
 partial list and appending the rest — would let a stale UI silently drop an account from the config
@@ -29,6 +30,58 @@ restart, and the tray menu picking up the new order still want a manual pass in 
 pre-existing, not introduced here.
 
 **Next:** Manually verify the drag in the running app and confirm the tray menu order follows.
+
+## 2026-08-13 · Nav down to three items; capacity nudges rejoin Notifications; text scaling
+
+**What:** Maintenance pass. First, integration: the three outstanding worktree branches
+(`worktree-fix-tray-main-thread`, `worktree-phase-8-wrapup`, `hermes/claudar-decisions-20260812`)
+were merged into `main`, which also carried ~1k uncommitted lines of the super-dark/nav work. The
+merges were done on an integration branch and `main` fast-forwarded only once `cargo test
+--workspace` (36 + 106), `npm test`, and `vite build` were green, so `main` never sat in a
+conflicted state.
+
+Then three UI changes:
+
+1. **Nav is Dashboard / History / Settings.** Accounts and About became Settings tabs. Both take an
+   `embedded` prop that drops their own `.page` padding/max-width and demotes their `<h1>`, so each
+   screen still has exactly one `<h1>`. Dashboard gained a real nav item — it was previously
+   reachable only by clicking the logo, with no active state. Adding an account from inside Settings
+   lifts the wizard into a `position: fixed` overlay; nested in a tab panel it would otherwise
+   render as a `100vh` block *inside* the panel.
+2. **The "Unused Capacity" tab folded into Notifications** as an "Unused-Capacity Nudges" card,
+   sitting directly under the Pre-Reset Reminders it overlaps with.
+3. **Text size preference** (small/default/large/larger) added to the visuals store, plus
+   `role="progressbar"` on the Dashboard bars and a real ARIA tablist for the Settings tabs.
+
+**Why:** The capacity setting was confusing because it *is* nearly a duplicate. Both alerts fire
+X minutes before a reset; the capacity one just adds "…and at least N% is still unused". Both
+messages already report remaining capacity and both say it's a good moment for large tasks. The
+only substantive differences: the capacity nudge also reports the *other* limit's state, and it
+ignores the `notify_resets` toggle. They're separate code paths with separate state flags, so with
+both configured you get **two** notifications for one reset. Chose to make that visible — colocate
+them, state the difference in the copy, and warn when both are set for the same limit — rather than
+dedupe them in `monitor.rs`. Suppressing one silently would change notification behaviour people
+may already rely on, and it's the user's call which alert they'd rather keep.
+
+Text scaling moves the **root font size**, not just type. 128 of the 130 font sizes in the UI are
+already `rem`, so padding and control heights scale with the text and layouts don't crop — which a
+font-size-only override would have broken. Reduced motion also got a CSS-level
+`prefers-reduced-motion` block; it was JS-only, so a system preference wasn't honoured until
+`initVisuals()` ran.
+
+**Verification:** `npm test` (21 passed, up from 15), `vite build` clean, `cargo test --workspace`
+green. The Settings screens were screenshotted in headless Chrome against the vite dev server
+through a **temporary** `dev-mock.ts` IPC shim (deleted before committing — `main.ts` is unchanged),
+which is the only way to render config-dependent screens outside the bundled app: confirmed the
+7-tab bar, Accounts/About embedding, the overlap warning firing, and the whole UI scaling at
+"larger". Contrast was computed rather than eyeballed — every text/background pair passes WCAG AA
+in all three themes (weakest is light-theme hint text at 4.75:1). **Not runtime-verified in the
+bundled app:** the progressbar semantics against a real screen reader, and the wizard overlay when
+adding an account from within Settings.
+
+**Next:** Still open — no `prefers-contrast: more` support (high contrast is manual only), the
+History SVG axis labels are hardcoded `8–9px` so they ignore the text-size setting, and History's
+own tablists have `role="tab"` but no roving tabindex.
 
 ## 2026-08-13 · Fix tray crash: all tray access now goes through the main thread
 
