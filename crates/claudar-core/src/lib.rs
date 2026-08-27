@@ -4,6 +4,8 @@ pub mod history;
 pub mod monitor;
 pub mod notification_trait;
 pub mod notifications;
+pub mod openai_fetcher;
+pub mod openai_session;
 pub mod pace;
 pub mod retry;
 pub mod state;

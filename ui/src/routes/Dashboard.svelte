@@ -6,6 +6,8 @@
 
   type UsagePayload = {
     instance: string;
+    // Absent on payloads from an older backend; treated as Claude.
+    provider?: "claude-web" | "openai-web";
     five_hour_pct: number;
     seven_day_pct: number;
     resets_at: string | null;
@@ -327,6 +329,10 @@
           <div class="spinner small" aria-hidden="true"></div>
           <span>Waiting for first update…</span>
         </div>
+      {:else if usage.provider === "openai-web"}
+        <!-- ChatGPT reports a shorter window too, but only the weekly one is
+             rendered for now. There is no usage prediction for it. -->
+        {@render limit("Weekly", usage.seven_day_pct, usage.seven_day_resets_at, SEVEN_DAY_MS, null, seq, `${inst.name}-weekly`)}
       {:else}
         {@render limit("5-hour", usage.five_hour_pct, usage.resets_at, FIVE_HOUR_MS, usage.predicted_pct, seq, `${inst.name}-5h`)}
         {@render limit("7-day", usage.seven_day_pct, usage.seven_day_resets_at, SEVEN_DAY_MS, null, seq, `${inst.name}-7d`)}

@@ -1,10 +1,12 @@
-use crate::config::Config;
+use crate::config::{Config, Provider};
 use crate::history::{self, HistoryRecord};
 use crate::notification_trait::{NotificationSender, RealNotificationSender};
 use crate::notifications::{
     format_duration, notify_predicted_overage, notify_reset, notify_threshold,
     notify_upcoming_reset, notify_unused_capacity,
 };
+use crate::openai_fetcher;
+use crate::openai_session::OpenAiSession;
 use crate::state::{LimitType, MonitorState};
 use crate::storage::SessionData;
 use crate::time_format;
@@ -17,6 +19,10 @@ use std::time::Duration;
 #[derive(Debug, Clone, Serialize)]
 pub struct UsagePayload {
     pub instance: String,
+    /// Which service this snapshot came from, so the dashboard knows which bars
+    /// are meaningful. Defaults to Claude for payloads built before providers.
+    #[serde(default)]
+    pub provider: Provider,
     pub five_hour_pct: f64,
     pub seven_day_pct: f64,
     /// Five-hour reset timestamp (raw ISO 8601 string from the API).
@@ -27,11 +33,51 @@ pub struct UsagePayload {
     pub predicted_pct: Option<f64>,
 }
 
+/// Poll a ChatGPT account: mint a bearer from the stored cookie if needed, fetch
+/// `/wham/usage`, and map the weekly window onto the seven-day slot the dashboard
+/// already renders.
+///
+/// Deliberately does not notify. Threshold notifications are keyed per Claude
+/// limit in `state.rs`; wiring ChatGPT into that is a separate change.
+async fn poll_openai_instance(
+    config: &Config,
+    instance_name: &str,
+) -> anyhow::Result<UsagePayload> {
+    let session_path = config.session_path_for(instance_name)?;
+    let mut session = OpenAiSession::load(&session_path)?;
+
+    let (bearer, minted) = session.ensure_bearer(Utc::now().timestamp()).await?;
+    if minted {
+        // Persist the refreshed bearer so the next poll skips the exchange.
+        if let Err(e) = session.save(&session_path) {
+            tracing::warn!("Failed to persist ChatGPT bearer for '{}': {}", instance_name, e);
+        }
+    }
+
+    let usage = openai_fetcher::fetch_usage(&bearer).await?.ok_or_else(|| {
+        anyhow::anyhow!("ChatGPT account '{}' reported no usage windows", instance_name)
+    })?;
+
+    Ok(UsagePayload {
+        instance: instance_name.to_string(),
+        provider: Provider::OpenaiWeb,
+        // ChatGPT's shorter window is real data, but nothing renders it yet.
+        five_hour_pct: usage.short_pct.unwrap_or(0.0),
+        seven_day_pct: usage.pct,
+        resets_at: usage.short_resets_at,
+        seven_day_resets_at: usage.resets_at,
+        predicted_pct: None,
+    })
+}
+
 /// Run one full poll cycle for a single instance and return a `UsagePayload`.
 ///
 /// Loads session cookies, fetches the Claude.ai usage API, fires desktop
 /// notifications for any crossed thresholds, persists state, and always
 /// appends a `HistoryRecord` (regardless of `config.history.enabled`).
+///
+/// ChatGPT instances take a separate, simpler path — no state, no notifications,
+/// no history — see [`poll_openai_instance`].
 ///
 /// Returns `Err` containing `AuthRequiredError` when the session is expired or
 /// Cloudflare-blocked; the caller should emit `auth-required` and skip the cycle.
@@ -41,6 +87,17 @@ pub async fn poll_instance(
     sender: &dyn NotificationSender,
     http_fallback: Option<&HttpFetcher>,
 ) -> anyhow::Result<UsagePayload> {
+    let provider = config
+        .effective_instances()
+        .iter()
+        .find(|i| i.name == instance_name)
+        .map(|i| i.provider)
+        .unwrap_or_default();
+
+    if provider == Provider::OpenaiWeb {
+        return poll_openai_instance(config, instance_name).await;
+    }
+
     let mut state = MonitorState::load_for(config, instance_name)?;
     let result = check_usage(config, &mut state, instance_name, false, &config.general.timezone, sender, http_fallback).await;
     // Always persist state updates, even when a fetch error occurred mid-way.
@@ -295,6 +352,7 @@ async fn check_usage(
 
     Ok(UsagePayload {
         instance: instance_name.to_string(),
+        provider: Provider::ClaudeWeb,
         five_hour_pct: usage.five_hour.utilization,
         seven_day_pct: usage.seven_day.utilization,
         resets_at: usage.five_hour.resets_at.clone(),

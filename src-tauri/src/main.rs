@@ -78,6 +78,8 @@ fn main() {
             commands::get_usage,
             commands::get_history,
             commands::add_instance,
+            commands::add_chatgpt_instance,
+            commands::start_chatgpt_auth,
             commands::remove_instance,
             commands::reorder_instances,
             commands::start_auth,

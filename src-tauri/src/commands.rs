@@ -1,6 +1,6 @@
 use crate::{chrome_auth, monitor_loop, tauri_notifier::TauriNotificationSender};
 use claudar_core::{
-    config::{Config, InstanceConfig},
+    config::{Config, InstanceConfig, Provider},
     history::{self, HistoryRecord},
     monitor::{poll_instance, UsagePayload},
     usage_fetcher::fetch_org_id,
@@ -118,11 +118,9 @@ pub fn add_instance(app: AppHandle, name: String) -> Result<(), String> {
 
     // Switching from the implicit "default" instance to an explicit list — keep "default" too.
     if config.instances.is_empty() {
-        config.instances.push(InstanceConfig {
-            name: "default".to_string(),
-        });
+        config.instances.push(InstanceConfig::new("default"));
     }
-    config.instances.push(InstanceConfig { name: name.clone() });
+    config.instances.push(InstanceConfig::new(name.clone()));
     config.save().map_err(|e| e.to_string())?;
 
     monitor_loop::spawn_instance_task(app, name);
@@ -147,9 +145,18 @@ pub fn reorder_instances(order: Vec<String>) -> Result<(), String> {
         return Err("Instance order must contain exactly the configured accounts".to_string());
     }
 
+    // Reorder by moving the existing entries, never by rebuilding them from the
+    // name — an instance carries a provider, and rebuilding would reset every
+    // account to Claude on each drag.
     config.instances = order
         .into_iter()
-        .map(|name| InstanceConfig { name })
+        .map(|name| {
+            current
+                .iter()
+                .find(|i| i.name == name)
+                .cloned()
+                .unwrap_or_else(|| InstanceConfig::new(name))
+        })
         .collect();
     config.save().map_err(|e| e.to_string())?;
 
@@ -311,6 +318,103 @@ async fn run_chrome_auth_and_emit(app: AppHandle, instance_name: String) {
             return;
         }
     };
+}
+
+/// Add a ChatGPT account and immediately start its login flow.
+///
+/// Separate from `add_instance` because the two providers store different
+/// credentials: Claude needs an org lookup after login, ChatGPT needs only the
+/// session cookie.
+#[tauri::command]
+pub async fn add_chatgpt_instance(app: AppHandle, name: String) -> Result<(), String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Account name cannot be empty".to_string());
+    }
+
+    let mut config = Config::load().map_err(|e| e.to_string())?;
+    if config.effective_instances().iter().any(|i| i.name == name) {
+        return Err(format!("Instance '{}' already exists", name));
+    }
+
+    // Same implicit-to-explicit promotion as `add_instance`: once a second
+    // account exists, "default" has to be written down.
+    if config.instances.is_empty() {
+        config.instances.push(InstanceConfig::new("default"));
+    }
+    config
+        .instances
+        .push(InstanceConfig::with_provider(name.clone(), Provider::OpenaiWeb));
+    config.save().map_err(|e| e.to_string())?;
+
+    tauri::async_runtime::spawn(async move {
+        run_chatgpt_auth_and_emit(app, name).await;
+    });
+
+    Ok(())
+}
+
+/// Re-run the ChatGPT login for an existing account, e.g. after the ~90-day
+/// session cookie expires.
+#[tauri::command]
+pub async fn start_chatgpt_auth(app: AppHandle, instance: String) -> Result<(), String> {
+    tauri::async_runtime::spawn(async move {
+        run_chatgpt_auth_and_emit(app, instance).await;
+    });
+    Ok(())
+}
+
+/// Drive the ChatGPT login, persist the session cookie, and start polling.
+async fn run_chatgpt_auth_and_emit(app: AppHandle, instance_name: String) {
+    let config = match Config::load() {
+        Ok(c) => c,
+        Err(e) => return emit_auth_error(&app, &instance_name, e.to_string()),
+    };
+
+    let profile_path = match config.chrome_profile_path_for(&instance_name) {
+        Ok(p) => p,
+        Err(e) => return emit_auth_error(&app, &instance_name, e.to_string()),
+    };
+
+    let debug_port = match chrome_auth::find_free_port() {
+        Ok(p) => p,
+        Err(e) => return emit_auth_error(&app, &instance_name, e.to_string()),
+    };
+    app.state::<AuthPorts>()
+        .0
+        .lock()
+        .unwrap()
+        .insert(instance_name.clone(), debug_port);
+    let _port_guard = AuthPortGuard {
+        app: app.clone(),
+        instance: instance_name.clone(),
+    };
+
+    let session = match chrome_auth::run_chatgpt_auth(profile_path, debug_port).await {
+        Ok(s) => s,
+        Err(e) => return emit_auth_error(&app, &instance_name, e.to_string()),
+    };
+
+    let path = match Config::load().and_then(|c| c.session_path_for(&instance_name)) {
+        Ok(p) => p,
+        Err(e) => return emit_auth_error(&app, &instance_name, e.to_string()),
+    };
+    if let Err(e) = session.save(&path) {
+        return emit_auth_error(&app, &instance_name, e.to_string());
+    }
+
+    let _ = app.emit(
+        "auth-complete",
+        AuthCompletePayload {
+            instance: instance_name.clone(),
+        },
+    );
+    monitor_loop::spawn_instance_task(app.clone(), instance_name);
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 /// Removes an instance's auth port from `AuthPorts` when the auth task ends,

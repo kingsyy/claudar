@@ -18,6 +18,7 @@
 
   // "Add account" flow
   let addingName = $state(false);
+  let newProvider = $state<"claude-web" | "openai-web">("claude-web");
   let newName = $state("");
   let addError = $state<string | null>(null);
   let adding = $state(false);
@@ -107,6 +108,7 @@
   function startAddAccount() {
     addingName = true;
     newName = "";
+    newProvider = "claude-web";
     addError = null;
   }
 
@@ -125,9 +127,17 @@
     adding = true;
     addError = null;
     try {
-      await invoke("add_instance", { name });
-      addingName = false;
-      wizardInstance = name;
+      if (newProvider === "openai-web") {
+        // Adds the account and opens the ChatGPT login in one step, so there is
+        // no Claude-shaped wizard to hand off to.
+        await invoke("add_chatgpt_instance", { name });
+        addingName = false;
+        await loadInstances();
+      } else {
+        await invoke("add_instance", { name });
+        addingName = false;
+        wizardInstance = name;
+      }
     } catch (e) {
       addError = String(e);
     } finally {
@@ -202,6 +212,17 @@
 
     {#if addingName}
       <div class="add-card">
+        <fieldset class="provider-choice">
+          <legend>Service</legend>
+          <label>
+            <input type="radio" bind:group={newProvider} value="claude-web" disabled={adding} />
+            Claude.ai
+          </label>
+          <label>
+            <input type="radio" bind:group={newProvider} value="openai-web" disabled={adding} />
+            ChatGPT
+          </label>
+        </fieldset>
         <label for="new-account-name">Account name</label>
         <div class="add-row">
           <input

@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use claudar_core::openai_session::OpenAiSession;
 use claudar_core::storage::SessionData;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -155,14 +156,34 @@ pub(crate) async fn get_page_ws_url(port: u16) -> Result<String> {
     Err(anyhow!("Chrome page did not load within 30 seconds."))
 }
 
-/// Pull every claude.ai/anthropic.com cookie out of a `Network.getAllCookies`
+/// What a login flow is looking for: where to send the browser, which cookie
+/// domains are ours, and which cookie's arrival means "logged in".
+struct AuthTarget {
+    login_url: &'static str,
+    domains: &'static [&'static str],
+    sentinel: &'static str,
+}
+
+const CLAUDE_TARGET: AuthTarget = AuthTarget {
+    login_url: "https://claude.ai/login",
+    domains: &["claude.ai", "anthropic.com"],
+    sentinel: "sessionKey",
+};
+
+const CHATGPT_TARGET: AuthTarget = AuthTarget {
+    login_url: "https://chatgpt.com/auth/login",
+    domains: &["chatgpt.com"],
+    sentinel: claudar_core::openai_session::SESSION_COOKIE,
+};
+
+/// Pull every cookie belonging to `domains` out of a `Network.getAllCookies`
 /// CDP response into `(name, value)` pairs.
-fn extract_cookies(response: &Value) -> Vec<(String, String)> {
+fn extract_cookies(response: &Value, domains: &[&str]) -> Vec<(String, String)> {
     let mut cookies = Vec::new();
     if let Some(arr) = response.pointer("/result/cookies").and_then(|c| c.as_array()) {
         for c in arr {
             let domain = c.get("domain").and_then(|d| d.as_str()).unwrap_or("");
-            if domain.contains("claude.ai") || domain.contains("anthropic.com") {
+            if domains.iter().any(|d| domain.contains(d)) {
                 let name = c.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
                 let value = c.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 cookies.push((name, value));
@@ -172,7 +193,19 @@ fn extract_cookies(response: &Value) -> Vec<(String, String)> {
     cookies
 }
 
-pub async fn run_chrome_auth(profile_path: PathBuf, debug_port: u16) -> Result<SessionData> {
+/// Drive a browser login and return the resulting cookie jar.
+///
+/// Detection = cookie polling. Every login path — Google OAuth popup, an emailed
+/// code typed in-window, or a pasted magic link — ends with the target's sentinel
+/// cookie existing. Poll `Network.getAllCookies` until it appears; the same
+/// response carries the full jar we extract. This is flow-agnostic: it doesn't
+/// matter which page/popup/redirect set it, which is why the same loop serves
+/// both providers.
+async fn capture_cookies(
+    profile_path: PathBuf,
+    debug_port: u16,
+    target: &AuthTarget,
+) -> Result<Vec<(String, String)>> {
     let chrome_bin = find_chrome()?;
 
     if profile_path.exists() {
@@ -191,7 +224,7 @@ pub async fn run_chrome_auth(profile_path: PathBuf, debug_port: u16) -> Result<S
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--window-size=480,720")
-        .arg("--app=https://claude.ai/login")
+        .arg(format!("--app={}", target.login_url))
         .spawn()
         .map_err(|e| anyhow!("Failed to spawn Chrome: {}", e))?;
 
@@ -210,11 +243,6 @@ pub async fn run_chrome_auth(profile_path: PathBuf, debug_port: u16) -> Result<S
         ))
         .await?;
 
-    // Detection = cookie polling. Every login path — Google OAuth popup, an
-    // emailed code typed in-window, or a pasted magic link — ends with the
-    // `sessionKey` cookie existing for claude.ai. Poll `Network.getAllCookies`
-    // until it appears; the same response carries the full jar we extract. This
-    // is flow-agnostic: it doesn't matter which page/popup/redirect set it.
     let start = std::time::Instant::now();
     let max_wait = std::time::Duration::from_secs(600);
     let mut poll_id = 10u64;
@@ -241,8 +269,8 @@ pub async fn run_chrome_auth(profile_path: PathBuf, debug_port: u16) -> Result<S
                         if let Ok(v) = serde_json::from_str::<Value>(&text) {
                             // Only inspect getAllCookies responses (id >= 10).
                             if v.get("id").and_then(|i| i.as_u64()).map_or(false, |id| id >= 10) {
-                                let found = extract_cookies(&v);
-                                if found.iter().any(|(k, val)| k == "sessionKey" && !val.is_empty()) {
+                                let found = extract_cookies(&v, target.domains);
+                                if found.iter().any(|(k, val)| k == target.sentinel && !val.is_empty()) {
                                     cookies = found;
                                     break 'login;
                                 }
@@ -262,6 +290,13 @@ pub async fn run_chrome_auth(profile_path: PathBuf, debug_port: u16) -> Result<S
     if cookies.is_empty() {
         return Err(anyhow!("Login not completed"));
     }
+
+    Ok(cookies)
+}
+
+/// Log into Claude.ai and return the session cookies.
+pub async fn run_chrome_auth(profile_path: PathBuf, debug_port: u16) -> Result<SessionData> {
+    let cookies = capture_cookies(profile_path, debug_port, &CLAUDE_TARGET).await?;
 
     let full_cookie_string = cookies.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("; ");
 
@@ -284,4 +319,20 @@ pub async fn run_chrome_auth(profile_path: PathBuf, debug_port: u16) -> Result<S
         ssid: get("__ssid"),
         full_cookie_string: if full_cookie_string.is_empty() { None } else { Some(full_cookie_string) },
     })
+}
+
+/// Log into ChatGPT and return an [`OpenAiSession`] holding the one cookie that
+/// matters. The rest of the jar is discarded: `__Secure-next-auth.session-token`
+/// alone is enough to mint bearers, and it lasts ~90 days.
+pub async fn run_chatgpt_auth(profile_path: PathBuf, debug_port: u16) -> Result<OpenAiSession> {
+    let cookies = capture_cookies(profile_path, debug_port, &CHATGPT_TARGET).await?;
+
+    let session_token = cookies
+        .iter()
+        .find(|(k, _)| k == CHATGPT_TARGET.sentinel)
+        .map(|(_, v)| v.clone())
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| anyhow!("ChatGPT session cookie not found — login may not have completed"))?;
+
+    Ok(OpenAiSession::new(session_token))
 }
