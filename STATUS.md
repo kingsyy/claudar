@@ -2,7 +2,7 @@
 intent: share
 stage: shared
 share_target: maintained
-next: Runtime-verify the 0.4.5 build — drag-and-drop account ordering (drag gesture, persistence across restart, tray menu order), the reorganised Settings (Accounts/About tabs, add-account wizard overlay), the Dashboard progressbar semantics with a screen reader, and that the tray icon/menu still update live after the main-thread fix; turn `claudar setup` into a real prompt-and-paste flow (org_id / session_key / cookie, validate via API, write the session file) and rewrite README's stale "## Setup" section with it; runtime-verify the web dashboard (bind/restart-on-config-change/agent API gating), the threshold-list editing UI, and notifications/login/start-minimized on macOS/Windows; code-sign/notarize for distribution
+next: Runtime-verify the 0.4.5 build — drag-and-drop account ordering (drag gesture, persistence across restart, tray menu order), the reorganised Settings (Accounts/About tabs, add-account wizard overlay), the Dashboard progressbar semantics with a screen reader, and that the tray icon/menu still update live after the main-thread fix; turn `claudar setup` into a real prompt-and-paste flow (org_id / session_key / cookie, validate via API, write the session file) and rewrite README's stale "## Setup" section with it; runtime-verify the web dashboard (bind/restart-on-config-change/agent API gating), the threshold-list editing UI, and notifications/login/start-minimized on macOS/Windows; code-sign/notarize for distribution. Parked behind that: multi-provider support (OpenAI/Codex) — researched and decided in `docs/04-multi-provider.md`, starting with a no-behaviour-change split of `History.svelte`
 blocker: null
 updated: 2026-08-18
 ---
@@ -27,6 +27,15 @@ the GUI app double-notifies (two monitors, one account); the GUI can't detect th
 *prints* instructions — it should prompt-and-paste and write the session file.
 
 No feature work remains in the build plan. What's left is distribution and verification — see `docs/human-todo.md`.
+
+**Multi-provider researched, not started (2026-08-18).** `docs/04-multi-provider.md` records the
+research and two decisions for monitoring OpenAI/Codex alongside Claude. OpenAI's
+`backend-api/wham/usage` returns the same shape Claudar already models (percent-of-window +
+reset timestamp), so the work is a core-model generalisation — `UsagePayload`/`LimitType` become a
+keyed `Vec<Gauge>` behind a `UsageProvider` trait — not a rewrite; the provider-agnostic
+infrastructure stays. Sequenced *after* 0.4.5, and behind a no-behaviour-change split of
+`History.svelte` (1908 lines, chart hardcoded to two series). Codex auth would be Claudar's own
+PKCE OAuth flow. One live call is still needed to pin the minimal header set.
 
 `cargo tauri build` produces a working `.app` locally (verified by launching). Code-signing/notarization (for distribution outside the dev machine) is out of scope for this phase but required before real release.
 

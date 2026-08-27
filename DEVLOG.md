@@ -1,3 +1,95 @@
+## 2026-08-27 · ChatGPT weekly bar: HTTP/1.1 beats Cloudflare, so no OAuth needed
+
+**What:** Added a ChatGPT (`openai-web`) provider that renders one weekly usage bar on the
+Dashboard. New `openai_fetcher.rs` (parses `/wham/usage`) and `openai_session.rs` (stores the
+session cookie, mints bearers). `InstanceConfig` gained a `provider` field; `chrome_auth.rs`'s
+CDP cookie-capture loop was extracted so both providers share it; `Accounts.svelte` gained a
+service picker. History, notifications and the `Gauge` refactor are all deliberately untouched.
+
+**Why:** Scope was "just a little weekly limit bar", which makes `docs/04-multi-provider.md`'s
+3–4 day `Gauge`/`UsageProvider` generalisation unnecessary — that estimate is dominated by
+history, thresholds and the notification state machine, none of which a display-only bar needs.
+
+Four probe rounds settled the auth design, and overturned the doc:
+
+- A **web login** mints a bearer that `/wham/usage` accepts — no Codex install, no PKCE. The
+  doc's §6 never considered this route. Scopes were a non-issue: the web token carries
+  `aud: ["https://api.openai.com/v1"]` and *no* scopes, and is accepted anyway.
+- **Bearer alone is the minimal header set.** `chatgpt-account-id` only populates `account_id` in
+  the response; none of the `oai-client-*` headers the doc warned about are needed.
+- **`/api/auth/session` is Cloudflare-walled over HTTP/2 but open over HTTP/1.1.** This was nearly
+  a wrong turn: the 403 + HTML + `cf-ray` looked like a hard bot wall, and four header
+  permutations all failed — because every one of them was sent over h2. `curl --http1.1`
+  returned 200. Hence `.http1_only()` in `openai_session.rs`, which is load-bearing rather than
+  stylistic, guarded by an `#[ignore]`d live test.
+- Cookie lifetimes: session cookie **~90 days**, minted bearer **~10 days**. So: log in roughly
+  quarterly, refresh silently in between, cached in the encrypted session file.
+
+Two data-shape decisions. The weekly window is selected **by duration, not field name**, because
+the same account can report 7 days as either `primary_window` or `secondary_window` (the doc's
+capture had one shape, this account has the other). And ChatGPT's shorter window is carried in the
+payload even though nothing renders it, because `poll_instance` persists every payload to history
+— a placeholder `0` would write a value that was never true.
+
+**Verification:** 164 Rust tests + 21 frontend tests pass; workspace builds warning-free. The full
+chain (login → cookie → bearer → usage) was verified live against a real account via throwaway
+probes. **Not yet verified in the running app:** no end-to-end run of the Tauri build adding a
+ChatGPT account through the UI.
+
+**Next:** Runtime-verify in the app. Then decide whether the bar should notify — currently it does
+not, which also means an expired ChatGPT cookie surfaces only as a Dashboard error.
+
+## 2026-08-18 · Multi-provider research: generalise the model, don't rewrite the app
+
+**What:** Researched what it takes to monitor a paid OpenAI account alongside Claude and turn
+Claudar into a multi-provider dashboard. Written up in `docs/04-multi-provider.md`; nothing
+implemented yet. Key findings: `GET chatgpt.com/backend-api/wham/usage` returns
+`primary_window.used_percent` + `reset_at` — structurally identical to Claude's
+`five_hour.utilization` + `resets_at`, so the limits are *not* differently organised. But
+`additional_rate_limits` (a list) and `rate_limits_by_limit_id` (a map, found in the Codex v0.143.0
+binary) prove the *number* of limits is dynamic even within one provider.
+
+**Why:** Two decisions.
+
+*Change the model, not the app.* A ground-up multi-provider rebuild was considered and rejected: the
+expensive parts of Claudar (crypto/keychain, the Cloudflare-evading fetch chain, the tray
+main-thread fix, the anti-spam notification state machine, service install) are already
+provider-agnostic, and the part that must change — `UsagePayload`, `LimitType`, `HistoryRecord`,
+thresholds config, the three route components — is a mechanical type change across 440 references in
+17 files. Rewriting would trade a week of typing for a month of rediscovering solved bugs. The new
+core is a `Gauge { key, label, kind, value, max, unit, resets_at }` list behind a `UsageProvider`
+trait; a fixed-field design is wrong even for a single provider given `rate_limits_by_limit_id`.
+
+*Poll the server, never count locally.* Codex does cache rate limits in its session rollout logs,
+but the newest local snapshot read 50% while the live endpoint read 77% — 11 days stale because
+Codex hadn't run since. That gap is the justification for Claudar's whole approach over local
+token-counters, and it also killed the idea of backfilling history from session logs: OpenAI exposes
+`GetAccountTokenUsageResponse { summary, daily_usage_buckets }` server-side, which is accurate
+across machines.
+
+Codex auth has three options, recorded with a recommendation: read `~/.codex/auth.json` (import-once
+wizard convenience only — coupling to another tool's credential store), **Claudar runs its own PKCE
+OAuth flow** (recommended; the binary yields the scopes, and `offline_access` mints the refresh
+token), or talk to the local Codex app-server (backlog; needs Codex installed and running). The
+browser header set is deliberately *not* the target — it carries an `oai-client-version` build SHA
+that rotates every deploy and an attestation header we can't reproduce; the CLI header set is stable.
+
+Sequencing puts a no-behaviour-change split of `History.svelte` (1908 lines, bespoke SVG chart
+hardcoded to two series on a shared 0–100% axis) *before* the model change, so the refactor lands
+against a component that already takes a list rather than debugging both at once in the worst file
+in the repo. Mixed units are the real UI constraint: % and $ can't share a y-axis and don't share
+urgency semantics.
+
+**Verification:** Research only, no code changed. Findings marked verified vs inferred in the doc.
+Verified by inspection: the 440-reference grep, `strings` on `codex` v0.143.0, the structure of
+`~/.codex/auth.json`, the stale rollout snapshots, and absence of usage data in Codex's four SQLite
+DBs. **Unverified:** the minimal working header set for `/wham/usage` (no live call made), and
+whether `limit_id: "codex"` is the same pool as ChatGPT chat — until that's settled the gauge must
+be labelled "Codex", not "ChatGPT".
+
+**Next:** One live call to `/wham/usage` to pin the minimal header set, then decide whether to start
+the `History.svelte` split — but after 0.4.5 ships, not alongside it.
+
 ## 2026-08-18 · Drag-and-drop account ordering, edited on the Accounts page
 
 **What:** Accounts can now be reordered by dragging rows on the Accounts page. New Tauri command
