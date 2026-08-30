@@ -14,8 +14,17 @@
   let {
     instance = "default",
     onComplete,
+    onCancel,
     relogin = false,
-  }: { instance?: string; onComplete: () => void; relogin?: boolean } = $props();
+  }: {
+    instance?: string;
+    onComplete: () => void;
+    // Absent on first-run onboarding, where there is nowhere to go back to.
+    // Anywhere else the wizard covers the whole window, so without this the
+    // login is a one-way door — see the cancel control below.
+    onCancel?: () => void;
+    relogin?: boolean;
+  } = $props();
 
   type Step = 1 | 2 | 3 | 4;
   // Re-login only needs the auth step; full onboarding starts at the intro.
@@ -156,11 +165,14 @@
 
 <div class="wizard">
   <div class="wizard-card">
-    <div class="step-indicator" aria-hidden="true">
-      {#each [1, 2, 3, 4] as n}
-        <span class="dot" class:active={step === n} class:done={step > n}></span>
-      {/each}
-    </div>
+    <!-- Re-login is a single step; four dots would imply an onboarding it isn't. -->
+    {#if !relogin}
+      <div class="step-indicator" aria-hidden="true">
+        {#each [1, 2, 3, 4] as n}
+          <span class="dot" class:active={step === n} class:done={step > n}></span>
+        {/each}
+      </div>
+    {/if}
 
     {#if step === 1}
       <section class="step">
@@ -317,6 +329,15 @@
         <button class="primary" onclick={onComplete}>Open dashboard</button>
       </section>
     {/if}
+
+    <!-- The wizard covers the entire window, nav included. Without a way out, a
+         login you can't finish (wrong account, Chrome never opened, changed your
+         mind) traps the whole app until it's force-quit. -->
+    {#if onCancel}
+      <button class="cancel" onclick={onCancel}>
+        {authState === "waiting" ? "Cancel login" : "Back"}
+      </button>
+    {/if}
   </div>
 </div>
 
@@ -425,6 +446,24 @@
   button.primary:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+  }
+
+  button.cancel {
+    align-self: center;
+    margin-top: 0.25rem;
+    padding: 0.4rem 0.9rem;
+    background: none;
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    color: hsl(var(--muted-foreground));
+    font-family: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+
+  button.cancel:hover {
+    background-color: hsl(var(--muted));
+    color: hsl(var(--foreground));
   }
 
   button.link {

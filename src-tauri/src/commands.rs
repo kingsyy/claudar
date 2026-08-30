@@ -22,6 +22,10 @@ pub struct InstanceInfo {
     pub name: String,
     /// Whether a session file exists for this instance.
     pub has_session: bool,
+    /// Which service this account monitors. The UI needs it to open the *right*
+    /// login flow — without it every account gets the Claude wizard, which sends
+    /// a ChatGPT account to claude.ai/login.
+    pub provider: Provider,
 }
 
 /// Remote-debugging port of each instance's *currently running* auth Chrome,
@@ -48,6 +52,7 @@ pub fn get_instances() -> Result<Vec<InstanceInfo>, String> {
             InstanceInfo {
                 name: inst.name,
                 has_session: session_path,
+                provider: inst.provider,
             }
         })
         .collect();

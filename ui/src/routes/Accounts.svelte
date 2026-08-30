@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import Wizard from "./Wizard.svelte";
+  import { providerLabel, type Provider } from "$lib/provider";
 
   // `embedded` renders this screen as a Settings tab panel: no page chrome of its
   // own, and its heading drops a level to sit under the Settings <h1>.
@@ -10,6 +12,7 @@
   type InstanceInfo = {
     name: string;
     has_session: boolean;
+    provider: Provider;
   };
 
   let instances = $state<InstanceInfo[]>([]);
@@ -24,7 +27,21 @@
   let adding = $state(false);
   let wizardInstance = $state<string | null>(null);
   // When set, the wizard runs in re-login mode (auth step only) for an existing account.
+  // Claude only — ChatGPT logins run through `chatgptAuth` below, since the wizard's
+  // copy and its `start_auth` call are both Claude-specific.
   let reloginInstance = $state<string | null>(null);
+
+  // ChatGPT login has no wizard: the backend opens a browser straight at
+  // chatgpt.com and reports back over `auth-complete` / `auth-error`. Track it
+  // here so the row can show progress and, crucially, failures — nothing
+  // listened for `auth-error` before, so a failed login looked like nothing
+  // happened at all.
+  let chatgptAuth = $state<{ instance: string; state: "waiting" | "error"; message?: string } | null>(
+    null,
+  );
+
+  let unlistenAuthComplete: UnlistenFn | undefined;
+  let unlistenAuthError: UnlistenFn | undefined;
 
   // "Remove" flow
   let pendingRemoval = $state<string | null>(null);
@@ -132,6 +149,7 @@
         // no Claude-shaped wizard to hand off to.
         await invoke("add_chatgpt_instance", { name });
         addingName = false;
+        chatgptAuth = { instance: name, state: "waiting" };
         await loadInstances();
       } else {
         await invoke("add_instance", { name });
@@ -151,8 +169,30 @@
     await loadInstances();
   }
 
-  function startRelogin(name: string) {
-    reloginInstance = name;
+  // Backing out of a login: drop the wizard and re-read the backend, since an
+  // account added just before a cancelled login still exists, sessionless.
+  async function cancelWizard() {
+    wizardInstance = null;
+    reloginInstance = null;
+    await loadInstances();
+  }
+
+  /** Open the login flow this account's service actually uses. */
+  async function startLogin(inst: InstanceInfo) {
+    if (inst.provider === "openai-web") {
+      chatgptAuth = { instance: inst.name, state: "waiting" };
+      try {
+        await invoke("start_chatgpt_auth", { instance: inst.name });
+      } catch (e) {
+        chatgptAuth = { instance: inst.name, state: "error", message: String(e) };
+      }
+    } else {
+      reloginInstance = inst.name;
+    }
+  }
+
+  function dismissChatgptAuth() {
+    chatgptAuth = null;
   }
 
   function requestRemoval(name: string) {
@@ -180,7 +220,31 @@
     }
   }
 
-  onMount(loadInstances);
+  onMount(async () => {
+    await loadInstances();
+
+    unlistenAuthComplete = await listen<{ instance: string }>("auth-complete", async (event) => {
+      if (chatgptAuth?.instance === event.payload.instance) chatgptAuth = null;
+      await loadInstances();
+    });
+
+    unlistenAuthError = await listen<{ instance: string; message: string }>(
+      "auth-error",
+      (event) => {
+        if (chatgptAuth?.instance !== event.payload.instance) return;
+        chatgptAuth = {
+          instance: event.payload.instance,
+          state: "error",
+          message: event.payload.message,
+        };
+      },
+    );
+  });
+
+  onDestroy(() => {
+    unlistenAuthComplete?.();
+    unlistenAuthError?.();
+  });
 </script>
 
 {#if wizardInstance || reloginInstance}
@@ -189,9 +253,14 @@
        window, exactly as it does from the top-level route. -->
   <div class:wizard-overlay={embedded}>
     {#if wizardInstance}
-      <Wizard instance={wizardInstance} onComplete={finishWizard} />
+      <Wizard instance={wizardInstance} onComplete={finishWizard} onCancel={cancelWizard} />
     {:else if reloginInstance}
-      <Wizard instance={reloginInstance} relogin onComplete={finishWizard} />
+      <Wizard
+        instance={reloginInstance}
+        relogin
+        onComplete={finishWizard}
+        onCancel={cancelWizard}
+      />
     {/if}
   </div>
 {:else}
@@ -243,6 +312,13 @@
       </div>
     {/if}
 
+    {#if chatgptAuth?.state === "error"}
+      <div class="error-banner auth-error" role="alert">
+        <span>⚠ ChatGPT login for "{chatgptAuth.instance}" failed: {chatgptAuth.message}</span>
+        <button class="ghost" onclick={dismissChatgptAuth}>Dismiss</button>
+      </div>
+    {/if}
+
     {#if error}
       <div class="error-banner" role="alert">⚠ {error}</div>
     {:else if loading}
@@ -288,14 +364,28 @@
               </button>
             {/if}
             <div class="account-info">
-              <span class="account-name">{inst.name}</span>
-              <span class="account-status" class:active={inst.has_session}>
-                <span class="status-dot" aria-hidden="true"></span>
-                {inst.has_session ? "Active" : "No session"}
+              <span class="account-name">
+                {inst.name}
+                <span class="provider-tag">{providerLabel(inst.provider)}</span>
               </span>
+              {#if chatgptAuth?.instance === inst.name && chatgptAuth.state === "waiting"}
+                <span class="account-status waiting">
+                  <span class="status-dot" aria-hidden="true"></span>
+                  Waiting for ChatGPT login…
+                </span>
+              {:else}
+                <span class="account-status" class:active={inst.has_session}>
+                  <span class="status-dot" aria-hidden="true"></span>
+                  {inst.has_session ? "Active" : "No session"}
+                </span>
+              {/if}
             </div>
             <div class="account-actions">
-              <button class="ghost" onclick={() => startRelogin(inst.name)}>
+              <button
+                class="ghost"
+                onclick={() => startLogin(inst)}
+                disabled={chatgptAuth?.instance === inst.name && chatgptAuth.state === "waiting"}
+              >
                 {inst.has_session ? "Re-login" : "Login"}
               </button>
               <button class="danger" onclick={() => requestRemoval(inst.name)}>Remove</button>
@@ -485,6 +575,43 @@
     color: hsl(var(--danger-strong));
     border-radius: var(--radius);
     font-size: 0.875rem;
+  }
+
+  .error-banner.auth-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .provider-tag {
+    margin-left: 0.45rem;
+    padding: 0.1rem 0.4rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: hsl(var(--muted-foreground));
+    vertical-align: middle;
+  }
+
+  .account-status.waiting {
+    color: hsl(var(--muted-foreground));
+  }
+
+  .account-status.waiting .status-dot {
+    background-color: hsl(var(--ring));
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 1; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .account-status.waiting .status-dot { animation: none; }
   }
 
   .loading {
