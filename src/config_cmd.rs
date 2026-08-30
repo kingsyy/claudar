@@ -340,7 +340,7 @@ pub fn handle_instances_add(name: &str) -> Result<()> {
         return Err(anyhow!("Instance '{}' already exists", name));
     }
 
-    config.instances.push(claudar_core::config::InstanceConfig { name: name.to_string() });
+    config.instances.push(claudar_core::config::InstanceConfig::new(name));
     config.save()?;
 
     println!("✓ Added instance '{}'", name);

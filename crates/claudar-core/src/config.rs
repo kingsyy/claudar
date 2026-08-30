@@ -80,9 +80,36 @@ impl Default for HistoryConfig {
     }
 }
 
+/// Which service an instance monitors. Serialised in kebab-case (`claude-web`,
+/// `openai-web`) so `config.toml` stays readable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Provider {
+    /// Claude.ai via session cookies — the original and only provider before 0.4.6.
+    #[default]
+    ClaudeWeb,
+    /// ChatGPT via a session cookie exchanged for a bearer token.
+    OpenaiWeb,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceConfig {
     pub name: String,
+    /// Absent in configs written before multi-provider support; those instances
+    /// are all Claude, which is what `Provider::default()` yields.
+    #[serde(default)]
+    pub provider: Provider,
+}
+
+impl InstanceConfig {
+    /// A Claude instance — the shape every call site wanted before providers existed.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into(), provider: Provider::ClaudeWeb }
+    }
+
+    pub fn with_provider(name: impl Into<String>, provider: Provider) -> Self {
+        Self { name: name.into(), provider }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,7 +275,7 @@ impl Config {
     /// Returns the configured instances, or a single "default" instance if none configured.
     pub fn effective_instances(&self) -> Vec<InstanceConfig> {
         if self.instances.is_empty() {
-            vec![InstanceConfig { name: "default".to_string() }]
+            vec![InstanceConfig::new("default")]
         } else {
             self.instances.clone()
         }
@@ -373,13 +400,42 @@ mod tests {
     fn effective_instances_returns_configured() {
         let mut config = Config::default();
         config.instances = vec![
-            InstanceConfig { name: "personal".to_string() },
-            InstanceConfig { name: "work".to_string() },
+            InstanceConfig::new("personal"),
+            InstanceConfig::new("work"),
         ];
         let instances = config.effective_instances();
         assert_eq!(instances.len(), 2);
         assert_eq!(instances[0].name, "personal");
         assert_eq!(instances[1].name, "work");
+    }
+
+    /// Configs written before providers existed have no `provider` key; loading
+    /// one must not fail and must not silently repoint the account at ChatGPT.
+    #[test]
+    fn instance_without_provider_key_loads_as_claude() {
+        let toml = r#"
+            [general]
+            poll_interval_seconds = 900
+            [thresholds]
+            five_hour = [50, 90]
+            seven_day = [50, 90]
+            [notifications]
+            sound = true
+            persistent = false
+            [[instances]]
+            name = "personal"
+        "#;
+        let config: Config = toml::from_str(toml).expect("pre-provider config must still load");
+        assert_eq!(config.instances[0].provider, Provider::ClaudeWeb);
+    }
+
+    #[test]
+    fn provider_round_trips_as_kebab_case() {
+        let instance = InstanceConfig::with_provider("chatgpt", Provider::OpenaiWeb);
+        let encoded = toml::to_string(&instance).unwrap();
+        assert!(encoded.contains(r#"provider = "openai-web""#), "got: {encoded}");
+        let decoded: InstanceConfig = toml::from_str(&encoded).unwrap();
+        assert_eq!(decoded.provider, Provider::OpenaiWeb);
     }
 
     #[test]
@@ -391,7 +447,7 @@ mod tests {
     #[test]
     fn has_instances_true_when_configured() {
         let mut config = Config::default();
-        config.instances = vec![InstanceConfig { name: "test".to_string() }];
+        config.instances = vec![InstanceConfig::new("test")];
         assert!(config.has_instances());
     }
 
@@ -450,8 +506,8 @@ persistent = false
     fn toml_round_trip_with_instances() {
         let mut config = Config::default();
         config.instances = vec![
-            InstanceConfig { name: "personal".to_string() },
-            InstanceConfig { name: "work".to_string() },
+            InstanceConfig::new("personal"),
+            InstanceConfig::new("work"),
         ];
         config.notifications.minutes_before_five_hour_reset = Some(15);
         config.notifications.capacity_warning_five_hour = Some((30, 20));

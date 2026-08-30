@@ -3,9 +3,12 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { formatResetTimestamp, paceVerdict, projectedPeak } from "$lib/dashboard";
+  import { authCommand, providerLabel, type Provider } from "$lib/provider";
 
   type UsagePayload = {
     instance: string;
+    // Absent on payloads from an older backend; treated as Claude.
+    provider?: Provider;
     five_hour_pct: number;
     seven_day_pct: number;
     resets_at: string | null;
@@ -16,6 +19,7 @@
   type InstanceInfo = {
     name: string;
     has_session: boolean;
+    provider: Provider;
   };
 
   let instances = $state<InstanceInfo[]>([]);
@@ -29,6 +33,8 @@
 
   let unlistenUsage: UnlistenFn | undefined;
   let unlistenError: UnlistenFn | undefined;
+  let unlistenAuthComplete: UnlistenFn | undefined;
+  let unlistenAuthError: UnlistenFn | undefined;
   let tickInterval: ReturnType<typeof setInterval> | undefined;
   let copyFeedbackTimeout: ReturnType<typeof setTimeout> | undefined;
   let refreshing = $state(false);
@@ -63,14 +69,29 @@
   }
 
   function loadInstance(inst: InstanceInfo) {
-    if (inst.has_session) {
-      if (!usageByInstance[inst.name]) fetchUsage(inst.name);
-    } else {
-      errorByInstance = {
-        ...errorByInstance,
-        [inst.name]: "No session configured — open Settings to sign in",
-      };
+    // A sessionless account isn't an error to report, it's an action to offer —
+    // see the "Log in" button below. Telling people to go to Settings made them
+    // hunt for a button we could just put in front of them.
+    if (inst.has_session && !usageByInstance[inst.name]) fetchUsage(inst.name);
+  }
+
+  // Accounts whose login is currently open in a browser.
+  let loggingIn = $state<Record<string, boolean>>({});
+
+  async function startLogin(inst: InstanceInfo) {
+    loggingIn = { ...loggingIn, [inst.name]: true };
+    try {
+      await invoke(authCommand(inst.provider), { instance: inst.name });
+    } catch (e) {
+      errorByInstance = { ...errorByInstance, [inst.name]: String(e) };
+      loggingIn = { ...loggingIn, [inst.name]: false };
     }
+  }
+
+  /** Errors a fresh login would plausibly fix, so the button is offered only
+   *  where it's the actual remedy — not for, say, a network blip. */
+  function looksLikeAuthError(message: string): boolean {
+    return /auth|session|login|log in|cookie|token|expired|401|403|decrypt/i.test(message);
   }
 
   async function refresh() {
@@ -169,6 +190,32 @@
       },
     );
 
+    // A login started from here changes `has_session`, so re-read the list and
+    // pull fresh usage for the account that just connected.
+    unlistenAuthComplete = await listen<{ instance: string }>("auth-complete", async (event) => {
+      loggingIn = { ...loggingIn, [event.payload.instance]: false };
+      try {
+        instances = await invoke<InstanceInfo[]>("get_instances");
+      } catch (e) {
+        console.error("get_instances failed", e);
+      }
+      const next = { ...errorByInstance };
+      delete next[event.payload.instance];
+      errorByInstance = next;
+      await fetchUsage(event.payload.instance);
+    });
+
+    unlistenAuthError = await listen<{ instance: string; message: string }>(
+      "auth-error",
+      (event) => {
+        loggingIn = { ...loggingIn, [event.payload.instance]: false };
+        errorByInstance = {
+          ...errorByInstance,
+          [event.payload.instance]: event.payload.message,
+        };
+      },
+    );
+
     tickInterval = setInterval(() => {
       now = Date.now();
     }, 30_000);
@@ -177,6 +224,8 @@
   onDestroy(() => {
     unlistenUsage?.();
     unlistenError?.();
+    unlistenAuthComplete?.();
+    unlistenAuthError?.();
     if (tickInterval) clearInterval(tickInterval);
     if (copyFeedbackTimeout) clearTimeout(copyFeedbackTimeout);
   });
@@ -320,13 +369,41 @@
         <h2 class="instance-name">{inst.name}</h2>
       {/if}
 
-      {#if error}
-        <div class="error-banner" role="alert">⚠ {error}</div>
+      {#if !inst.has_session}
+        <div class="needs-login">
+          <p class="needs-login-text">
+            Not connected to {providerLabel(inst.provider)} yet.
+          </p>
+          <button
+            class="login-btn"
+            onclick={() => startLogin(inst)}
+            disabled={loggingIn[inst.name]}
+          >
+            {loggingIn[inst.name] ? "Waiting for login…" : "Log in now"}
+          </button>
+        </div>
+      {:else if error}
+        <div class="error-banner" role="alert">
+          <span>⚠ {error}</span>
+          {#if looksLikeAuthError(error)}
+            <button
+              class="login-btn"
+              onclick={() => startLogin(inst)}
+              disabled={loggingIn[inst.name]}
+            >
+              {loggingIn[inst.name] ? "Waiting for login…" : `Log in to ${providerLabel(inst.provider)}`}
+            </button>
+          {/if}
+        </div>
       {:else if !usage}
         <div class="instance-loading">
           <div class="spinner small" aria-hidden="true"></div>
           <span>Waiting for first update…</span>
         </div>
+      {:else if usage.provider === "openai-web"}
+        <!-- ChatGPT reports a shorter window too, but only the weekly one is
+             rendered for now. There is no usage prediction for it. -->
+        {@render limit("Weekly", usage.seven_day_pct, usage.seven_day_resets_at, SEVEN_DAY_MS, null, seq, `${inst.name}-weekly`)}
       {:else}
         {@render limit("5-hour", usage.five_hour_pct, usage.resets_at, FIVE_HOUR_MS, usage.predicted_pct, seq, `${inst.name}-5h`)}
         {@render limit("7-day", usage.seven_day_pct, usage.seven_day_resets_at, SEVEN_DAY_MS, null, seq, `${inst.name}-7d`)}
@@ -391,12 +468,53 @@
 
   /* Error / loading */
   .error-banner {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
     background-color: hsl(var(--danger-bg));
     color: hsl(var(--danger-strong));
     border: 1px solid hsl(var(--danger-border));
     border-radius: var(--radius);
     padding: 0.5rem 0.7rem;
     font-size: 0.8rem;
+  }
+
+  /* Sessionless account: the fix is one click, so offer it here rather than
+     sending people off to Settings to find it. */
+  .needs-login {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.55rem;
+    padding: 0.25rem 0;
+  }
+
+  .needs-login-text {
+    margin: 0;
+    font-size: 0.8rem;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .login-btn {
+    padding: 0.4rem 0.85rem;
+    border: none;
+    border-radius: var(--radius);
+    background-color: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+    font-family: inherit;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .login-btn:hover:not(:disabled) {
+    opacity: 0.9;
+  }
+
+  .login-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
 
   .loading {

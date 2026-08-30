@@ -9,6 +9,7 @@ A Tauri 2.0 desktop app that wraps the existing `claudar` daemon with a full GUI
 | [01-landscape.md](./01-landscape.md) | Framework options, charting libraries, tray platform caveats, daemon architecture options |
 | [02-architecture.md](./02-architecture.md) | Component map, process model, screen flow, data flow, IPC surface, Cargo workspace layout |
 | [03-decisions.md](./03-decisions.md) | All key decisions with rationale and alternatives considered |
+| [04-multi-provider.md](./04-multi-provider.md) | Research + decisions for monitoring OpenAI/Codex and other providers alongside Claude |
 | [references.md](./references.md) | Every URL consulted, grouped by topic |
 
 ---
