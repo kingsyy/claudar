@@ -2,9 +2,9 @@
 intent: share
 stage: shared
 share_target: maintained
-next: Runtime-verify the 0.4.5 build — drag-and-drop account ordering (drag gesture, persistence across restart, tray menu order), the reorganised Settings (Accounts/About tabs, add-account wizard overlay), the Dashboard progressbar semantics with a screen reader, and that the tray icon/menu still update live after the main-thread fix; turn `claudar setup` into a real prompt-and-paste flow (org_id / session_key / cookie, validate via API, write the session file) and rewrite README's stale "## Setup" section with it; runtime-verify the web dashboard (bind/restart-on-config-change/agent API gating), the threshold-list editing UI, and notifications/login/start-minimized on macOS/Windows; code-sign/notarize for distribution. Parked behind that: multi-provider support (OpenAI/Codex) — researched and decided in `docs/04-multi-provider.md`, starting with a no-behaviour-change split of `History.svelte`
+next: Runtime-verify the 0.4.6 release — add a ChatGPT account through the built app and confirm the login lands on chatgpt.com (the 0.4.6 fixes went out without this pass); diagnose `decryption failed: aead::Error` on both existing accounts, which currently stops them polling entirely; then drag-and-drop account ordering (drag gesture, persistence across restart, tray menu order), the reorganised Settings (Accounts/About tabs, add-account wizard overlay), the Dashboard progressbar semantics with a screen reader, and that the tray icon/menu still update live after the main-thread fix; turn `claudar setup` into a real prompt-and-paste flow (org_id / session_key / cookie, validate via API, write the session file) and rewrite README's stale "## Setup" section with it; runtime-verify the web dashboard (bind/restart-on-config-change/agent API gating), the threshold-list editing UI, and notifications/login/start-minimized on macOS/Windows; code-sign/notarize for distribution. Parked behind that: whether the ChatGPT bar should notify (it is display-only today), and the `Gauge`/`UsageProvider` generalisation in `docs/04-multi-provider.md`
 blocker: null
-updated: 2026-08-18
+updated: 2026-08-30
 ---
 
 # Claudar — Monitor Claude.ai usage limits with native desktop notifications
@@ -28,6 +28,19 @@ the GUI app double-notifies (two monitors, one account); the GUI can't detect th
 
 No feature work remains in the build plan. What's left is distribution and verification — see `docs/human-todo.md`.
 
+**ChatGPT weekly bar shipped as 0.4.6 (2026-08-30).** A second provider (`openai-web`) renders one
+weekly usage bar on the Dashboard alongside Claude's two. Auth is a browser login that mints a
+bearer from the session cookie — no OAuth, no Codex install (see DEVLOG 2026-08-27). Display-only:
+no notifications, no history, no `Gauge` generalisation. The 0.4.5 build of this shipped with a
+Claude-only login path that sent ChatGPT accounts to claude.ai and trapped the UI in a wizard with
+no cancel; 0.4.6 fixes that and replaces the Dashboard's "open Settings to sign in" text with a
+**Log in now** button. **The 0.4.6 release was cut without a runtime pass** — the ChatGPT login has
+not been exercised in a built app.
+
+**Both live accounts are failing to poll (2026-08-30).** `decryption failed: aead::Error` on
+`personal` and `work` in a dev run — a session-key/keychain mismatch, unrelated to the provider
+work, undiagnosed.
+
 **Multi-provider researched, not started (2026-08-18).** `docs/04-multi-provider.md` records the
 research and two decisions for monitoring OpenAI/Codex alongside Claude. OpenAI's
 `backend-api/wham/usage` returns the same shape Claudar already models (percent-of-window +
@@ -49,6 +62,11 @@ PKCE OAuth flow. One live call is still needed to pin the minimal header set.
 
 ## Next
 
-- **Option A:** Ship the tray fix as 0.4.5 and confirm the icon/menu still update on the running app.
-- **Option B:** Code-sign/notarize the macOS `.app` for testable distribution, then run Linux/Windows builds on actual hardware (`docs/building.md` has the steps).
-- **Option C:** Test the current build on real hardware as-is (no code-signing, local distribution only).
+- **Option A:** Install the 0.4.6 release and walk the ChatGPT flow end to end — add an account,
+  confirm the browser opens chatgpt.com, confirm the weekly bar renders. This is the pass 0.4.6
+  shipped without.
+- **Option B:** Diagnose `decryption failed: aead::Error` on `personal` and `work`. Neither account
+  is polling until this is fixed, and it predates the provider work.
+- **Option C:** Code-sign/notarize for distribution outside this machine (`docs/building.md`), which
+  is what still separates the CI release assets from something a stranger can open without
+  right-click → Open.

@@ -1,3 +1,42 @@
+## 2026-08-30 · The ChatGPT bar shipped with a Claude-only login path (0.4.6)
+
+**What:** Runtime-testing the 0.4.5 build found three linked bugs in the ChatGPT account flow, all
+in the UI layer — the backend was correct throughout. `InstanceInfo` didn't carry `provider`, so
+`Accounts.svelte` mounted the hardcoded Claude `Wizard` for *every* account: a ChatGPT account's
+"Login" button read "Log in to Claude.ai" and invoked `start_auth`, opening claude.ai. The wizard
+has no cancel and renders as a `fixed; inset:0; z-index:60` overlay above the nav, so landing there
+by mistake trapped the whole app until force-quit. And nothing listened for `auth-error` in
+Accounts, so a failed ChatGPT login looked like nothing had happened at all.
+
+Fixes: `provider` added to `InstanceInfo`; a new `$lib/provider.ts` maps provider → login command
+(`start_chatgpt_auth` vs `start_auth`), label, and a `normalizeProvider` back-compat default; the
+wizard takes an optional `onCancel`; Accounts surfaces ChatGPT auth progress and errors. The
+Dashboard's "No session configured — open Settings to sign in" became a **Log in now** button, and
+auth-shaped errors get one too.
+
+**Why:** The bug is one missing field, but the shape of it is the lesson: `Wizard.svelte` was
+written when Claude was the only provider, so "log in" and "log in to Claude" were the same thing.
+The ChatGPT pass added a provider to the *config* and the *poll path* but not to the *identity the
+UI reads*, leaving one hardcoded assumption behind — and it sat exactly where a new ChatGPT user
+would hit it first. Routing now goes through one keyed helper rather than a branch at each call
+site, so a third provider can't reintroduce the same class of bug in a component that forgot to ask.
+
+Two smaller calls. Login moved onto the Dashboard rather than deep-linking to Settings: the fix is
+a single command invoke, so sending people elsewhere to find a button we could put in front of them
+was the actual defect in that copy. And the error-banner button is gated on a regex over the message
+(`auth|session|cookie|token|expired|401|403|decrypt`) rather than shown for every error, so it
+appears only where a fresh login is the real remedy — this also covers the `decryption failed:
+aead::Error` seen on both live accounts, where re-login rewrites the session file.
+
+**Verification:** `cargo check` clean, 164 Rust tests, 28 frontend tests (7 new in
+`provider.test.ts`, covering that the two providers never resolve to the same auth command).
+Released as 0.4.6. **Not runtime-verified** — the DMG was cut and tagged without a manual pass
+through the ChatGPT login in the built app; that is the first thing to do on the next session.
+
+**Next:** Add a ChatGPT account through the shipped 0.4.6 build and confirm the browser lands on
+chatgpt.com. Then diagnose the `decryption failed: aead::Error` on the two existing accounts —
+unrelated to this branch, and it means neither account is currently polling.
+
 ## 2026-08-27 · ChatGPT weekly bar: HTTP/1.1 beats Cloudflare, so no OAuth needed
 
 **What:** Added a ChatGPT (`openai-web`) provider that renders one weekly usage bar on the
