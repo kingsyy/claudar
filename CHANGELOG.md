@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.7] — 2026-09-21
+
 ### Added
 
 - **ChatGPT accounts are now first-class.** Both of ChatGPT's rolling windows —
@@ -20,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - In-app updater. Claudar checks GitHub for new releases and can download and
   install them for you from **Settings → About**, showing what changed before
   you commit to the update.
+- **Custom pace zones.** The colored bands on each usage bar (on pace, sweet
+  spot, over pace, critical) are now editable per zone — thresholds and colors —
+  instead of fixed tiers.
+
+### Fixed
+
+- **ChatGPT login was never detected.** The login window would complete, but
+  Claudar kept waiting: it looked for the session cookie under one exact name,
+  and ChatGPT's auth provider splits that cookie into numbered chunks once the
+  token gets large. Detection now recognizes the chunked form and reassembles it.
 
 ## [0.4.6] — 2026-08-30
 
