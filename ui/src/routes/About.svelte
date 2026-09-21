@@ -13,8 +13,22 @@
     repository: string;
   };
 
+  type UpdateInfo = {
+    available: boolean;
+    current_version: string;
+    version: string | null;
+    notes: string | null;
+    pub_date: string | null;
+    changes_url: string | null;
+  };
+
   let info = $state<AboutInfo | null>(null);
   let loadError = $state<string | null>(null);
+
+  let update = $state<UpdateInfo | null>(null);
+  let checking = $state(false);
+  let installing = $state(false);
+  let updateError = $state<string | null>(null);
 
   onMount(async () => {
     try {
@@ -22,7 +36,77 @@
     } catch (e) {
       loadError = String(e);
     }
+    // Check on open rather than behind a button press: the whole point is that
+    // someone who never thinks to check still finds out they are behind.
+    checkForUpdate();
   });
+
+  async function checkForUpdate() {
+    checking = true;
+    updateError = null;
+    try {
+      update = await invoke<UpdateInfo>("check_update");
+    } catch (e) {
+      updateError = String(e);
+    } finally {
+      checking = false;
+    }
+  }
+
+  async function installUpdate() {
+    installing = true;
+    updateError = null;
+    try {
+      // On success the app is replaced and relaunched, so this never returns.
+      await invoke("install_update");
+    } catch (e) {
+      updateError = String(e);
+      installing = false;
+    }
+  }
+
+  async function openChanges() {
+    if (!update?.changes_url) return;
+    try {
+      await invoke("open_url", { url: update.changes_url });
+    } catch (e) {
+      updateError = String(e);
+    }
+  }
+
+  /** "released 3 days ago" reads better than an RFC 3339 timestamp, and is a
+   *  truer staleness signal than a release count -- published version numbers
+   *  have gaps, so counting them would be wrong. */
+  function releasedAgo(pubDate: string | null): string {
+    if (!pubDate) return "";
+    const then = new Date(pubDate).getTime();
+    if (Number.isNaN(then)) return "";
+    const days = Math.floor((Date.now() - then) / 86_400_000);
+    if (days < 1) return "released today";
+    if (days === 1) return "released yesterday";
+    if (days < 30) return `released ${days} days ago`;
+    const months = Math.floor(days / 30);
+    return months === 1 ? "released a month ago" : `released ${months} months ago`;
+  }
+
+  /** Minimal renderer for the changelog subset we publish: `### Heading`,
+   *  `- bullet`, and `**bold**`. Avoids pulling in a markdown dependency for
+   *  text whose format this repo controls. */
+  function renderNotes(notes: string): Array<{ kind: "heading" | "item"; text: string }> {
+    const blocks: Array<{ kind: "heading" | "item"; text: string }> = [];
+    for (const raw of notes.split("\n")) {
+      const line = raw.trim();
+      if (line.startsWith("###")) {
+        blocks.push({ kind: "heading", text: line.replace(/^#+\s*/, "") });
+      } else if (line.startsWith("- ")) {
+        blocks.push({ kind: "item", text: line.slice(2) });
+      } else if (line && blocks.length && blocks[blocks.length - 1].kind === "item") {
+        // Continuation of a wrapped bullet.
+        blocks[blocks.length - 1].text += " " + line;
+      }
+    }
+    return blocks.map((b) => ({ ...b, text: b.text.replace(/\*\*/g, "") }));
+  }
 
   async function openRepo() {
     if (!info) return;
@@ -55,9 +139,66 @@
         </svg>
         <div>
           <div class="brand-name">Claudar</div>
-          <div class="brand-version">v{info.version}</div>
+          <div class="brand-version">
+            {#if update?.available && update.version}
+              v{update.current_version} → v{update.version}
+            {:else}
+              v{info.version}
+            {/if}
+          </div>
         </div>
       </div>
+
+      <section class="update" aria-live="polite">
+        {#if checking}
+          <div class="update-status muted">Checking for updates…</div>
+        {:else if updateError}
+          <div class="update-status muted">Couldn't check for updates.</div>
+          <p class="update-detail">{updateError}</p>
+          <button class="btn-secondary" onclick={checkForUpdate}>Try again</button>
+        {:else if update?.available && update.version}
+          <div class="update-status">
+            <strong>Version {update.version} is available</strong>
+            {#if releasedAgo(update.pub_date)}
+              <span class="muted"> · {releasedAgo(update.pub_date)}</span>
+            {/if}
+          </div>
+
+          {#if update.notes}
+            <div class="notes">
+              <div class="notes-title">What's new</div>
+              {#each renderNotes(update.notes) as block}
+                {#if block.kind === "heading"}
+                  <div class="notes-heading">{block.text}</div>
+                {:else}
+                  <div class="notes-item">{block.text}</div>
+                {/if}
+              {/each}
+            </div>
+          {/if}
+
+          <div class="update-actions">
+            <button class="btn-primary" onclick={installUpdate} disabled={installing}>
+              {installing ? "Downloading…" : "Update and restart"}
+            </button>
+            {#if update.changes_url}
+              <button class="link" onclick={openChanges}>
+                All changes since v{update.current_version} ↗
+              </button>
+            {/if}
+          </div>
+          {#if installing}
+            <p class="update-detail">
+              Claudar will close and reopen. Monitoring resumes automatically.
+            </p>
+          {/if}
+        {:else}
+          <div class="update-status muted">
+            Up to date
+            <button class="link check-again" onclick={checkForUpdate}>Check again</button>
+          </div>
+        {/if}
+      </section>
 
       <dl class="info-list">
         <div class="info-row">
@@ -146,6 +287,114 @@
   .brand-version {
     font-size: 0.8rem;
     color: hsl(var(--muted-foreground));
+  }
+
+  .update {
+    padding-bottom: 1.25rem;
+    margin-bottom: 1.25rem;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+
+  .update-status {
+    font-size: 0.875rem;
+    color: hsl(var(--foreground));
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  .update-status.muted,
+  .update-status .muted {
+    color: hsl(var(--muted-foreground));
+  }
+
+  .update-detail {
+    font-size: 0.8rem;
+    color: hsl(var(--muted-foreground));
+    margin: 0.5rem 0 0;
+  }
+
+  .notes {
+    margin-top: 0.875rem;
+    padding: 0.875rem 1rem;
+    background-color: hsl(var(--muted, 210 40% 96%) / 0.5);
+    border-radius: 0.375rem;
+    max-height: 14rem;
+    overflow-y: auto;
+  }
+
+  .notes-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: hsl(var(--muted-foreground));
+    margin-bottom: 0.5rem;
+  }
+
+  .notes-heading {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+    margin-top: 0.625rem;
+  }
+
+  .notes-heading:first-of-type {
+    margin-top: 0;
+  }
+
+  .notes-item {
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: hsl(var(--foreground));
+    padding-left: 0.875rem;
+    text-indent: -0.875rem;
+    margin-top: 0.25rem;
+  }
+
+  .notes-item::before {
+    content: "• ";
+    color: hsl(var(--muted-foreground));
+  }
+
+  .update-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 0.875rem;
+    flex-wrap: wrap;
+  }
+
+  .btn-primary,
+  .btn-secondary {
+    font: inherit;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    padding: 0.4375rem 0.875rem;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+
+  .btn-primary {
+    background-color: hsl(var(--primary, 222 47% 40%));
+    color: hsl(var(--primary-foreground, 0 0% 100%));
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  .btn-secondary {
+    background-color: transparent;
+    border-color: hsl(var(--border));
+    color: hsl(var(--foreground));
+    margin-top: 0.625rem;
+  }
+
+  .check-again {
+    font-size: 0.8rem;
   }
 
   .info-list {

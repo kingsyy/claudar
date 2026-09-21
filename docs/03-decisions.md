@@ -158,7 +158,6 @@
 |---------|-------------|
 | Keychain / system credential store | Security audit or user reports for plaintext session concern |
 | Windows Chrome detection | Targeting Windows as a first-class distribution platform |
-| In-app update (tauri-plugin-updater) | Preparing a public release with auto-update channel |
 | Dark/light mode theming | shadcn-svelte theming stabilises or user requests it |
 | Multiple history instances side-by-side | More than one account is common among users |
 | CLI deprecation | If CLI usage drops to near-zero after GUI ships |

@@ -9,8 +9,29 @@ permissions:
   contents: write
 
 jobs:
+  notes:
+    name: Extract release notes
+    runs-on: ubuntu-latest
+    outputs:
+      body: ${{ steps.changelog.outputs.body }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Extracted once, on Linux: the build matrix includes Windows, where the
+      # awk-based script would depend on Git Bash being on PATH.
+      - name: Extract this version's CHANGELOG section
+        id: changelog
+        run: |
+          {
+            echo "body<<CHANGELOG_EOF"
+            scripts/changelog-extract.sh "${{ github.ref_name }}"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
   build:
     name: Build (${{ matrix.platform }})
+    needs: notes
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -75,12 +96,21 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the updater artifacts. This is separate from Apple/Authenticode
+          # code signing -- it is the minisign key the shipped app verifies before
+          # it will install anything. Generate with `cargo tauri signer generate`.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: src-tauri
           tagName: ${{ github.ref_name }}
           releaseName: "Claudar ${{ github.ref_name }}"
+          releaseBody: ${{ needs.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
+          # Publishes latest.json alongside the bundles; the app's updater
+          # endpoint points at the latest release's copy.
+          includeUpdaterJson: true
           # Frontend is prebuilt above; the CI config override blanks the
           # in-config beforeBuildCommand (its `npm run build` resolves against
           # ui/, not the repo root). Path is relative to projectPath.

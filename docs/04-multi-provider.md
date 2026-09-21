@@ -18,8 +18,14 @@ show OpenAI (and later other providers) alongside Claude in one dashboard.
 >   `primary_window`; this account has it in `secondary_window` with a 5-hour primary. Select the
 >   weekly window **by duration**, never by field name.
 > - **§9's sequencing was not followed.** The `History.svelte` split and the `Gauge` model were
->   both skipped: a display-only weekly bar needs neither. They remain the right plan for when
->   history and notifications are wanted.
+>   both skipped: a display-only weekly bar needs neither.
+>
+> **Updated 2026-08-31.** History and notifications for ChatGPT shipped *without* either of those
+> steps. The account now reports a 5-hour window as well, so both of its windows map onto Claudar's
+> existing pair and reuse `process_limit`, `state.rs` and `HistoryRecord` unchanged — the fixed
+> two-window model turned out to fit a second provider exactly. `Gauge` remains the right plan for
+> the first provider whose limits are *not* two rolling windows (spend, balances, `additional_rate_limits`),
+> and §3.2 still holds: that provider will come.
 
 Everything below is marked **[verified]** (I ran it / read it) or **[inferred]** (reasoned, needs a
 live check). Don't build on an inferred line without checking it first.

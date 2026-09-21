@@ -15,6 +15,27 @@
     type StatusPalette,
     type TextSize,
   } from "../lib/visuals.svelte";
+  import {
+    derivedZoneHex,
+    dismissUndo as dismissZoneUndo,
+    hasLowContrastOverride,
+    hexToHsl,
+    hslToHex,
+    moveZoneBoundary,
+    overrideZoneColor,
+    paceZones,
+    recolorZone,
+    relabelZone,
+    removeZone,
+    resetZoneOverrides,
+    resetZones,
+    splitZone,
+    undoEdit as undoZoneEdit,
+    useColorblindZones,
+    zoneStyle,
+    type PaceWindow,
+    type PaceZone,
+  } from "../lib/paceZones.svelte";
 
   type Config = {
     general: { poll_interval_seconds: number; timezone: string; show_tray_icon: boolean; start_minimized: boolean; show_pace_delta: boolean };
@@ -65,6 +86,53 @@
     event.preventDefault();
     activeTab = TABS[next].id;
     document.getElementById(`settings-tab-${TABS[next].id}`)?.focus();
+  }
+
+  // Which window's pace-zone editor is showing — each window has its own
+  // independent zone list, so this is purely a display toggle, not form state.
+  let zoneWindow = $state<PaceWindow>("five_hour");
+
+  const ZONE_WINDOWS: { id: PaceWindow; label: string }[] = [
+    { id: "five_hour", label: "5-hour" },
+    { id: "seven_day", label: "7-day" },
+  ];
+
+  function zoneLowerBound(zones: PaceZone[], index: number): number {
+    return index === 0 ? 0 : (zones[index - 1].upTo as number);
+  }
+
+  /** How wide to draw a zone's segment in the proportional preview strip —
+   *  the open-ended last zone has no real upper bound, so it gets a fixed
+   *  representative width instead of an infinite one. */
+  function zoneSegmentWidth(zones: PaceZone[], index: number): number {
+    const upper = zones[index].upTo;
+    return upper != null ? Math.max(upper - zoneLowerBound(zones, index), 1) : 20;
+  }
+
+  function handleZoneColorChange(window: PaceWindow, id: string, hex: string) {
+    const { hue, saturation } = hexToHsl(hex);
+    recolorZone(window, id, hue, saturation);
+  }
+
+  // Which zones have their per-channel "Advanced" override panel open — pure
+  // display state, not persisted (it always starts collapsed).
+  let expandedZones = $state<Set<string>>(new Set());
+
+  function toggleZoneAdvanced(id: string) {
+    const next = new Set(expandedZones);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    expandedZones = next;
+  }
+
+  /** The "+" button doesn't ask where to split — it picks the midpoint (or,
+   *  for the open-ended last zone, a reasonable extension) and the user then
+   *  fine-tunes the new boundary's number directly. */
+  function handleSplitZone(window: PaceWindow, zones: PaceZone[], index: number) {
+    const lower = zoneLowerBound(zones, index);
+    const upper = zones[index].upTo;
+    const splitAt = upper != null ? Math.round((lower + upper) / 2) : lower + 25;
+    splitZone(window, zones[index].id, splitAt);
   }
 
   // Form-bound values
@@ -812,6 +880,153 @@
             />
           </div>
         </section>
+
+        <section class="card">
+          <h2>Pace bar colours</h2>
+          <p class="hint">
+            Add or remove the breakpoints between zones and pick a colour for each.
+            Brightness adjusts automatically for readable contrast in light, dark, and
+            high-contrast mode — you're only choosing the hue.
+          </p>
+          <div class="palette-options" role="radiogroup" aria-label="Pace bar window">
+            {#each ZONE_WINDOWS as w}
+              <button
+                type="button"
+                class="palette-option"
+                class:selected={zoneWindow === w.id}
+                role="radio"
+                aria-checked={zoneWindow === w.id}
+                onclick={() => (zoneWindow = w.id)}
+              >
+                {w.label}
+              </button>
+            {/each}
+          </div>
+
+          <div class="zone-preview" aria-hidden="true">
+            {#each paceZones[zoneWindow] as zone, i (zone.id)}
+              <div
+                class="zone-segment zone-fill"
+                style={zoneStyle(zone, `flex-grow: ${zoneSegmentWidth(paceZones[zoneWindow], i)}`)}
+              ></div>
+            {/each}
+          </div>
+
+          <ul class="zone-rows">
+            {#each paceZones[zoneWindow] as zone, i (zone.id)}
+              {@const zones = paceZones[zoneWindow]}
+              <li class="zone-row-container">
+                <div class="zone-row">
+                  <input
+                    type="color"
+                    class="zone-swatch"
+                    aria-label={`${zone.label} colour`}
+                    value={hslToHex(zone.hue, zone.saturation, 45)}
+                    onchange={(e) => handleZoneColorChange(zoneWindow, zone.id, e.currentTarget.value)}
+                  />
+                  <input
+                    type="text"
+                    class="zone-label-input"
+                    aria-label={`${zone.label} name`}
+                    value={zone.label}
+                    onchange={(e) => relabelZone(zoneWindow, zone.id, e.currentTarget.value)}
+                  />
+                  <span class="zone-from">from {zoneLowerBound(zones, i)}%</span>
+                  {#if zone.upTo != null}
+                    <label class="zone-to">
+                      to
+                      <input
+                        type="number"
+                        min={zoneLowerBound(zones, i) + 1}
+                        max="500"
+                        value={zone.upTo}
+                        aria-label={`${zone.label} upper bound`}
+                        onchange={(e) => moveZoneBoundary(zoneWindow, zone.id, Number(e.currentTarget.value))}
+                      />%
+                    </label>
+                  {:else}
+                    <span class="zone-to">and up</span>
+                  {/if}
+                  <button
+                    type="button"
+                    class="zone-advanced-toggle"
+                    class:selected={expandedZones.has(zone.id)}
+                    aria-expanded={expandedZones.has(zone.id)}
+                    aria-label={`${expandedZones.has(zone.id) ? "Hide" : "Show"} advanced colour options for ${zone.label}`}
+                    onclick={() => toggleZoneAdvanced(zone.id)}
+                  >⚙</button>
+                  <button
+                    type="button"
+                    class="zone-split"
+                    aria-label={`Split the ${zone.label} zone`}
+                    disabled={zones.length >= 8}
+                    onclick={() => handleSplitZone(zoneWindow, zones, i)}
+                  >+</button>
+                  <button
+                    type="button"
+                    class="zone-remove"
+                    aria-label={`Remove the ${zone.label} zone`}
+                    disabled={zones.length <= 1}
+                    onclick={() => removeZone(zoneWindow, zone.id)}
+                  >×</button>
+                </div>
+                {#if expandedZones.has(zone.id)}
+                  <div class="zone-advanced">
+                    <label class="zone-advanced-field">
+                      Background
+                      <input
+                        type="color"
+                        value={zone.overrides?.bg ?? derivedZoneHex(zone, "bg")}
+                        aria-label={`${zone.label} background override`}
+                        onchange={(e) => overrideZoneColor(zoneWindow, zone.id, "bg", e.currentTarget.value)}
+                      />
+                    </label>
+                    <label class="zone-advanced-field">
+                      Border
+                      <input
+                        type="color"
+                        value={zone.overrides?.border ?? derivedZoneHex(zone, "border")}
+                        aria-label={`${zone.label} border override`}
+                        onchange={(e) => overrideZoneColor(zoneWindow, zone.id, "border", e.currentTarget.value)}
+                      />
+                    </label>
+                    <label class="zone-advanced-field">
+                      Text
+                      <input
+                        type="color"
+                        value={zone.overrides?.text ?? derivedZoneHex(zone, "text")}
+                        aria-label={`${zone.label} text override`}
+                        onchange={(e) => overrideZoneColor(zoneWindow, zone.id, "text", e.currentTarget.value)}
+                      />
+                    </label>
+                    {#if zone.overrides}
+                      <button
+                        type="button"
+                        class="zone-advanced-reset"
+                        onclick={() => resetZoneOverrides(zoneWindow, zone.id)}
+                      >Use automatic colours</button>
+                    {/if}
+                    {#if hasLowContrastOverride(zone)}
+                      <p class="zone-contrast-warning" role="alert">Low contrast — may be hard to read.</p>
+                    {/if}
+                    <p class="hint zone-advanced-hint">
+                      These are literal colours, not a hue — they won't adjust between light, dark, and high-contrast mode the way the swatch above does.
+                    </p>
+                  </div>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+
+          <div class="zone-actions">
+            <button type="button" class="zone-preset-button" onclick={() => resetZones(zoneWindow)}>
+              Reset to defaults
+            </button>
+            <button type="button" class="zone-preset-button" onclick={() => useColorblindZones(zoneWindow)}>
+              Use colour-blind defaults
+            </button>
+          </div>
+        </section>
       {/if}
 
       {#if activeTab === "thresholds"}
@@ -1230,6 +1445,16 @@
   </div>
 {/if}
 
+{#if paceZones.pendingUndo}
+  <div class="confirm-toast" role="status" aria-label="Pace bar colour change saved">
+    <span>Pace bar colours saved. Undo? ({paceZones.secondsLeft}s)</span>
+    <div class="confirm-toast-actions">
+      <button type="button" class="confirm-toast-undo" onclick={undoZoneEdit}>Undo</button>
+      <button type="button" class="confirm-toast-dismiss" onclick={dismissZoneUndo}>Dismiss</button>
+    </div>
+  </div>
+{/if}
+
 <style>
   .page {
     padding: 2rem;
@@ -1627,6 +1852,268 @@
 
   .toast.error {
     background-color: hsl(var(--danger));
+  }
+
+  .zone-preview {
+    display: flex;
+    height: 14px;
+    border-radius: 99px;
+    overflow: hidden;
+    margin: 0.25rem 0 1rem;
+    box-shadow: inset 0 1px 2px hsl(0 0% 0% / 0.10);
+  }
+
+  .zone-segment {
+    height: 100%;
+  }
+
+  .zone-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    list-style: none;
+    margin: 0 0 1rem;
+    padding: 0;
+  }
+
+  .zone-row-container {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .zone-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: var(--radius);
+    background-color: hsl(var(--muted));
+    font-size: 0.8rem;
+  }
+
+  .zone-swatch {
+    width: 1.75rem;
+    height: 1.75rem;
+    padding: 0;
+    border: 1px solid hsl(var(--border));
+    border-radius: 50%;
+    background: none;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .zone-label-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    font: inherit;
+    font-size: 0.8rem;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+
+  .zone-from {
+    color: hsl(var(--muted-foreground));
+    white-space: nowrap;
+  }
+
+  .zone-to {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .zone-to input {
+    width: 4rem;
+    padding: 0.3rem 0.4rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    font: inherit;
+    font-size: 0.8rem;
+    text-align: right;
+  }
+
+  .zone-split,
+  .zone-remove {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    flex-shrink: 0;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: hsl(var(--muted-foreground));
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: all 0.12s;
+  }
+
+  .zone-split:hover:not(:disabled) {
+    background-color: hsl(var(--success-bg));
+    color: hsl(var(--success-strong));
+  }
+
+  .zone-remove:hover:not(:disabled) {
+    background-color: hsl(var(--danger-bg));
+    color: hsl(var(--danger-strong));
+  }
+
+  .zone-split:disabled,
+  .zone-remove:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  .zone-advanced-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    flex-shrink: 0;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: hsl(var(--muted-foreground));
+    font-size: 0.9rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: all 0.12s;
+  }
+
+  .zone-advanced-toggle:hover,
+  .zone-advanced-toggle.selected {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+
+  .zone-advanced {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.6rem 0.75rem 0.75rem 2.75rem;
+    font-size: 0.78rem;
+  }
+
+  .zone-advanced-field {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .zone-advanced-field input {
+    width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+    border: 1px solid hsl(var(--border));
+    border-radius: 50%;
+    background: none;
+    cursor: pointer;
+  }
+
+  .zone-advanced-reset {
+    padding: 0.3rem 0.6rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font: inherit;
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+
+  .zone-advanced-reset:hover {
+    background: hsl(var(--muted));
+  }
+
+  .zone-contrast-warning {
+    margin: 0;
+    color: hsl(var(--warning-strong));
+    font-weight: 600;
+    flex-basis: 100%;
+  }
+
+  .zone-advanced-hint {
+    margin: 0;
+    flex-basis: 100%;
+  }
+
+  .zone-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .zone-preset-button {
+    padding: 0.4rem 0.8rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+
+  .zone-preset-button:hover {
+    background: hsl(var(--muted));
+  }
+
+  /* The edit is already saved by the time this shows — it's an "Undo"
+     offer, not a "confirm or lose it" gate. An earlier version reverted on
+     timeout, which silently threw work away if you switched to the
+     Dashboard to check the result before responding. */
+  .confirm-toast {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem 1.1rem;
+    background-color: hsl(var(--card));
+    color: hsl(var(--card-foreground));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    font-size: 0.85rem;
+    box-shadow: 0 8px 30px hsl(222.2 84% 4.9% / 0.3);
+    z-index: 100;
+  }
+
+  .confirm-toast-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+
+  .confirm-toast-dismiss,
+  .confirm-toast-undo {
+    padding: 0.35rem 0.7rem;
+    border: none;
+    border-radius: var(--radius);
+    font: inherit;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .confirm-toast-dismiss {
+    background-color: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+  }
+
+  .confirm-toast-undo {
+    background-color: hsl(var(--muted));
+    color: hsl(var(--foreground));
   }
 
   .history-presets {

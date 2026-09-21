@@ -270,7 +270,15 @@ async fn capture_cookies(
                             // Only inspect getAllCookies responses (id >= 10).
                             if v.get("id").and_then(|i| i.as_u64()).map_or(false, |id| id >= 10) {
                                 let found = extract_cookies(&v, target.domains);
-                                if found.iter().any(|(k, val)| k == target.sentinel && !val.is_empty()) {
+                                // NextAuth (chatgpt.com) splits a large session cookie into
+                                // `<sentinel>.0`, `.1`, ... chunks when it exceeds ~4KB, so the
+                                // exact sentinel name may never appear on its own — match by
+                                // prefix too.
+                                if found.iter().any(|(k, val)| {
+                                    !val.is_empty()
+                                        && (k == target.sentinel
+                                            || k.starts_with(&format!("{}.", target.sentinel)))
+                                }) {
                                     cookies = found;
                                     break 'login;
                                 }
@@ -326,13 +334,37 @@ pub async fn run_chrome_auth(profile_path: PathBuf, debug_port: u16) -> Result<S
 /// alone is enough to mint bearers, and it lasts ~90 days.
 pub async fn run_chatgpt_auth(profile_path: PathBuf, debug_port: u16) -> Result<OpenAiSession> {
     let cookies = capture_cookies(profile_path, debug_port, &CHATGPT_TARGET).await?;
-
-    let session_token = cookies
-        .iter()
-        .find(|(k, _)| k == CHATGPT_TARGET.sentinel)
-        .map(|(_, v)| v.clone())
-        .filter(|v| !v.is_empty())
+    let session_token = reassemble_session_cookie(&cookies, CHATGPT_TARGET.sentinel)
         .ok_or_else(|| anyhow!("ChatGPT session cookie not found — login may not have completed"))?;
 
     Ok(OpenAiSession::new(session_token))
+}
+
+/// Reassemble a (possibly NextAuth-chunked) cookie into one value.
+///
+/// NextAuth splits a session cookie that exceeds ~4KB into `<name>.0`, `<name>.1`,
+/// ... and expects the concatenation of those chunks, in order, to equal what a
+/// single unsplit cookie would have held. A short session token still comes
+/// through as the plain `<name>` cookie, which this also handles (chunk index
+/// "none" sorts first).
+fn reassemble_session_cookie(cookies: &[(String, String)], base_name: &str) -> Option<String> {
+    let mut chunks: Vec<(Option<u32>, &str)> = cookies
+        .iter()
+        .filter_map(|(k, v)| {
+            if k == base_name {
+                Some((None, v.as_str()))
+            } else if let Some(suffix) = k.strip_prefix(&format!("{}.", base_name)) {
+                suffix.parse::<u32>().ok().map(|n| (Some(n), v.as_str()))
+            } else {
+                None
+            }
+        })
+        .filter(|(_, v)| !v.is_empty())
+        .collect();
+
+    if chunks.is_empty() {
+        return None;
+    }
+    chunks.sort_by_key(|(n, _)| *n);
+    Some(chunks.into_iter().map(|(_, v)| v).collect::<String>())
 }

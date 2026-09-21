@@ -1,20 +1,37 @@
+import { normalizeProvider } from "$lib/provider";
+
 const MIN_PROJECTION_TIME_PCT = 5;
 
-/** A projected overage of up to this amount is considered acceptable pace. */
-export const ACCEPTABLE_OVERAGE_PCT = 10;
-/** Above this projection, the pace needs urgent attention rather than a warning. */
-export const CRITICAL_PROJECTED_PEAK_PCT = 125;
-
-export type PaceVerdict = "ok" | "warn" | "crit";
+/** An explicit per-channel color that overrides the zone's auto-derived
+ *  shade — a literal hex, not a hue, so it does not adapt across light/dark/
+ *  super-dark the way the derived shades do. Absent channels keep deriving
+ *  from `hue`/`saturation` as before. */
+export type PaceZoneOverrides = {
+  bg?: string;
+  border?: string;
+  text?: string;
+};
 
 /**
- * Give pace a clear, three-level meaning: green through a small (<=10%) buffer,
- * amber for a moderate overage, and red only for a large overage or a cap hit.
+ * A user-editable band of the pace bar. `upTo` is this zone's exclusive upper
+ * bound (on the projected-peak percentage); `null` only on the last zone,
+ * which is open-ended above. Zones are a sorted, contiguous, non-overlapping
+ * list by construction — there's no separate min, since it's always the
+ * previous zone's `upTo` (or 0 for the first).
  */
-export function paceVerdict(pct: number, peak: number): PaceVerdict {
-  if (pct >= 99 || peak >= CRITICAL_PROJECTED_PEAK_PCT) return "crit";
-  if (peak > 100 + ACCEPTABLE_OVERAGE_PCT) return "warn";
-  return "ok";
+export type PaceZone = {
+  id: string;
+  upTo: number | null;
+  hue: number;
+  saturation: number;
+  label: string;
+  overrides?: PaceZoneOverrides;
+};
+
+/** The zone whose range contains `peak`, walking zones in order since each
+ *  one's range ends where the next begins. */
+export function matchZone(peak: number, zones: PaceZone[]): PaceZone {
+  return zones.find((z) => z.upTo == null || peak < z.upTo) ?? zones[zones.length - 1];
 }
 
 /**
@@ -47,4 +64,37 @@ export function formatResetTimestamp(
     timeStyle: "long",
     timeZone,
   }).format(date);
+}
+
+/**
+ * Length of a rolling window in ms, from the seconds the provider reported.
+ * Falls back for payloads from a backend that predates the field.
+ */
+export function windowMs(seconds: number | null | undefined, fallbackMs: number): number {
+  return seconds != null && seconds > 0 ? seconds * 1000 : fallbackMs;
+}
+
+/**
+ * Name a rolling window after its actual length ("5-hour", "7-day") rather than
+ * assuming Claude's pair, so a provider reporting a different period is labelled
+ * for what it is instead of being mislabelled.
+ */
+export function windowLabel(ms: number): string {
+  const hours = Math.round(ms / 3_600_000);
+  if (hours >= 24 && hours % 24 === 0) return `${hours / 24}-day`;
+  if (hours >= 1) return `${hours}-hour`;
+  return `${Math.max(1, Math.round(ms / 60_000))}-minute`;
+}
+
+/**
+ * Whether to draw the short-window bar. ChatGPT accounts can report only a
+ * weekly window; drawing a 0% 5-hour bar for them would be inventing data.
+ * Claude always reports both, including on payloads written before the field
+ * existed.
+ */
+export function hasShortWindow(
+  provider: string | undefined,
+  windowSeconds: number | null | undefined,
+): boolean {
+  return normalizeProvider(provider) === "claude-web" || windowSeconds != null;
 }

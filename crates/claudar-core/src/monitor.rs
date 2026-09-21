@@ -31,17 +31,79 @@ pub struct UsagePayload {
     pub seven_day_resets_at: Option<String>,
     /// Linear-extrapolation of 5-hour usage to end-of-period (`None` if < 10% elapsed).
     pub predicted_pct: Option<f64>,
+    /// Length of the short window in seconds, as reported by the provider.
+    /// `None` means the provider reported no short window at all — a real state
+    /// for a ChatGPT account, and the signal for the UI not to draw a 0% bar.
+    /// Claude always reports both, so it always fills these in.
+    #[serde(default)]
+    pub five_hour_window_seconds: Option<i64>,
+    /// Length of the long window in seconds.
+    #[serde(default)]
+    pub seven_day_window_seconds: Option<i64>,
+}
+
+impl UsagePayload {
+    /// Whether the short window carries real data. Claude always reports both
+    /// windows; a ChatGPT account may report only its weekly one, and callers
+    /// must not present the resulting 0% as a measurement.
+    pub fn has_short_window(&self) -> bool {
+        self.provider == Provider::ClaudeWeb || self.five_hour_window_seconds.is_some()
+    }
+}
+
+/// Seconds in Claude's fixed windows. ChatGPT reports its own durations.
+const FIVE_HOUR_SECONDS: i64 = 5 * 60 * 60;
+const SEVEN_DAY_SECONDS: i64 = 7 * 24 * 60 * 60;
+
+/// Build the history record for a completed poll. Both callers (the GUI, which
+/// always records, and the CLI, which honours `history.enabled`) go through
+/// this so the two paths cannot drift.
+fn history_record(payload: &UsagePayload) -> HistoryRecord {
+    HistoryRecord {
+        polled_at: Utc::now(),
+        five_hour_pct: payload.five_hour_pct,
+        five_hour_resets_at: payload.resets_at.clone(),
+        seven_day_pct: payload.seven_day_pct,
+        seven_day_resets_at: payload.seven_day_resets_at.clone(),
+        five_hour_predicted_pct: payload.predicted_pct,
+    }
 }
 
 /// Poll a ChatGPT account: mint a bearer from the stored cookie if needed, fetch
-/// `/wham/usage`, and map the weekly window onto the seven-day slot the dashboard
-/// already renders.
+/// `/wham/usage`, and evaluate its windows.
 ///
-/// Deliberately does not notify. Threshold notifications are keyed per Claude
-/// limit in `state.rs`; wiring ChatGPT into that is a separate change.
-async fn poll_openai_instance(
+/// ChatGPT reports the same shape as Claude (percent used of a rolling window
+/// plus a reset timestamp), so thresholds, reset detection and pace prediction
+/// all run through the same `process_limit` state machine rather than a parallel
+/// one. Periods come from `limit_window_seconds` instead of being hardcoded, so
+/// a plan with different window lengths still paces correctly.
+/// Map ChatGPT's windows onto the pair Claudar models — shortest to the 5-hour
+/// slot, longest to the 7-day slot — and compute the same pace prediction the
+/// Claude path does, against the window length the API actually reported.
+fn openai_payload(instance_name: &str, usage: &openai_fetcher::OpenAiUsage) -> UsagePayload {
+    let predicted_pct = usage.short.as_ref().and_then(|w| {
+        compute_predicted_pct(w.pct, &w.resets_at, (w.window_seconds / 60).max(1))
+    });
+
+    UsagePayload {
+        instance: instance_name.to_string(),
+        provider: Provider::OpenaiWeb,
+        five_hour_pct: usage.short.as_ref().map(|w| w.pct).unwrap_or(0.0),
+        seven_day_pct: usage.long.pct,
+        resets_at: usage.short.as_ref().and_then(|w| w.resets_at.clone()),
+        seven_day_resets_at: usage.long.resets_at.clone(),
+        predicted_pct,
+        five_hour_window_seconds: usage.short.as_ref().map(|w| w.window_seconds),
+        seven_day_window_seconds: Some(usage.long.window_seconds),
+    }
+}
+
+async fn check_openai_usage(
     config: &Config,
+    state: &mut MonitorState,
     instance_name: &str,
+    verbose: bool,
+    sender: &dyn NotificationSender,
 ) -> anyhow::Result<UsagePayload> {
     let session_path = config.session_path_for(instance_name)?;
     let mut session = OpenAiSession::load(&session_path)?;
@@ -58,26 +120,103 @@ async fn poll_openai_instance(
         anyhow::anyhow!("ChatGPT account '{}' reported no usage windows", instance_name)
     })?;
 
-    Ok(UsagePayload {
-        instance: instance_name.to_string(),
-        provider: Provider::OpenaiWeb,
-        // ChatGPT's shorter window is real data, but nothing renders it yet.
-        five_hour_pct: usage.short_pct.unwrap_or(0.0),
-        seven_day_pct: usage.pct,
-        resets_at: usage.short_resets_at,
-        seven_day_resets_at: usage.resets_at,
-        predicted_pct: None,
-    })
+    let payload = openai_payload(instance_name, &usage);
+    let seven_day = UsageLimit {
+        utilization: payload.seven_day_pct,
+        resets_at: payload.seven_day_resets_at.clone(),
+    };
+    let five_hour = payload.has_short_window().then(|| UsageLimit {
+        utilization: payload.five_hour_pct,
+        resets_at: payload.resets_at.clone(),
+    });
+
+    if let (Some(limit), Some(seconds)) = (five_hour.as_ref(), payload.five_hour_window_seconds) {
+        process_limit(
+            sender,
+            config,
+            state,
+            instance_name,
+            Provider::OpenaiWeb,
+            LimitType::FiveHour,
+            limit,
+            (seconds / 60).max(1),
+            LimitType::SevenDay,
+            &seven_day,
+            verbose,
+            &config.general.timezone,
+        )?;
+    }
+
+    process_limit(
+        sender,
+        config,
+        state,
+        instance_name,
+        Provider::OpenaiWeb,
+        LimitType::SevenDay,
+        &seven_day,
+        (usage.long.window_seconds / 60).max(1),
+        LimitType::FiveHour,
+        // An account with only a weekly window has no counterpart to compare
+        // against; the unused-capacity warning it feeds is opt-in and off by
+        // default, so referring back to the same window is the honest stand-in
+        // rather than inventing a 0% short window that was never reported.
+        five_hour.as_ref().unwrap_or(&seven_day),
+        verbose,
+        &config.general.timezone,
+    )?;
+
+    Ok(payload)
+}
+
+/// Run one poll cycle for a single instance: fetch, notify, persist state.
+///
+/// Dispatches on the instance's provider, and always saves state — even when the
+/// fetch failed part-way — so notification bookkeeping survives an error.
+/// History is left to the caller, because the GUI records unconditionally while
+/// the CLI honours `config.history.enabled`.
+async fn poll_once(
+    config: &Config,
+    instance_name: &str,
+    sender: &dyn NotificationSender,
+    http_fallback: Option<&HttpFetcher>,
+    verbose: bool,
+) -> anyhow::Result<UsagePayload> {
+    let provider = config
+        .effective_instances()
+        .iter()
+        .find(|i| i.name == instance_name)
+        .map(|i| i.provider)
+        .unwrap_or_default();
+
+    let mut state = MonitorState::load_for(config, instance_name)?;
+    let result = match provider {
+        Provider::OpenaiWeb => {
+            check_openai_usage(config, &mut state, instance_name, verbose, sender).await
+        }
+        Provider::ClaudeWeb => {
+            check_usage(
+                config,
+                &mut state,
+                instance_name,
+                verbose,
+                &config.general.timezone,
+                sender,
+                http_fallback,
+            )
+            .await
+        }
+    };
+    // Always persist state updates, even when a fetch error occurred mid-way.
+    let _ = state.save_for(config, instance_name);
+    result
 }
 
 /// Run one full poll cycle for a single instance and return a `UsagePayload`.
 ///
-/// Loads session cookies, fetches the Claude.ai usage API, fires desktop
-/// notifications for any crossed thresholds, persists state, and always
-/// appends a `HistoryRecord` (regardless of `config.history.enabled`).
-///
-/// ChatGPT instances take a separate, simpler path — no state, no notifications,
-/// no history — see [`poll_openai_instance`].
+/// Fetches usage for whichever provider the instance uses, fires desktop
+/// notifications for any crossed thresholds, persists state, and always appends
+/// a `HistoryRecord` (regardless of `config.history.enabled`).
 ///
 /// Returns `Err` containing `AuthRequiredError` when the session is expired or
 /// Cloudflare-blocked; the caller should emit `auth-required` and skip the cycle.
@@ -87,33 +226,10 @@ pub async fn poll_instance(
     sender: &dyn NotificationSender,
     http_fallback: Option<&HttpFetcher>,
 ) -> anyhow::Result<UsagePayload> {
-    let provider = config
-        .effective_instances()
-        .iter()
-        .find(|i| i.name == instance_name)
-        .map(|i| i.provider)
-        .unwrap_or_default();
-
-    if provider == Provider::OpenaiWeb {
-        return poll_openai_instance(config, instance_name).await;
-    }
-
-    let mut state = MonitorState::load_for(config, instance_name)?;
-    let result = check_usage(config, &mut state, instance_name, false, &config.general.timezone, sender, http_fallback).await;
-    // Always persist state updates, even when a fetch error occurred mid-way.
-    let _ = state.save_for(config, instance_name);
-    let payload = result?;
+    let payload = poll_once(config, instance_name, sender, http_fallback, false).await?;
 
     // GUI always records history regardless of config.history.enabled.
-    let record = HistoryRecord {
-        polled_at: Utc::now(),
-        five_hour_pct: payload.five_hour_pct,
-        five_hour_resets_at: payload.resets_at.clone(),
-        seven_day_pct: payload.seven_day_pct,
-        seven_day_resets_at: payload.seven_day_resets_at.clone(),
-        five_hour_predicted_pct: payload.predicted_pct,
-    };
-    if let Err(e) = history::append_record(config, instance_name, &record) {
+    if let Err(e) = history::append_record(config, instance_name, &history_record(&payload)) {
         tracing::warn!("Failed to write history for '{}': {}", instance_name, e);
     }
 
@@ -179,7 +295,6 @@ pub async fn run_monitor(foreground: bool) -> anyhow::Result<()> {
     loop {
         for instance in &instances {
             let instance_name = &instance.name;
-            let mut state = MonitorState::load_for(&config, instance_name)?;
 
             if foreground && instances.len() > 1 {
                 let timestamp = get_current_time_formatted_full(&config.general.timezone);
@@ -189,8 +304,21 @@ pub async fn run_monitor(foreground: bool) -> anyhow::Result<()> {
                 tracing::info!("{} [{}]", instance_name, timestamp);
             }
 
-            match check_usage(&config, &mut state, instance_name, foreground, &config.general.timezone, &sender, None).await {
-                Ok(_payload) => {}
+            match poll_once(&config, instance_name, &sender, None, foreground).await {
+                Ok(payload) => {
+                    // CLI path: history is opt-in.
+                    if config.history.enabled {
+                        if let Err(e) =
+                            history::append_record(&config, instance_name, &history_record(&payload))
+                        {
+                            tracing::warn!(
+                                "Failed to write history record for '{}': {}",
+                                instance_name,
+                                e
+                            );
+                        }
+                    }
+                }
                 Err(e) => {
                     // AuthRequiredError means session expired or Cloudflare blocked — log
                     // and continue the monitor loop rather than crashing.
@@ -208,14 +336,6 @@ pub async fn run_monitor(foreground: bool) -> anyhow::Result<()> {
                         );
                     }
                 }
-            }
-
-            if let Err(e) = state.save_for(&config, instance_name) {
-                tracing::error!(
-                    "Error saving state for instance '{}': {}",
-                    instance_name,
-                    e
-                );
             }
         }
 
@@ -293,6 +413,7 @@ async fn check_usage(
         config,
         state,
         instance_name,
+        Provider::ClaudeWeb,
         LimitType::FiveHour,
         &usage.five_hour,
         300,
@@ -307,6 +428,7 @@ async fn check_usage(
         config,
         state,
         instance_name,
+        Provider::ClaudeWeb,
         LimitType::SevenDay,
         &usage.seven_day,
         10080,
@@ -319,29 +441,6 @@ async fn check_usage(
     if verbose {
         let timestamp = get_current_time_formatted(timezone);
         tracing::info!("[{}] All checks complete", timestamp);
-    }
-
-    // CLI path: respect config.history.enabled for history writing.
-    if config.history.enabled {
-        let record = HistoryRecord {
-            polled_at: Utc::now(),
-            five_hour_pct: usage.five_hour.utilization,
-            five_hour_resets_at: usage.five_hour.resets_at.clone(),
-            seven_day_pct: usage.seven_day.utilization,
-            seven_day_resets_at: usage.seven_day.resets_at.clone(),
-            five_hour_predicted_pct: compute_predicted_pct(
-                usage.five_hour.utilization,
-                &usage.five_hour.resets_at,
-                300,
-            ),
-        };
-        if let Err(e) = history::append_record(config, instance_name, &record) {
-            tracing::warn!(
-                "Failed to write history record for '{}': {}",
-                instance_name,
-                e
-            );
-        }
     }
 
     let predicted_pct = compute_predicted_pct(
@@ -358,6 +457,8 @@ async fn check_usage(
         resets_at: usage.five_hour.resets_at.clone(),
         seven_day_resets_at: usage.seven_day.resets_at.clone(),
         predicted_pct,
+        five_hour_window_seconds: Some(FIVE_HOUR_SECONDS),
+        seven_day_window_seconds: Some(SEVEN_DAY_SECONDS),
     })
 }
 
@@ -366,6 +467,7 @@ fn process_limit(
     config: &Config,
     state: &mut MonitorState,
     instance_name: &str,
+    provider: Provider,
     limit_type: LimitType,
     limit: &UsageLimit,
     period_minutes: i64,
@@ -415,7 +517,7 @@ fn process_limit(
             tracing::info!("{} limit has reset", limit_type.as_str());
 
             if !state.is_reset_notified(limit_type) {
-                notify_reset(sender, &config.notifications, instance_name, limit_type)?;
+                notify_reset(sender, &config.notifications, instance_name, provider, limit_type)?;
                 state.mark_reset_notified(limit_type);
                 tracing::info!("Sent reset notification for {} limit", limit_type.as_str());
             }
@@ -440,6 +542,7 @@ fn process_limit(
                     sender,
                     &config.notifications,
                     instance_name,
+                    provider,
                     limit_type,
                     percentage,
                     remaining_capacity,
@@ -487,6 +590,7 @@ fn process_limit(
                     sender,
                     &config.notifications,
                     instance_name,
+                    provider,
                     limit_type,
                     percentage,
                     remaining_capacity,
@@ -544,6 +648,7 @@ fn process_limit(
             sender,
             &config.notifications,
             instance_name,
+            provider,
             limit_type,
             percentage,
             &resets_in,
@@ -573,6 +678,7 @@ fn process_limit(
                     sender,
                     &config.notifications,
                     instance_name,
+                    provider,
                     limit_type,
                     percentage,
                     pred,
@@ -649,6 +755,79 @@ mod tests {
         assert!((pred - 60.0).abs() < 2.0, "expected ~60, got {pred}");
     }
 
+    // ---- openai_payload ---------------------------------------------------
+
+    /// The live shape from the user's account: 5-hour primary + 7-day secondary.
+    const CHATGPT_BOTH: &str = r#"{
+        "plan_type": "plus",
+        "rate_limit": {
+            "primary_window": {"used_percent": 1, "limit_window_seconds": 18000, "reset_at": 1788195954},
+            "secondary_window": {"used_percent": 4, "limit_window_seconds": 604800, "reset_at": 1788762021}
+        }
+    }"#;
+
+    fn chatgpt_usage(body: &str) -> crate::openai_fetcher::OpenAiUsage {
+        crate::openai_fetcher::parse_usage(body).unwrap().unwrap()
+    }
+
+    #[test]
+    fn openai_windows_land_in_the_slots_that_match_their_length() {
+        let payload = openai_payload("chatgpt", &chatgpt_usage(CHATGPT_BOTH));
+
+        assert_eq!(payload.five_hour_pct, 1.0);
+        assert_eq!(payload.seven_day_pct, 4.0);
+        assert_eq!(payload.five_hour_window_seconds, Some(18000));
+        assert_eq!(payload.seven_day_window_seconds, Some(604800));
+        assert_eq!(payload.provider, Provider::OpenaiWeb);
+        assert!(payload.resets_at.is_some());
+        assert!(payload.seven_day_resets_at.is_some());
+    }
+
+    /// A weekly-only account must not be shown a 5-hour window it never reported.
+    #[test]
+    fn openai_payload_marks_a_missing_short_window() {
+        let body = r#"{"rate_limit":{"primary_window":{"used_percent":77,"limit_window_seconds":604800,"reset_at":1787222964},"secondary_window":null}}"#;
+        let payload = openai_payload("chatgpt", &chatgpt_usage(body));
+
+        assert_eq!(payload.seven_day_pct, 77.0);
+        assert_eq!(payload.five_hour_window_seconds, None);
+        assert_eq!(payload.resets_at, None);
+        assert!(!payload.has_short_window());
+        assert_eq!(payload.predicted_pct, None);
+    }
+
+    /// Claude reports both windows on every poll, so its payloads always say so —
+    /// including for the UI's "is this bar real data?" check.
+    #[test]
+    fn claude_payloads_always_have_a_short_window() {
+        let payload = UsagePayload {
+            instance: "default".into(),
+            provider: Provider::ClaudeWeb,
+            five_hour_pct: 0.0,
+            seven_day_pct: 0.0,
+            resets_at: None,
+            seven_day_resets_at: None,
+            predicted_pct: None,
+            five_hour_window_seconds: None,
+            seven_day_window_seconds: None,
+        };
+        assert!(payload.has_short_window());
+    }
+
+    /// Pace is projected against the window ChatGPT reported, not Claude's 300
+    /// minutes: half of a 5-hour window elapsed with 30% used projects to ~60%.
+    #[test]
+    fn openai_prediction_uses_the_reported_window_length() {
+        let reset_at = (Utc::now() + Duration::minutes(150)).timestamp();
+        let body = format!(
+            r#"{{"rate_limit":{{"primary_window":{{"used_percent":30,"limit_window_seconds":18000,"reset_at":{reset_at}}},"secondary_window":{{"used_percent":4,"limit_window_seconds":604800,"reset_at":{reset_at}}}}}}}"#
+        );
+        let predicted = openai_payload("chatgpt", &chatgpt_usage(&body))
+            .predicted_pct
+            .expect("should predict");
+        assert!((predicted - 60.0).abs() < 2.0, "expected ~60, got {predicted}");
+    }
+
     // ---- process_limit ----------------------------------------------------
 
     fn process_five_hour(
@@ -663,6 +842,7 @@ mod tests {
             config,
             state,
             "default",
+            Provider::ClaudeWeb,
             LimitType::FiveHour,
             limit,
             300,

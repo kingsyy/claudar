@@ -1,19 +1,21 @@
 # Claudar
 
-A "lightweight" Rust daemon that monitors your Claude.ai usage limits and sends native desktop notifications when approaching rate limits.
+A lightweight desktop app and Rust daemon that monitors your Claude.ai and ChatGPT usage limits and sends native notifications before you hit them.
 
 ## Why This Tool?
 
-Claude Code's built-in `/usage` command only shows locally tracked usage, which is inaccurate if you use Claude across multiple machines or browser sessions with the same account. Claudar fetches your **actual usage data directly from claude.ai** via authenticated browser requests, giving you an accurate, real-time view of your rate limits regardless of how many devices you use.
+Local usage counters only know about work done in one tool on one machine. Claudar fetches your **actual account usage directly from Claude.ai and ChatGPT**, giving you an accurate, real-time view of your rolling limits across devices, browser sessions, and coding tools.
 
 ## Features
 
-- **Accurate Multi-Device Usage**: Fetches real usage data from claude.ai, not local estimates
+- **Claude + ChatGPT**: Monitor both services side by side in one dashboard
+- **Accurate Multi-Device Usage**: Fetches server-side account usage, not local estimates
+- **Complete Rolling Windows**: Shows both short and weekly windows when the service reports them, labelled from their real duration
 - **Native OS Notifications**: Cross-platform notifications (macOS, Linux) when approaching usage thresholds
-- **Smart Monitoring**: Threshold crossings, predicted overage warnings, and reset notifications
-- **Configurable Thresholds**: Monitor both 5-hour and 7-day usage limits
+- **Smart Monitoring**: Threshold crossings, predicted overage warnings, reset notifications, and history for both providers
+- **Configurable Thresholds**: Choose when rolling-window usage alerts fire
 - **Background Service**: Install as launchd (macOS) or systemd (Linux) service for automatic monitoring
-- **Multiple Accounts**: Monitor multiple Claude accounts simultaneously
+- **Multiple Accounts**: Monitor multiple Claude and ChatGPT accounts simultaneously
 - **Minimal Footprint**: Low memory and CPU usage
 
 ## Screenshots
@@ -28,7 +30,31 @@ Claude Code's built-in `/usage` command only shows locally tracked usage, which 
    - **macOS** — `Claudar_<version>_universal.dmg` (runs on both Intel and Apple Silicon)
    - **Windows** — `Claudar_<version>_x64-setup.exe` (installer) or `..._x64_en-US.msi`
    - **Linux** — `Claudar_<version>_amd64.AppImage` or `..._amd64.deb`
-2. Open the installer and drag/install Claudar, then launch it. The app guides you through login on first run.
+2. Open the installer and drag/install Claudar, then launch it. The app guides you through adding your first account.
+
+### Add Claude or ChatGPT accounts
+
+Open **Settings → Accounts → Add account**, choose **Claude** or **ChatGPT**, give the account a name,
+and complete the browser login. Claudar captures the authenticated session locally and then polls the
+service's own usage endpoint; it does not need an API key, a Codex installation, or a locally tracked
+usage estimate.
+
+You can add multiple accounts from either service. Each account gets its own Dashboard bars, tray
+entries, threshold and reset notifications, and History data. ChatGPT window lengths vary by account:
+Claudar displays every rolling window ChatGPT reports and does not invent a 0% short window when an
+account reports only its weekly limit.
+
+### Updating
+
+Claudar checks for new releases on its own. Open **Settings → About** and you'll see either
+"Up to date" or the new version with a summary of what changed; **Update and restart** downloads
+and installs it, then reopens the app and resumes monitoring.
+
+Two caveats:
+
+- **`.deb` installs can't self-update.** Tauri's updater doesn't support Debian packages — use
+  the `.AppImage` if you want in-app updates on Linux, or re-download the `.deb` by hand.
+- Full release notes for every version live in [CHANGELOG.md](CHANGELOG.md).
 
 ### macOS: "Claudar can't be opened" / unidentified developer
 

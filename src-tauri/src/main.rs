@@ -4,6 +4,7 @@ mod chrome_auth;
 mod commands;
 mod monitor_loop;
 mod tauri_notifier;
+mod updater;
 mod web_server;
 mod webview_fetch;
 
@@ -30,6 +31,7 @@ fn main() {
         .init();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -90,6 +92,8 @@ fn main() {
             commands::set_tray_visible,
             commands::about_info,
             commands::open_url,
+            updater::check_update,
+            updater::install_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

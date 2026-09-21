@@ -178,6 +178,24 @@
       </div>`;
   }
 
+  /** Window length in ms from the seconds the provider reported. */
+  function windowMs(seconds, fallbackMs) {
+    return seconds != null && seconds > 0 ? seconds * 1000 : fallbackMs;
+  }
+
+  /** Name a window after its own length, so a non-Claude period isn't mislabelled. */
+  function windowLabel(ms) {
+    const hours = Math.round(ms / 3600000);
+    if (hours >= 24 && hours % 24 === 0) return `${hours / 24}-day`;
+    return `${hours}-hour`;
+  }
+
+  /** A ChatGPT account can report only a weekly window; don't draw a 0% bar for
+      a window that was never reported. */
+  function hasShortWindow(p) {
+    return p.provider !== "openai-web" || p.five_hour_window_seconds != null;
+  }
+
   function render(instances) {
     const cards = document.getElementById("cards");
     const empty = document.getElementById("empty");
@@ -187,12 +205,19 @@
       return;
     }
     empty.style.display = "none";
-    cards.innerHTML = instances.map((p) => `
+    cards.innerHTML = instances.map((p) => {
+      const shortMs = windowMs(p.five_hour_window_seconds, FIVE_HOUR_MS);
+      const longMs = windowMs(p.seven_day_window_seconds, SEVEN_DAY_MS);
+      const short = hasShortWindow(p)
+        ? renderWindow(windowLabel(shortMs), p.five_hour_pct, p.resets_at, shortMs, p.predicted_pct)
+        : "";
+      return `
       <div class="card">
         <h2>${p.instance}</h2>
-        ${renderWindow("5-hour", p.five_hour_pct, p.resets_at, FIVE_HOUR_MS, p.predicted_pct)}
-        ${renderWindow("7-day", p.seven_day_pct, p.seven_day_resets_at, SEVEN_DAY_MS, null)}
-      </div>`).join("");
+        ${short}
+        ${renderWindow(windowLabel(longMs), p.seven_day_pct, p.seven_day_resets_at, longMs, null)}
+      </div>`;
+    }).join("");
   }
 
   async function refresh() {

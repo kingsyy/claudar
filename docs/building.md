@@ -128,5 +128,37 @@ steps:
   `dev`-only behaviour (e.g. devtools) are compiled out.
 - Code signing/notarization (macOS) and Authenticode signing (Windows) are not configured —
   see the Phase 7 task notes for why this is deliberately out of scope for now.
-- An in-app auto-update mechanism is parked; cross-platform release artifacts are produced
-  manually for now.
+- Releases are cut by pushing a `v*` tag; `.github/workflows/release.yml` builds every
+  bundle, fills the GitHub release body from `CHANGELOG.md`, and publishes `latest.json`
+  for the in-app updater.
+
+## Releasing
+
+1. Add the new version's section to `CHANGELOG.md`. The release will fail if it is
+   missing — `scripts/changelog-extract.sh` exits non-zero rather than shipping empty
+   notes, and the same text becomes the in-app "What's new" panel.
+2. Bump `version` in `Cargo.toml`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`.
+3. Tag and push: `git tag v0.4.7 && git push origin v0.4.7`.
+
+### Updater signing key (one-time setup)
+
+The in-app updater will not install anything whose `latest.json` is not signed by the
+key matching `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`. This is **separate
+from Apple/Authenticode code signing** — you do not need a Developer account for it.
+
+```bash
+cargo tauri signer generate -w ~/.tauri/claudar.key
+```
+
+Then:
+
+- Put the **public** key (the `.pub` file's contents, not its path) into
+  `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`.
+- Add the **private** key as the repo secret `TAURI_SIGNING_PRIVATE_KEY`, and its
+  password as `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+
+> **Keep the private key.** Losing it means every already-installed copy of Claudar can
+> never be updated again — those users have to download a fresh build by hand.
+
+`createUpdaterArtifacts` is set in `tauri.conf.ci.json`, not the main config, so a local
+`cargo tauri build` still works without the signing key in your environment.

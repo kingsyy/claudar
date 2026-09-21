@@ -50,6 +50,8 @@
 
   // Reorder flow — config order is what the dashboard, tray and web view render in.
   let dragIndex = $state<number | null>(null);
+  let dragOrigin: number | null = null;
+  let listEl = $state<HTMLUListElement | null>(null);
   let reorderError = $state<string | null>(null);
 
   function moveItem(from: number, to: number) {
@@ -71,27 +73,42 @@
     }
   }
 
-  function handleDragStart(e: DragEvent, index: number) {
+  // The gesture runs on pointer events, not the HTML5 drag API: inside the
+  // webview the native drag handler eats the drop, so `dragend`/`drop` never
+  // land and the row snaps back. Pointer capture keeps the whole drag on the
+  // handle regardless of what the cursor passes over.
+  function handleDragPointerDown(e: PointerEvent, index: number) {
+    if (instances.length < 2 || e.button !== 0) return;
+    e.preventDefault();
     dragIndex = index;
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("text/plain", instances[index].name);
+    dragOrigin = index;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+
+  function handleDragPointerMove(e: PointerEvent) {
+    if (dragIndex === null || !listEl) return;
+    const rows = Array.from(listEl.querySelectorAll<HTMLElement>(".account-row"));
+    const from = dragIndex;
+    for (let i = 0; i < rows.length; i++) {
+      if (i === from) continue;
+      const rect = rows[i].getBoundingClientRect();
+      const mid = rect.top + rect.height / 2;
+      if ((i > from && e.clientY > mid) || (i < from && e.clientY < mid)) {
+        moveItem(from, i);
+        dragIndex = i;
+        break;
+      }
     }
   }
 
-  function handleDragOver(e: DragEvent, index: number) {
+  async function handleDragPointerUp(e: PointerEvent) {
     if (dragIndex === null) return;
-    e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-    if (dragIndex === index) return;
-    moveItem(dragIndex, index);
-    dragIndex = index;
-  }
-
-  async function handleDragEnd() {
-    if (dragIndex === null) return;
+    const handle = e.currentTarget as HTMLElement;
+    if (handle.hasPointerCapture(e.pointerId)) handle.releasePointerCapture(e.pointerId);
+    const moved = dragIndex !== dragOrigin;
     dragIndex = null;
-    await persistOrder();
+    dragOrigin = null;
+    if (moved) await persistOrder();
   }
 
   // Keyboard equivalent of the drag: arrows on the focused handle move the row.
@@ -337,17 +354,12 @@
       {#if instances.length > 1}
         <p class="reorder-hint">Drag an account to change the order it appears in on the dashboard.</p>
       {/if}
-      <ul class="account-list">
+      <ul class="account-list" bind:this={listEl}>
         {#each instances as inst, index (inst.name)}
           <li
             class="account-row"
             class:dragging={dragIndex === index}
             class:reorderable={instances.length > 1}
-            draggable={instances.length > 1}
-            ondragstart={(e) => handleDragStart(e, index)}
-            ondragover={(e) => handleDragOver(e, index)}
-            ondragend={handleDragEnd}
-            ondrop={(e) => e.preventDefault()}
           >
             {#if instances.length > 1}
               <button
@@ -355,6 +367,10 @@
                 class="drag-handle"
                 aria-label={`Reorder ${inst.name}. Position ${index + 1} of ${instances.length}. Use arrow up and arrow down to move.`}
                 onkeydown={(e) => handleHandleKeydown(e, index)}
+                onpointerdown={(e) => handleDragPointerDown(e, index)}
+                onpointermove={handleDragPointerMove}
+                onpointerup={handleDragPointerUp}
+                onpointercancel={handleDragPointerUp}
               >
                 <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
                   <circle cx="6" cy="4" r="1.3" /><circle cx="10" cy="4" r="1.3" />
@@ -685,6 +701,7 @@
 
   .account-row.dragging {
     opacity: 0.55;
+    user-select: none;
     border-color: hsl(var(--ring));
     box-shadow: 0 4px 14px hsl(0 0% 0% / 0.12);
   }
@@ -703,6 +720,7 @@
     color: hsl(var(--muted-foreground));
     cursor: grab;
     flex-shrink: 0;
+    touch-action: none;
   }
 
   .drag-handle:hover {

@@ -2,8 +2,16 @@
   import { onMount, onDestroy } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { formatResetTimestamp, paceVerdict, projectedPeak } from "$lib/dashboard";
+  import {
+    formatResetTimestamp,
+    hasShortWindow,
+    matchZone,
+    projectedPeak,
+    windowLabel,
+    windowMs,
+  } from "$lib/dashboard";
   import { authCommand, providerLabel, type Provider } from "$lib/provider";
+  import { paceZones, zoneStyle, type PaceWindow } from "$lib/paceZones.svelte";
 
   type UsagePayload = {
     instance: string;
@@ -14,6 +22,10 @@
     resets_at: string | null;
     seven_day_resets_at: string | null;
     predicted_pct: number | null;
+    // Window lengths as reported by the provider. Absent on older payloads;
+    // null on the short window means the provider reported no such window.
+    five_hour_window_seconds?: number | null;
+    seven_day_window_seconds?: number | null;
   };
 
   type InstanceInfo = {
@@ -231,12 +243,13 @@
   });
 </script>
 
-{#snippet limit(label: string, pct: number, resetsAt: string | null, windowMs: number, predicted: number | null, seq: number, copyKey: string)}
+{#snippet limit(label: string, pct: number, resetsAt: string | null, windowMs: number, predicted: number | null, seq: number, copyKey: string, paceWindow: PaceWindow)}
   {@const timePct = timeElapsedPct(resetsAt, windowMs)}
   {@const peak = projectedPeak(pct, timePct, predicted)}
-  {@const kind = paceVerdict(pct, peak)}
+  {@const zones = paceZones[paceWindow]}
   {@const over = peak > 100}
   {@const capped = pct >= 99}
+  {@const zone = capped ? zones[zones.length - 1] : matchZone(peak, zones)}
   {@const fillW = clampPct(pct)}
   {@const peakEnd = clampPct(peak)}
   {@const ghostW = Math.max(0, peakEnd - fillW)}
@@ -247,9 +260,7 @@
   {@const showNow = !capped && (!over || peakPos - nowPos >= 13)}
   {@const delta = Math.round(pct - timePct)}
   {@const showDelta = showPaceDelta && !(pct <= 0 && timePct <= 0)}
-  {@const deltaAtEnd = fillW < 3}
-  {@const deltaInside = fillW >= 12}
-  {@const deltaTone = delta > 0 ? kind : "ok"}
+  {@const deltaZone = delta > 0 ? zone : zones[0]}
   {@const timePos = clampPct(timePct)}
   {@const showTimeTick = timePct > 0.5 && timePct < 99.5}
   <!-- The bar encodes usage, elapsed time, and predicted peak purely visually, and
@@ -258,7 +269,7 @@
   {@const barDescription = [
     `${pct.toFixed(0)}% of tokens used`,
     `${timePct.toFixed(0)}% of the window elapsed`,
-    showPeak ? `predicted peak ${Math.round(peak)}%` : null,
+    showPeak ? `predicted peak ${Math.round(peak)}%, ${zone.label.toLowerCase()}` : null,
     resetsAt ? `resets in ${formatCountdown(resetsAt)}` : null,
   ]
     .filter(Boolean)
@@ -292,13 +303,13 @@
 
     <div class="bar-wrap">
       {#if capped}
-        <div class="mark mark-now tone-crit" style="left: {nowPos}%" aria-hidden="true">100%</div>
+        <div class="mark mark-capped zone-text" style={zoneStyle(zone, `left: ${nowPos}%`)} aria-hidden="true">100%</div>
       {:else}
         {#if showNow}
           <div class="mark mark-now" style="left: {nowPos}%" aria-hidden="true">{pct.toFixed(0)}%</div>
         {/if}
         {#if showPeak}
-          <div class="mark mark-peak tone-{kind}" style="left: {peakPos}%" aria-hidden="true">{Math.round(peak)}%</div>
+          <div class="mark mark-peak zone-text" style={zoneStyle(zone, `left: ${peakPos}%`)} aria-hidden="true">{Math.round(peak)}%</div>
         {/if}
       {/if}
 
@@ -311,30 +322,24 @@
         aria-valuenow={Math.round(pct)}
         aria-valuetext={barDescription}
       >
-        <div class="bar-fill bar-{kind}" style="width: {fillW}%"></div>
+        <div class="bar-fill zone-fill" style={zoneStyle(zone, `width: ${fillW}%`)}></div>
         {#if showTimeTick}
           <div class="time-tick" style="left: {timePos}%" title="{timePct.toFixed(0)}% of window elapsed"></div>
         {/if}
         {#if ghostW > 0.4}
-          <div class="bar-ghost tone-{kind}" style="left: {fillW}%; width: {ghostW}%"></div>
+          <div class="bar-ghost zone-ghost-stripe" style={zoneStyle(zone, `left: ${fillW}%; width: ${ghostW}%`)}></div>
         {/if}
-        {#if over}<div class="overflow-nub tone-{kind}"></div>{/if}
-        {#if showDelta}
-          <div
-            class="delta tone-{deltaTone}"
-            class:delta-end={deltaAtEnd}
-            class:delta-inside={deltaInside && !deltaAtEnd}
-            style={deltaAtEnd ? "" : `left: ${fillW}%`}
-            aria-hidden="true"
-          >
-            {delta > 0 ? `+${delta}` : delta < 0 ? `−${Math.abs(delta)}` : "0"}%
-          </div>
-        {/if}
+        {#if over}<div class="overflow-nub zone-nub" style={zoneStyle(zone, "")}></div>{/if}
         {#key seq}
           <div class="sweep" aria-hidden="true"></div>
         {/key}
       </div>
     </div>
+    {#if showDelta}
+      <p class="pace-delta zone-text" style={zoneStyle(deltaZone, "")}>
+        {delta > 0 ? `+${delta}%` : delta < 0 ? `−${Math.abs(delta)}%` : "0%"}
+      </p>
+    {/if}
   </div>
 {/snippet}
 
@@ -400,13 +405,16 @@
           <div class="spinner small" aria-hidden="true"></div>
           <span>Waiting for first update…</span>
         </div>
-      {:else if usage.provider === "openai-web"}
-        <!-- ChatGPT reports a shorter window too, but only the weekly one is
-             rendered for now. There is no usage prediction for it. -->
-        {@render limit("Weekly", usage.seven_day_pct, usage.seven_day_resets_at, SEVEN_DAY_MS, null, seq, `${inst.name}-weekly`)}
       {:else}
-        {@render limit("5-hour", usage.five_hour_pct, usage.resets_at, FIVE_HOUR_MS, usage.predicted_pct, seq, `${inst.name}-5h`)}
-        {@render limit("7-day", usage.seven_day_pct, usage.seven_day_resets_at, SEVEN_DAY_MS, null, seq, `${inst.name}-7d`)}
+        <!-- Both providers report the same pair of rolling windows, so they
+             render identically; the labels come from the reported window
+             lengths rather than from the provider. -->
+        {@const shortMs = windowMs(usage.five_hour_window_seconds, FIVE_HOUR_MS)}
+        {@const longMs = windowMs(usage.seven_day_window_seconds, SEVEN_DAY_MS)}
+        {#if hasShortWindow(usage.provider, usage.five_hour_window_seconds)}
+          {@render limit(windowLabel(shortMs), usage.five_hour_pct, usage.resets_at, shortMs, usage.predicted_pct, seq, `${inst.name}-5h`, "five_hour")}
+        {/if}
+        {@render limit(windowLabel(longMs), usage.seven_day_pct, usage.seven_day_resets_at, longMs, null, seq, `${inst.name}-7d`, "seven_day")}
       {/if}
     </section>
   {/each}
@@ -726,11 +734,10 @@
   }
 
   .mark-now { color: hsl(var(--foreground)); }
-  .mark-now.tone-crit { color: hsl(var(--danger-strong)); }
 
-  .mark-peak { font-weight: 600; color: hsl(var(--muted-foreground)); }
-  .mark-peak.tone-warn { color: hsl(var(--warning-strong)); }
-  .mark-peak.tone-crit { color: hsl(var(--danger-strong)); }
+  /* Colour comes solely from the global .zone-text rule (app.css) — this mark
+     is always zone-coloured, so no competing colour is declared here. */
+  .mark-peak { font-weight: 600; }
 
   /* ── The bar is the hero: tall, rounded, colour = health ── */
   .track {
@@ -750,45 +757,20 @@
     transition: width 0.45s ease, background 0.3s ease, border-color 0.3s ease;
   }
 
-  /* Pill styling: pastel fill, stronger tone reserved for text/border — same
-     pairing used by badges elsewhere (error-banner, etc). */
-  .bar-ok   { background: hsl(var(--success-bg)); border: 1px solid hsl(var(--success-border)); }
-  .bar-warn { background: hsl(var(--warning-bg)); border: 1px solid hsl(var(--warning-border)); }
-  .bar-crit { background: hsl(var(--danger-bg));  border: 1px solid hsl(var(--danger-border)); }
+  /* Pill styling comes from the global .zone-fill rule (app.css) — pastel
+     background, stronger tone reserved for the border, same pairing used by
+     badges elsewhere (error-banner, etc), just parameterised by the user's
+     chosen zone colour instead of a fixed success/warning/danger hue. */
 
-  /* ── Pace delta (usage% − time-elapsed%): anchored to the fill's own edge so
-     it tracks the bar without measuring text width. ── */
-  .delta {
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: 0.66rem;
+  /* ── Pace delta (usage% − time-elapsed%): plain text below the bar, so the
+     sign and number are read at normal size instead of squinted out of the
+     fill. Colour is the global .zone-text rule. ── */
+  .pace-delta {
+    margin: 0;
+    font-size: 0.8rem;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-    pointer-events: none;
-    transition: left 0.45s ease, color 0.3s ease;
   }
-
-  /* Enough room in the fill: sit inside it, inset from its trailing edge. */
-  .delta.delta-inside {
-    transform: translate(calc(-100% - 6px), -50%);
-  }
-
-  /* Not enough room: sit just outside the fill's trailing edge. */
-  .delta:not(.delta-inside):not(.delta-end) {
-    transform: translate(6px, -50%);
-  }
-
-  /* Fill is ~0%: nothing to anchor to, pin to the end of the track instead. */
-  .delta.delta-end {
-    left: auto;
-    right: 6px;
-  }
-
-  .delta.tone-ok   { color: hsl(var(--success-strong)); }
-  .delta.tone-warn { color: hsl(var(--warning-strong)); }
-  .delta.tone-crit { color: hsl(var(--danger-strong)); }
 
   /* Time-elapsed tick: where usage "should" be if it tracked the window evenly. */
   .time-tick {
@@ -802,46 +784,22 @@
     pointer-events: none;
   }
 
-  /* Projected peak: hatched extension beyond the current fill. */
+  /* Projected peak: hatched extension beyond the current fill. The hatch
+     colour itself comes solely from the global .zone-ghost-stripe rule
+     (app.css) — no background-image is set here, so there's nothing for it
+     to compete with. */
   .bar-ghost {
     position: absolute;
     top: 0;
     bottom: 0;
     border-radius: 0 99px 99px 0;
     background-color: hsl(var(--foreground) / 0.05);
-    background-image: repeating-linear-gradient(
-      135deg,
-      hsl(var(--foreground) / 0.30) 0 3px,
-      transparent 3px 7px
-    );
     transition: left 0.45s ease, width 0.45s ease;
   }
 
-  .bar-ghost.tone-ok {
-    background-image: repeating-linear-gradient(
-      135deg,
-      hsl(var(--success) / 0.55) 0 3px,
-      transparent 3px 7px
-    );
-  }
-
-  .bar-ghost.tone-warn {
-    background-image: repeating-linear-gradient(
-      135deg,
-      hsl(var(--warning) / 0.55) 0 3px,
-      transparent 3px 7px
-    );
-  }
-
-  .bar-ghost.tone-crit {
-    background-image: repeating-linear-gradient(
-      135deg,
-      hsl(var(--danger) / 0.55) 0 3px,
-      transparent 3px 7px
-    );
-  }
-
-  /* Projected to blow past the cap — arrow poking off the end. */
+  /* Projected to blow past the cap — arrow poking off the end. Colour is the
+     global .zone-nub rule (app.css); left as a longhand so it doesn't have to
+     out-compete a shorthand `border-left` declared here. */
   .overflow-nub {
     position: absolute;
     right: -9px;
@@ -851,12 +809,9 @@
     height: 0;
     border-top: 5px solid transparent;
     border-bottom: 5px solid transparent;
-    border-left: 7px solid transparent;
+    border-left-width: 7px;
+    border-left-style: solid;
   }
-
-  .overflow-nub.tone-ok { border-left-color: hsl(var(--success)); }
-  .overflow-nub.tone-warn { border-left-color: hsl(var(--warning)); }
-  .overflow-nub.tone-crit { border-left-color: hsl(var(--danger)); }
 
   /* ── "Just updated" shimmer: one light pass across the bar ── */
   .sweep {
@@ -889,6 +844,6 @@
 
   @media (prefers-reduced-motion: reduce) {
     .sweep::after { animation: none; }
-    .bar-fill, .bar-ghost, .mark, .delta { transition: none; }
+    .bar-fill, .bar-ghost, .mark { transition: none; }
   }
 </style>

@@ -371,17 +371,20 @@ pub fn build_tray_menu<R: Runtime, M: Manager<R>>(
                     None::<&str>,
                 )?)?;
             }
-            menu.append(&MenuItem::with_id(
-                manager,
-                format!("tray_5h_{}", inst.name),
-                format!(
-                    "  5-hour  {:>5.1}%  ·  resets {}",
-                    p.five_hour_pct,
-                    format_resets_in(p.resets_at.as_deref())
-                ),
-                false,
-                None::<&str>,
-            )?)?;
+            // Omitted for a ChatGPT account that reports only a weekly window.
+            if p.has_short_window() {
+                menu.append(&MenuItem::with_id(
+                    manager,
+                    format!("tray_5h_{}", inst.name),
+                    format!(
+                        "  5-hour  {:>5.1}%  ·  resets {}",
+                        p.five_hour_pct,
+                        format_resets_in(p.resets_at.as_deref())
+                    ),
+                    false,
+                    None::<&str>,
+                )?)?;
+            }
             menu.append(&MenuItem::with_id(
                 manager,
                 format!("tray_7d_{}", inst.name),

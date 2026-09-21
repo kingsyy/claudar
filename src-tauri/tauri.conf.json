@@ -37,5 +37,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERBQzU4NkQwRUU3NjA5RjkKUldUNUNYYnUwSWJGMm5lc3llZ3hOeURFSkFlajBVeHhOM3ZRU21WMVBvb1hnTnZYUXViYkZGU1YK",
+      "endpoints": [
+        "https://github.com/kingsyy/claudar/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

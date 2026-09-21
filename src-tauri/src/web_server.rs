@@ -155,7 +155,12 @@ struct AgentWindow {
 #[derive(serde::Serialize)]
 struct AgentUsage {
     instance: String,
-    five_hour: AgentWindow,
+    /// Which service the numbers describe — an agent throttling against a
+    /// ChatGPT account shouldn't have to guess.
+    provider: claudar_core::config::Provider,
+    /// Omitted when the provider reports no short window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    five_hour: Option<AgentWindow>,
     seven_day: AgentWindow,
 }
 
@@ -208,10 +213,26 @@ async fn api_agent_handler(State(app_handle): State<AppHandle>) -> Result<Json<V
     let payloads = instances
         .into_iter()
         .filter_map(|inst| usage.get(&inst.name).cloned())
-        .map(|p| AgentUsage {
-            instance: p.instance,
-            five_hour: agent_window(p.five_hour_pct, &p.resets_at, FIVE_HOUR_MINUTES, p.predicted_pct),
-            seven_day: agent_window(p.seven_day_pct, &p.seven_day_resets_at, SEVEN_DAY_MINUTES, None),
+        .map(|p| {
+            let short = p.has_short_window().then(|| {
+                agent_window(
+                    p.five_hour_pct,
+                    &p.resets_at,
+                    p.five_hour_window_seconds.map_or(FIVE_HOUR_MINUTES, |s| (s / 60).max(1)),
+                    p.predicted_pct,
+                )
+            });
+            AgentUsage {
+                provider: p.provider,
+                five_hour: short,
+                seven_day: agent_window(
+                    p.seven_day_pct,
+                    &p.seven_day_resets_at,
+                    p.seven_day_window_seconds.map_or(SEVEN_DAY_MINUTES, |s| (s / 60).max(1)),
+                    None,
+                ),
+                instance: p.instance,
+            }
         })
         .collect();
 

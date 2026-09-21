@@ -35,7 +35,6 @@ A Tauri 2.0 desktop app that wraps the existing `claudar` daemon with a full GUI
 |---------|-------------|
 | Keychain / secure session storage | Security audit or user demand |
 | Windows Chrome detection wizard | Targeting Windows seriously |
-| In-app auto-update | Preparing a public release channel |
 | Dark/light theme toggle | shadcn-svelte theming stabilises |
 | Multiple history instances side-by-side | Multi-account is common in practice |
 

@@ -1,4 +1,6 @@
-use claudar_core::config::Config;
+use claudar_core::config::{Config, Provider};
+use claudar_core::openai_fetcher;
+use claudar_core::openai_session::OpenAiSession;
 use claudar_core::pace;
 use claudar_core::storage::SessionData;
 use claudar_core::time_format;
@@ -14,7 +16,13 @@ pub async fn run_usage(verbose: bool, instance_filter: Option<String>) -> anyhow
     let timestamp = time_format::format_datetime_24h(&now, &config.general.timezone)
         .unwrap_or_else(|_| now.format("%H:%M %d/%m/%Y").to_string());
 
-    println!("\nClaude.ai Usage");
+    // The banner only names Claude while that is the only thing configured;
+    // with a ChatGPT account present it would be wrong.
+    let all_claude = config
+        .effective_instances()
+        .iter()
+        .all(|i| i.provider == Provider::ClaudeWeb);
+    println!("\n{}", if all_claude { "Claude.ai Usage" } else { "Usage" });
     println!("{}", "━".repeat(50));
     println!("Fetched at: {}", timestamp.bright_black());
     println!();
@@ -74,6 +82,19 @@ pub async fn display_instance_usage(
     spinner.set_message("Fetching usage data...");
     spinner.enable_steady_tick(std::time::Duration::from_millis(80));
 
+    let provider = config
+        .effective_instances()
+        .iter()
+        .find(|i| i.name == instance_name)
+        .map(|i| i.provider)
+        .unwrap_or_default();
+
+    if provider == Provider::OpenaiWeb {
+        let result = display_openai_usage(config, instance_name).await;
+        spinner.finish_and_clear();
+        return result;
+    }
+
     let session_path = config.session_path_for(instance_name)?;
     let session = SessionData::load(&session_path)?;
     let cookie_header = session.cookie_header_string();
@@ -108,6 +129,58 @@ pub async fn display_instance_usage(
     println!();
 
     Ok(())
+}
+
+/// Render a ChatGPT account's windows with the same bars as Claude's, labelled
+/// by the window length the API reported rather than by Claude's fixed pair.
+async fn display_openai_usage(config: &Config, instance_name: &str) -> anyhow::Result<()> {
+    let session_path = config.session_path_for(instance_name)?;
+    let mut session = OpenAiSession::load(&session_path)?;
+    let (bearer, minted) = session.ensure_bearer(Utc::now().timestamp()).await?;
+    if minted {
+        // Best-effort: a bearer we can't cache still works for this call.
+        let _ = session.save(&session_path);
+    }
+
+    let usage = openai_fetcher::fetch_usage(&bearer)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("ChatGPT account '{}' reported no usage windows", instance_name))?;
+
+    // The short window is optional — some accounts report only a weekly one —
+    // and each window keeps the thresholds configured for its slot.
+    if let Some(short) = &usage.short {
+        show_window(config, short, &config.thresholds.five_hour)?;
+    }
+    show_window(config, &usage.long, &config.thresholds.seven_day)?;
+
+    Ok(())
+}
+
+fn show_window(
+    config: &Config,
+    window: &openai_fetcher::OpenAiWindow,
+    thresholds: &[u8],
+) -> anyhow::Result<()> {
+    display_usage_limit(
+        &window_title(window.window_seconds),
+        window.pct,
+        window.resets_at.as_deref(),
+        thresholds,
+        (window.window_seconds / 60).max(1),
+        &config.general.timezone,
+    )?;
+    println!();
+    Ok(())
+}
+
+/// "5-Hour Limit" / "7-Day Limit", derived from the window's own length.
+fn window_title(window_seconds: i64) -> String {
+    let hours = (window_seconds as f64 / 3600.0).round() as i64;
+    if hours >= 24 && hours % 24 == 0 {
+        format!("{}-Day Limit", hours / 24)
+    } else {
+        format!("{}-Hour Limit", hours.max(1))
+    }
 }
 
 fn display_usage_limit(

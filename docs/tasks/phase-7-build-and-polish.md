@@ -24,7 +24,7 @@ Produce an installable, distributable app. Tray icon colour variants are wired u
 
 - Code signing or notarization for distribution (requires Apple Developer account)
 - GitHub Actions CI pipeline (beyond the documentation of steps)
-- In-app auto-update mechanism (parked in design docs)
+- In-app auto-update mechanism (shipped later via `tauri-plugin-updater`; see docs/building.md)
 - Windows Chrome detection wizard (parked)
 - Dark/light mode theming (parked)
 - Keychain integration (parked)

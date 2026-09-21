@@ -2,9 +2,9 @@
 intent: share
 stage: shared
 share_target: maintained
-next: Runtime-verify the 0.4.6 release — add a ChatGPT account through the built app and confirm the login lands on chatgpt.com (the 0.4.6 fixes went out without this pass); diagnose `decryption failed: aead::Error` on both existing accounts, which currently stops them polling entirely; then drag-and-drop account ordering (drag gesture, persistence across restart, tray menu order), the reorganised Settings (Accounts/About tabs, add-account wizard overlay), the Dashboard progressbar semantics with a screen reader, and that the tray icon/menu still update live after the main-thread fix; turn `claudar setup` into a real prompt-and-paste flow (org_id / session_key / cookie, validate via API, write the session file) and rewrite README's stale "## Setup" section with it; runtime-verify the web dashboard (bind/restart-on-config-change/agent API gating), the threshold-list editing UI, and notifications/login/start-minimized on macOS/Windows; code-sign/notarize for distribution. Parked behind that: whether the ChatGPT bar should notify (it is display-only today), and the `Gauge`/`UsageProvider` generalisation in `docs/04-multi-provider.md`
+next: The in-app updater is fully armed — keypair generated, `plugins.updater.pubkey` filled in, and both `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` set as repo secrets (2026-09-01). None of it has run yet: build two versions back-to-back and confirm an ad-hoc-signed `.app` really does update in place on macOS, and that the universal build's `latest.json` target key matches what the client asks for. After that, runtime-verify the 0.4.6 release — add a ChatGPT account through the built app and confirm the login lands on chatgpt.com (the 0.4.6 fixes went out without this pass); diagnose `decryption failed: aead::Error` on both existing accounts, which currently stops them polling entirely; then account reordering, now rebuilt on pointer events after the HTML5 drop never fired (drag gesture, persistence across restart, tray menu order), the reorganised Settings (Accounts/About tabs, add-account wizard overlay), the Dashboard progressbar semantics with a screen reader, and that the tray icon/menu still update live after the main-thread fix; turn `claudar setup` into a real prompt-and-paste flow (org_id / session_key / cookie, validate via API, write the session file) and rewrite README's stale "## Setup" section with it; runtime-verify the web dashboard (bind/restart-on-config-change/agent API gating), the threshold-list editing UI, and notifications/login/start-minimized on macOS/Windows; code-sign/notarize for distribution. Also runtime-verify the now-full ChatGPT support (5-hour + weekly bars, threshold notifications titled "ChatGPT", history filling in `history/{instance}.jsonl`). Parked behind that: per-account thresholds (`[thresholds]` is still global), and the `Gauge`/`UsageProvider` generalisation in `docs/04-multi-provider.md`
 blocker: null
-updated: 2026-08-30
+updated: 2026-09-14
 ---
 
 # Claudar — Monitor Claude.ai usage limits with native desktop notifications
@@ -28,6 +28,15 @@ the GUI app double-notifies (two monitors, one account); the GUI can't detect th
 
 No feature work remains in the build plan. What's left is distribution and verification — see `docs/human-todo.md`.
 
+**ChatGPT is a full account as of 2026-08-31 (unreleased).** The account started reporting a 5-hour
+window alongside the weekly one — the same pair Claude reports — so ChatGPT now runs through the
+same code as Claude: both bars on the Dashboard, tray and web dashboard, threshold/reset/capacity
+notifications (titled with the provider name), pace prediction, and a history record per poll, which
+makes the History screen work for it unchanged. Window lengths and labels come from the API's
+`limit_window_seconds`, and an account that reports only a weekly window has its 5-hour bar omitted
+rather than drawn at 0%. The `Gauge` generalisation stays parked — see DEVLOG 2026-08-31. Not yet
+runtime-verified against the live account.
+
 **ChatGPT weekly bar shipped as 0.4.6 (2026-08-30).** A second provider (`openai-web`) renders one
 weekly usage bar on the Dashboard alongside Claude's two. Auth is a browser login that mints a
 bearer from the session cookie — no OAuth, no Codex install (see DEVLOG 2026-08-27). Display-only:
@@ -36,6 +45,15 @@ Claude-only login path that sent ChatGPT accounts to claude.ai and trapped the U
 no cancel; 0.4.6 fixes that and replaces the Dashboard's "open Settings to sign in" text with a
 **Log in now** button. **The 0.4.6 release was cut without a runtime pass** — the ChatGPT login has
 not been exercised in a built app.
+
+**In-app updater built, not yet armed (2026-08-31).** `tauri-plugin-updater` now checks GitHub
+Releases and installs from Settings → About, with a "What's new" panel fed by a new `CHANGELOG.md`
+(backfilled 0.3.0–0.4.6). CI extracts the tagged version's changelog section into both the GitHub
+release body and `latest.json`, so the two can't drift. Signing is armed: the minisign keypair was generated 2026-08-31,
+its public half is in `tauri.conf.json`, and both `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` are repo secrets as of 2026-09-01. Compiles clean and the full
+suite passes (164 tests), but **no release has been cut with any of this** — the signing path, the
+generated `latest.json`, and the About panel itself are all unexercised.
 
 **Both live accounts are failing to poll (2026-08-30).** `decryption failed: aead::Error` on
 `personal` and `work` in a dev run — a session-key/keychain mismatch, unrelated to the provider

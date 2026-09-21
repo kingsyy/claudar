@@ -1,4 +1,4 @@
-use crate::config::NotificationsConfig;
+use crate::config::{NotificationsConfig, Provider};
 use crate::notification_trait::NotificationSender;
 use crate::pace;
 use crate::state::LimitType;
@@ -27,6 +27,7 @@ pub fn notify_threshold(
     sender: &dyn NotificationSender,
     config: &NotificationsConfig,
     instance_name: &str,
+    provider: Provider,
     limit_type: LimitType,
     percentage: f64,
     resets_in: &str,
@@ -53,8 +54,9 @@ pub fn notify_threshold(
     let summary = format_title(
         instance_name,
         &format!(
-            "{} Claude Usage Alert: {} Limit",
+            "{} {} Usage Alert: {} Limit",
             emoji,
+            provider.label(),
             limit_type.as_str()
         ),
     );
@@ -91,6 +93,7 @@ pub fn notify_predicted_overage(
     sender: &dyn NotificationSender,
     config: &NotificationsConfig,
     instance_name: &str,
+    provider: Provider,
     limit_type: LimitType,
     current_percentage: f64,
     predicted_percentage: f64,
@@ -111,7 +114,8 @@ pub fn notify_predicted_overage(
     let summary = format_title(
         instance_name,
         &format!(
-            "⚡ Claude Usage Warning: {} Limit",
+            "⚡ {} Usage Warning: {} Limit",
+            provider.label(),
             limit_type.as_str()
         ),
     );
@@ -143,6 +147,7 @@ pub fn notify_reset(
     sender: &dyn NotificationSender,
     config: &NotificationsConfig,
     instance_name: &str,
+    provider: Provider,
     limit_type: LimitType,
 ) -> anyhow::Result<()> {
     if !config.notify_resets {
@@ -158,7 +163,8 @@ pub fn notify_reset(
     let summary = format_title(
         instance_name,
         &format!(
-            "✓ Claude {} Limit Reset",
+            "✓ {} {} Limit Reset",
+            provider.label(),
             limit_type.as_str()
         ),
     );
@@ -177,6 +183,7 @@ pub fn notify_upcoming_reset(
     sender: &dyn NotificationSender,
     config: &NotificationsConfig,
     instance_name: &str,
+    provider: Provider,
     limit_type: LimitType,
     current_percentage: f64,
     remaining_capacity: f64,
@@ -191,7 +198,8 @@ pub fn notify_upcoming_reset(
     let summary = format_title(
         instance_name,
         &format!(
-            "⏰ Claude {} Limit Resetting Soon",
+            "⏰ {} {} Limit Resetting Soon",
+            provider.label(),
             limit_type.as_str()
         ),
     );
@@ -215,6 +223,7 @@ pub fn notify_unused_capacity(
     sender: &dyn NotificationSender,
     config: &NotificationsConfig,
     instance_name: &str,
+    provider: Provider,
     limit_type: LimitType,
     _current_percentage: f64,
     remaining_capacity: f64,
@@ -241,7 +250,8 @@ pub fn notify_unused_capacity(
     let summary = format_title(
         instance_name,
         &format!(
-            "💡 Unused {} Capacity Warning",
+            "💡 Unused {} {} Capacity Warning",
+            provider.label(),
             limit_type.as_str()
         ),
     );
@@ -306,6 +316,32 @@ mod tests {
 
     // ========== Threshold Notification Tests ==========
 
+    /// The title names the service the limit belongs to; a ChatGPT account must
+    /// not report itself as a Claude alert.
+    #[test]
+    fn test_notify_threshold_titles_use_the_provider_name() {
+        let mock = MockNotificationSender::new();
+        let config = default_config();
+
+        notify_threshold(
+            &mock,
+            &config,
+            "default",
+            Provider::OpenaiWeb,
+            LimitType::FiveHour,
+            75.0,
+            "2h 30m",
+            None,
+            None,
+            300,
+        )
+        .unwrap();
+
+        let sent = mock.get_sent();
+        assert!(sent[0].summary.contains("ChatGPT"), "got: {}", sent[0].summary);
+        assert!(!sent[0].summary.contains("Claude"), "got: {}", sent[0].summary);
+    }
+
     #[test]
     fn test_notify_threshold_sends_notification_when_enabled() {
         let mock = MockNotificationSender::new();
@@ -315,6 +351,7 @@ mod tests {
             &mock,
             &config,
             "default",
+            Provider::ClaudeWeb,
             LimitType::FiveHour,
             75.0,
             "2h 30m",
@@ -343,6 +380,7 @@ mod tests {
             &mock,
             &config,
             "default",
+            Provider::ClaudeWeb,
             LimitType::FiveHour,
             75.0,
             "2h 30m",
@@ -364,6 +402,7 @@ mod tests {
             &mock,
             &config,
             "default",
+            Provider::ClaudeWeb,
             LimitType::SevenDay,
             95.0,
             "1d 5h",
@@ -386,6 +425,7 @@ mod tests {
             &mock,
             &config,
             "default",
+            Provider::ClaudeWeb,
             LimitType::FiveHour,
             75.0,
             "1h",
@@ -408,6 +448,7 @@ mod tests {
             &mock,
             &config,
             "default",
+            Provider::ClaudeWeb,
             LimitType::FiveHour,
             50.0,
             "2h",
@@ -431,6 +472,7 @@ mod tests {
             &mock,
             &config,
             "default",
+            Provider::ClaudeWeb,
             LimitType::FiveHour,
             90.0,
             "30m",
@@ -455,6 +497,7 @@ mod tests {
             &mock,
             &config,
             "default",
+            Provider::ClaudeWeb,
             LimitType::FiveHour,
             60.0,
             120.0,
@@ -483,6 +526,7 @@ mod tests {
             &mock,
             &config,
             "default",
+            Provider::ClaudeWeb,
             LimitType::FiveHour,
             60.0,
             120.0,
@@ -506,6 +550,7 @@ mod tests {
             &mock,
             &config,
             "default",
+            Provider::ClaudeWeb,
             LimitType::FiveHour,
         )
         .unwrap();
@@ -528,6 +573,7 @@ mod tests {
             &mock,
             &config,
             "default",
+            Provider::ClaudeWeb,
             LimitType::SevenDay,
         )
         .unwrap();
@@ -544,6 +590,7 @@ mod tests {
             &mock,
             &config,
             "default",
+            Provider::ClaudeWeb,
             LimitType::SevenDay,
         )
         .unwrap();
@@ -563,6 +610,7 @@ mod tests {
             &mock,
             &config,
             "default",
+            Provider::ClaudeWeb,
             LimitType::FiveHour,
             65.0,
             35.0,
@@ -589,6 +637,7 @@ mod tests {
             &mock,
             &config,
             "default",
+            Provider::ClaudeWeb,
             LimitType::SevenDay,
             80.0,
             20.0,
@@ -611,6 +660,7 @@ mod tests {
             &mock,
             &config,
             "work",
+            Provider::ClaudeWeb,
             LimitType::FiveHour,
             90.0,
             "1h",
@@ -633,6 +683,7 @@ mod tests {
             &mock,
             &config,
             "default",
+            Provider::ClaudeWeb,
             LimitType::FiveHour,
             90.0,
             "1h",

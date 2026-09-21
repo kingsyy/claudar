@@ -1,3 +1,99 @@
+## 2026-09-14 · Account reordering runs on pointer events, not HTML5 drag-and-drop
+
+**What:** The drag handle in Settings → Accounts no longer uses the HTML5 drag API. `draggable`,
+`dragstart`, `dragover`, `dragend` and `drop` are gone from the row; the handle now owns the whole
+gesture through `pointerdown`/`pointermove`/`pointerup` plus `setPointerCapture`, and the list
+element is bound so the move handler can measure row midpoints with `getBoundingClientRect`. The
+order is persisted on pointer-up, and only when the index actually changed. The keyboard path
+(arrow keys on the focused handle) is untouched.
+
+**Why:** Dragging appeared to work but dropping did nothing — the reorder never committed. Inside
+the webview the native drag handler intercepts the gesture, so `drop`/`dragend` never reach the page
+and the row snaps back. The alternative fix was `dragDropEnabled: false` on the window, a one-line
+config change; rejected because it makes correct behaviour depend on a webview-level flag that is
+documented as a Windows workaround, and it leaves the reorder built on an API that behaves
+differently per platform. Pointer events are one code path everywhere and need no window config.
+The app uses no native file-drop, so nothing else was affected either way.
+
+**Verification:** UI builds clean and `cargo tauri build --bundles dmg` produced
+`Claudar_0.4.6_aarch64.dmg`. The gesture itself has *not* been runtime-verified in the built app —
+that stays on the STATUS backlog.
+
+## 2026-08-31 · ChatGPT becomes a real account, not a read-out
+
+**What:** ChatGPT accounts now travel the same path as Claude ones. `/wham/usage`'s windows are
+sorted by duration and mapped onto Claudar's two slots (shortest → 5-hour, longest → weekly), then
+run through the *existing* `process_limit` state machine: thresholds, reset detection, upcoming-reset
+and capacity warnings, pace prediction, and a `HistoryRecord` per poll — so the History screen works
+for ChatGPT with no changes. `UsagePayload` gained `five_hour_window_seconds` /
+`seven_day_window_seconds`; the Dashboard, the web dashboard and `/api/agent` now take window length
+and labels from those instead of hardcoding Claude's pair. Notification titles name the provider
+("ChatGPT Usage Alert"), and `claudar usage` renders ChatGPT accounts instead of erroring on them.
+
+**Why:** The account this was built against started reporting a 5-hour *and* a 7-day window —
+structurally identical to Claude's pair — which removes the reason the bar was display-only. The
+alternative was the `Gauge`/`UsageProvider` generalisation in `docs/04-multi-provider.md` (~3–4 days,
+touching 440 references and the 1908-line `History.svelte`). That is still the right end state for
+providers whose limits *aren't* two rolling windows, but paying it now to model two windows as two
+windows would be pre-paying for a shape we don't have yet. Two smaller calls inside that:
+
+*Absent windows stay absent.* An account can report only a weekly window (that shape is in the
+research doc). Rather than filling the 5-hour slot with 0%, the payload reports the window length as
+`None` and every surface — bars, tray row, agent JSON — omits the window instead of drawing a
+measurement that was never taken.
+
+*Window length comes from the API.* Periods for pace and labels are derived from
+`limit_window_seconds`, so a plan with different windows is labelled and paced for what it is rather
+than being forced into "5-hour"/"7-day".
+
+Also fixed in passing: the GUI wrote each history record **twice** when `history.enabled` was on —
+once in `check_usage`, once in `poll_instance`. History writing now sits in one place per caller
+(GUI always, CLI when enabled), and both build the record through one helper.
+
+**Next:** Runtime-verify against the live account — confirm the 5-hour bar tracks ChatGPT's own
+"99% left" reading, that a threshold notification fires with the ChatGPT title, and that
+`history/{instance}.jsonl` starts filling. Thresholds are still shared between providers
+(`[thresholds]` is global); per-account thresholds are the next thing to want.
+
+## 2026-08-31 · In-app updater, and a changelog to feed it
+
+**What:** Added `tauri-plugin-updater` against GitHub Releases. `release.yml` gained a `notes` job
+that extracts the tagged version's section from a new `CHANGELOG.md` (via
+`scripts/changelog-extract.sh`) and passes it to `tauri-action` as both the GitHub release body and
+`includeUpdaterJson`'s notes, so the release page and the in-app "What's new" panel are the same
+text by construction. Two Rust commands (`updater::check_update` / `install_update`) back a new
+section in Settings → About that checks on open, renders the notes, and offers "Update and
+restart". `CHANGELOG.md` is backfilled for 0.3.0 through 0.4.6.
+
+**Why:** There was no update path at all — users had to notice a release, re-download the DMG, and
+redo the Gatekeeper dance every time. Three decisions inside that:
+
+*Release date, not "N releases behind."* The obvious "you're 3 versions old" counter would have
+been wrong on this repo's own history: 0.4.3 and 0.4.5 were version bumps that were never tagged,
+so any count derived from version numbers lies. `pub_date` is free in the update response and can't
+be.
+
+*Rust commands over the plugin's JS API.* Everything else in this app talks to the backend through
+`invoke`; matching that avoids an npm dependency and keeps the frontend's permission surface
+unchanged (no `updater:default` capability needed). `install_update` re-checks instead of caching
+the `Update` from `check_update` — one extra request next to a multi-MB download, in exchange for
+no cross-command state that can go stale while someone reads the notes.
+
+*`createUpdaterArtifacts` in `tauri.conf.ci.json`, not the main config.* Turning it on globally
+breaks `cargo tauri build` for anyone without `TAURI_SIGNING_PRIVATE_KEY` set. The CI config
+override already existed for the `beforeBuildCommand` problem, so only CI — which has the secret —
+emits updater artifacts.
+
+The updater's minisign key is unrelated to Apple notarization, so this ships without a Developer
+account. It should also *improve* the unsigned story: quarantine is applied by the browser at
+download time, so an in-app update shouldn't re-trigger Gatekeeper — users pay that once, at first
+install. Unverified; see Next.
+
+**Next:** Signing is fully set up as of 2026-09-01 — keypair generated, public half in
+`plugins.updater.pubkey`, private half and its password both repo secrets. The real test: build two versions and confirm an ad-hoc-signed
+`.app` actually updates in place on macOS, and that `latest.json` from the universal build carries
+a target key the client matches (`darwin-universal` vs `darwin-aarch64`).
+
 ## 2026-08-30 · The ChatGPT bar shipped with a Claude-only login path (0.4.6)
 
 **What:** Runtime-testing the 0.4.5 build found three linked bugs in the ChatGPT account flow, all

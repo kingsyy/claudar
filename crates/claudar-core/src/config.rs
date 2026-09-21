@@ -92,6 +92,17 @@ pub enum Provider {
     OpenaiWeb,
 }
 
+impl Provider {
+    /// Service name for user-facing copy, e.g. notification titles. Kept short
+    /// because it is prefixed to an already-long title.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ClaudeWeb => "Claude",
+            Self::OpenaiWeb => "ChatGPT",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceConfig {
     pub name: String,

@@ -8,8 +8,8 @@
 //!
 //! The number and order of windows is *not* fixed. Accounts have been observed
 //! with `primary_window` as a 7-day window and no secondary, and with a 5-hour
-//! primary plus a 7-day secondary. Nothing here may assume a position; see
-//! [`UsageWindow::longest`].
+//! primary plus a 7-day secondary. Nothing here may assume a position; the
+//! windows are sorted by duration in [`parse_usage`].
 
 use crate::usage_fetcher::AuthRequiredError;
 use anyhow::Result;
@@ -32,61 +32,63 @@ struct WhamResponse {
 #[derive(Debug, Deserialize)]
 struct RateLimit {
     #[serde(default)]
-    primary_window: Option<UsageWindow>,
+    primary_window: Option<RawWindow>,
     #[serde(default)]
-    secondary_window: Option<UsageWindow>,
+    secondary_window: Option<RawWindow>,
 }
 
-/// One rolling window. `used_percent` is 0-100; `reset_at` is a Unix timestamp
-/// in seconds (the field is named `resets_at` in Codex's internal structs, but
-/// the wire format uses `reset_at`).
+/// One rolling window as it comes off the wire. `used_percent` is 0-100;
+/// `reset_at` is a Unix timestamp in seconds (the field is named `resets_at` in
+/// Codex's internal structs, but the wire format uses `reset_at`).
 #[derive(Debug, Clone, Deserialize)]
-pub struct UsageWindow {
-    pub used_percent: f64,
-    pub limit_window_seconds: i64,
+struct RawWindow {
+    used_percent: f64,
+    limit_window_seconds: i64,
     #[serde(default)]
-    pub reset_at: Option<i64>,
+    reset_at: Option<i64>,
 }
 
-impl UsageWindow {
-    /// The longest of the available windows — the "weekly" one in practice.
-    ///
-    /// Chosen by duration rather than by field name because the same account can
-    /// report its 7-day window as either `primary_window` or `secondary_window`
-    /// depending on the plan.
-    fn longest(rate_limit: &RateLimit) -> Option<&UsageWindow> {
-        [rate_limit.primary_window.as_ref(), rate_limit.secondary_window.as_ref()]
-            .into_iter()
-            .flatten()
-            .max_by_key(|w| w.limit_window_seconds)
-    }
-
-    /// Reset time as an ISO 8601 string, matching the shape Claude's API returns
-    /// so the UI can treat both providers identically.
-    pub fn resets_at_iso(&self) -> Option<String> {
-        DateTime::<Utc>::from_timestamp(self.reset_at?, 0).map(|dt| dt.to_rfc3339())
-    }
-}
-
-/// A ChatGPT account's usage windows.
-///
-/// `weekly` is the longest window — the one the dashboard draws. `short` is the
-/// other window when the account has two (typically 5-hour). It is carried even
-/// though nothing renders it yet, because `poll_instance` persists every payload
-/// to history; a placeholder would write a value that was never true.
-#[derive(Debug, Clone)]
-pub struct OpenAiUsage {
+/// One rolling window in the shape the rest of Claudar speaks: a percentage and
+/// an ISO 8601 reset string, matching what Claude's API returns so both
+/// providers travel the same code path.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpenAiWindow {
     pub pct: f64,
     pub resets_at: Option<String>,
-    /// Duration of the window in seconds, so the UI can label it honestly
-    /// instead of hardcoding "weekly".
+    /// Duration of the window in seconds, so callers can compute pace against
+    /// the real period instead of assuming Claude's 5-hour / 7-day pair.
     pub window_seconds: i64,
-    pub short_pct: Option<f64>,
-    pub short_resets_at: Option<String>,
+}
+
+impl RawWindow {
+    fn into_window(self) -> OpenAiWindow {
+        OpenAiWindow {
+            pct: self.used_percent,
+            resets_at: self
+                .reset_at
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0))
+                .map(|dt| dt.to_rfc3339()),
+            window_seconds: self.limit_window_seconds,
+        }
+    }
+}
+
+/// A ChatGPT account's usage windows, ordered by duration rather than by the
+/// field they arrived in — the same account can report its 7-day window as
+/// either `primary_window` or `secondary_window` depending on the plan.
+#[derive(Debug, Clone)]
+pub struct OpenAiUsage {
+    /// The longest window — 7 days on every account seen so far.
+    pub long: OpenAiWindow,
+    /// The shorter window (5 hours in practice) when the account reports two.
+    /// `None` is a real state, not a missing value: some accounts report only
+    /// a weekly window, and a zeroed placeholder would be a value that was
+    /// never true.
+    pub short: Option<OpenAiWindow>,
     pub plan_type: Option<String>,
 }
 
-/// Parse a `/wham/usage` body into the single window worth showing.
+/// Parse a `/wham/usage` body into its usage windows.
 ///
 /// Returns `Ok(None)` when the account reports no windows at all — a legitimate
 /// state (seen as `secondary_window: null` alongside a null primary), not an error.
@@ -95,27 +97,25 @@ pub fn parse_usage(body: &str) -> Result<Option<OpenAiUsage>> {
         anyhow::anyhow!("failed to parse wham usage response: {} | body: {}", e, &body[..body.len().min(300)])
     })?;
 
-    let Some(rate_limit) = parsed.rate_limit.as_ref() else {
-        return Ok(None);
-    };
-    let Some(window) = UsageWindow::longest(rate_limit) else {
+    let Some(rate_limit) = parsed.rate_limit else {
         return Ok(None);
     };
 
-    // The remaining window, if this account reports two. Compared by duration
-    // because either field can hold the longer one.
-    let short = [rate_limit.primary_window.as_ref(), rate_limit.secondary_window.as_ref()]
+    let mut windows: Vec<OpenAiWindow> = [rate_limit.primary_window, rate_limit.secondary_window]
         .into_iter()
         .flatten()
-        .find(|w| w.limit_window_seconds < window.limit_window_seconds);
+        .map(RawWindow::into_window)
+        .collect();
+    windows.sort_by_key(|w| w.window_seconds);
+
+    let Some(long) = windows.pop() else {
+        return Ok(None);
+    };
 
     Ok(Some(OpenAiUsage {
-        pct: window.used_percent,
-        resets_at: window.resets_at_iso(),
-        window_seconds: window.limit_window_seconds,
-        short_pct: short.map(|w| w.used_percent),
-        short_resets_at: short.and_then(|w| w.resets_at_iso()),
-        plan_type: parsed.plan_type.clone(),
+        long,
+        short: windows.pop(),
+        plan_type: parsed.plan_type,
     }))
 }
 
@@ -176,45 +176,46 @@ mod tests {
     #[test]
     fn picks_the_seven_day_window_when_it_is_secondary() {
         let usage = parse_usage(BOTH_WINDOWS).unwrap().unwrap();
-        assert_eq!(usage.pct, 11.0);
-        assert_eq!(usage.window_seconds, 604800);
+        assert_eq!(usage.long.pct, 11.0);
+        assert_eq!(usage.long.window_seconds, 604800);
     }
 
     #[test]
     fn carries_the_shorter_window_when_present() {
-        let usage = parse_usage(BOTH_WINDOWS).unwrap().unwrap();
-        assert_eq!(usage.short_pct, Some(1.0));
-        assert!(usage.short_resets_at.is_some());
+        let short = parse_usage(BOTH_WINDOWS).unwrap().unwrap().short.unwrap();
+        assert_eq!(short.pct, 1.0);
+        assert_eq!(short.window_seconds, 18000);
+        assert!(short.resets_at.is_some());
     }
 
     /// One window means no shorter one — not a duplicate of the weekly value.
     #[test]
     fn single_window_has_no_short_counterpart() {
         let usage = parse_usage(PRIMARY_ONLY).unwrap().unwrap();
-        assert_eq!(usage.pct, 77.0);
-        assert_eq!(usage.short_pct, None);
+        assert_eq!(usage.long.pct, 77.0);
+        assert_eq!(usage.short, None);
     }
 
-    /// The reason `longest` exists: the weekly window is not always `secondary`.
+    /// The reason the windows are sorted: the weekly one is not always `secondary`.
     #[test]
     fn picks_the_seven_day_window_when_it_is_primary() {
         let usage = parse_usage(PRIMARY_ONLY).unwrap().unwrap();
-        assert_eq!(usage.pct, 77.0);
-        assert_eq!(usage.window_seconds, 604800);
+        assert_eq!(usage.long.pct, 77.0);
+        assert_eq!(usage.long.window_seconds, 604800);
     }
 
     #[test]
     fn converts_reset_at_to_iso() {
         let usage = parse_usage(BOTH_WINDOWS).unwrap().unwrap();
-        assert!(usage.resets_at.unwrap().starts_with("2026-"));
+        assert!(usage.long.resets_at.unwrap().starts_with("2026-"));
     }
 
     #[test]
     fn missing_reset_at_is_not_an_error() {
         let body = r#"{"rate_limit":{"primary_window":{"used_percent":5,"limit_window_seconds":604800}}}"#;
         let usage = parse_usage(body).unwrap().unwrap();
-        assert_eq!(usage.pct, 5.0);
-        assert!(usage.resets_at.is_none());
+        assert_eq!(usage.long.pct, 5.0);
+        assert!(usage.long.resets_at.is_none());
     }
 
     #[test]
@@ -237,7 +238,7 @@ mod tests {
             "rate_limit":{"primary_window":{"used_percent":3,"limit_window_seconds":604800,"reset_at":1788294153},"secondary_window":null},
             "credits":{"approx_local_messages":[0,0]},"rate_limit_reset_credits":{"available_count":1}
         }"#;
-        assert_eq!(parse_usage(body).unwrap().unwrap().pct, 3.0);
+        assert_eq!(parse_usage(body).unwrap().unwrap().long.pct, 3.0);
     }
 
     #[test]
