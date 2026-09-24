@@ -8,7 +8,7 @@ resolver = "2"
 
 [package]
 name = "claudar"
-version = "0.4.7"
+version = "0.4.8"
 edition = "2021"
 description = "Monitor your Claude.ai usage limits and get native desktop notifications before hitting rate limits"
 license = "MIT"

@@ -5,12 +5,13 @@ All notable user-facing changes to Claudar are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> Versions 0.4.3 and 0.4.5 were internal version bumps that were never tagged or
-> published. Their changes ship as part of 0.4.4 and 0.4.6 respectively.
+> Versions 0.4.3, 0.4.5, and 0.4.7 were internal version bumps that were never
+> tagged or published. Their changes ship as part of 0.4.4, 0.4.6, and 0.4.8
+> respectively.
 
 ## [Unreleased]
 
-## [0.4.7] — 2026-09-21
+## [0.4.8] — 2026-09-24
 
 ### Added
 
@@ -122,7 +123,8 @@ The first release of the desktop app. Claude Notify became **Claudar**.
 Early CLI-only releases: usage polling, threshold notifications, and launchd/systemd
 service installation.
 
-[Unreleased]: https://github.com/kingsyy/claudar/compare/v0.4.6...HEAD
+[Unreleased]: https://github.com/kingsyy/claudar/compare/v0.4.8...HEAD
+[0.4.8]: https://github.com/kingsyy/claudar/compare/v0.4.6...v0.4.8
 [0.4.6]: https://github.com/kingsyy/claudar/compare/v0.4.4...v0.4.6
 [0.4.4]: https://github.com/kingsyy/claudar/compare/v0.4.2...v0.4.4
 [0.4.2]: https://github.com/kingsyy/claudar/compare/v0.4.1...v0.4.2
