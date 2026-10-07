@@ -120,6 +120,33 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn overloaded_503_gets_plain_message_without_auth_wording() {
+        let body = r#"{"type":"error","error":{"type":"overloaded_error","message":"Temporarily unable to authenticate. Please retry."}}"#;
+        let err = process_response(503, body, "org").unwrap_err().to_string();
+        assert!(err.contains("HTTP 503, overloaded_error"), "{err}");
+        assert!(err.contains("status.claude.com"), "{err}");
+        // Must not match the dashboard's looksLikeAuthError regex.
+        let lower = err.to_lowercase();
+        for word in ["auth", "session", "login", "log in", "cookie", "token", "expired"] {
+            assert!(!lower.contains(word), "message contains {word:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn rate_limit_and_non_json_5xx_are_mapped() {
+        let err = process_response(429, "", "org").unwrap_err().to_string();
+        assert!(err.contains("rate-limiting requests (HTTP 429)"), "{err}");
+        let err = process_response(502, "<html>Bad Gateway</html>", "org").unwrap_err().to_string();
+        assert!(err.contains("(HTTP 502)"), "{err}");
+    }
+
+    #[test]
+    fn other_4xx_keeps_raw_body() {
+        let err = process_response(404, "not found", "org").unwrap_err().to_string();
+        assert_eq!(err, "HTTP 404: not found");
+    }
+
+    #[test]
     fn prefers_last_active_org_cookie() {
         let orgs = vec![
             json!({"uuid": "api-org", "capabilities": ["api"]}),
@@ -223,6 +250,33 @@ async fn do_reqwest_fetch(url: &str, cookie_header: &str) -> Result<(u16, String
     Ok((status, body))
 }
 
+/// User-facing message for errors that are Claude.ai's fault, not the user's (5xx, 429).
+///
+/// The raw body is deliberately left out: Anthropic's 503 reads "Temporarily unable to
+/// authenticate", which sent users off re-logging in and tripped the dashboard's
+/// auth-error heuristic (showing a pointless "Log in" button). The body still goes
+/// to the log. Keep this text free of auth-sounding words for the same reason.
+fn server_side_error_message(status: u16, body: &str) -> Option<String> {
+    let error_type = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.pointer("/error/type")?.as_str().map(str::to_string));
+    let detail = match error_type.as_deref() {
+        Some(t) => format!("HTTP {status}, {t}"),
+        None => format!("HTTP {status}"),
+    };
+
+    match status {
+        429 => Some(format!(
+            "Claude.ai is rate-limiting requests ({detail}). Claudar will try again at the next check."
+        )),
+        500..=599 => Some(format!(
+            "Claude.ai is having server problems ({detail}). This is on Anthropic's side, \
+             not your account — Claudar will keep retrying. Check status.claude.com for outages."
+        )),
+        _ => None,
+    }
+}
+
 /// Validate and parse a raw `(status, body)` pair into JSON, handling all error cases.
 fn process_response(status: u16, body: &str, org_id: &str) -> Result<serde_json::Value> {
     tracing::info!("usage_fetch: response status {}", status);
@@ -248,6 +302,9 @@ fn process_response(status: u16, body: &str, org_id: &str) -> Result<serde_json:
     if !(200..300).contains(&status) {
         let preview = &body[..body.len().min(300)];
         tracing::warn!("usage_fetch: non-success status {} for org {}: {}", status, org_id, preview);
+        if let Some(message) = server_side_error_message(status, body) {
+            anyhow::bail!(message);
+        }
         anyhow::bail!("HTTP {}: {}", status, preview);
     }
 
