@@ -16,8 +16,19 @@ describe("projectedPeak", () => {
     expect(projectedPeak(7, 7.47, null)).toBeCloseTo(93.71, 1);
   });
 
-  it("does not extrapolate a genuinely new window", () => {
-    expect(projectedPeak(1, 0.5, null)).toBe(1);
+  it("damps extrapolation in a genuinely new window instead of exploding", () => {
+    // Treated as if the minimum 5% had elapsed: 1 / 5 * 100.
+    expect(projectedPeak(1, 0.5, null)).toBeCloseTo(20, 5);
+  });
+
+  it("still flags heavy early usage just under the projection threshold", () => {
+    // 18% used with 4.9% of a week elapsed (displays as "5%") is far over pace;
+    // it must not collapse to the current 18%.
+    expect(projectedPeak(18, 4.9, null)).toBeCloseTo(360, 5);
+  });
+
+  it("has no jump at the projection threshold", () => {
+    expect(projectedPeak(18, 4.999, null)).toBeCloseTo(projectedPeak(18, 5, null), 1);
   });
 
   it("prefers a prediction supplied by the backend", () => {

@@ -36,7 +36,9 @@ export function matchZone(peak: number, zones: PaceZone[]): PaceZone {
 
 /**
  * Estimate usage at reset. Backend predictions win when available; otherwise
- * extrapolate after enough of the window has elapsed to avoid startup noise.
+ * extrapolate linearly. Early in a window the elapsed time is floored so a
+ * few minutes of usage can't explode the projection — but heavy early usage
+ * still projects over pace instead of collapsing to the current value.
  */
 export function projectedPeak(
   pct: number,
@@ -44,8 +46,7 @@ export function projectedPeak(
   predicted: number | null,
 ): number {
   if (predicted != null) return predicted;
-  if (timePct < MIN_PROJECTION_TIME_PCT) return pct;
-  return (pct / timePct) * 100;
+  return (pct / Math.max(timePct, MIN_PROJECTION_TIME_PCT)) * 100;
 }
 
 /** Format the reset instant exactly enough to display and copy. */

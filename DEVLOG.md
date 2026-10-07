@@ -1,3 +1,20 @@
+## 2026-10-07 · Early-window projection floors elapsed time instead of freezing at current usage
+
+**What:** `projectedPeak` (ui/src/lib/dashboard.ts) no longer returns the current usage when less
+than 5% of the window has elapsed. It now divides by `max(timePct, 5)`, so early in a window the
+projection is damped but still extrapolates.
+
+**Why:** A weekly ChatGPT bar showed 18% used, "5%" elapsed (really ~4.9%, rounded) and "Projected
+at reset 18%" — the gate silently replaced the projection with the current value, so a run at ~3.6×
+pace looked fine and the bar stayed in the "under pace" zone. The gate also caused a jump from 18%
+to ~370% the moment elapsed crossed 5%. Alternative was hiding the projection ("—") until 5%;
+rejected because the zone colour still needs a number and heavy early usage is exactly what the
+user wants flagged. The floor keeps startup noise bounded (projection ≤ 20× current) with no
+discontinuity at the threshold.
+
+**Verification:** `vitest run` — 60/60, including new cases for 18% @ 4.9% → 360% and continuity at
+the threshold. Not yet checked in the running app.
+
 ## 2026-09-14 · Account reordering runs on pointer events, not HTML5 drag-and-drop
 
 **What:** The drag handle in Settings → Accounts no longer uses the HTML5 drag API. `draggable`,
