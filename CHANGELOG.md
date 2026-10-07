@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.9] — 2026-10-07
+
+### Added
+
+- Hover or focus a usage bar to see its details: limit used, time elapsed,
+  projected usage at reset, and the exact reset time.
+
+### Fixed
+
+- **Projection early in a window.** In the first 5% of a window the "projected at
+  reset" figure showed your current usage, so a heavy start looked on pace (for
+  example 18% used a few hours into the week read as "18% projected"). It now
+  extrapolates, damped early on so the first few minutes don't produce wild numbers.
+- Claude.ai server errors (5xx) and rate limiting (429) now show a plain "this is
+  on Anthropic's side" message instead of the raw "unable to authenticate" text,
+  which wrongly suggested logging in again.
+
 ## [0.4.8] — 2026-09-24
 
 ### Added
@@ -123,7 +140,8 @@ The first release of the desktop app. Claude Notify became **Claudar**.
 Early CLI-only releases: usage polling, threshold notifications, and launchd/systemd
 service installation.
 
-[Unreleased]: https://github.com/kingsyy/claudar/compare/v0.4.8...HEAD
+[Unreleased]: https://github.com/kingsyy/claudar/compare/v0.4.9...HEAD
+[0.4.9]: https://github.com/kingsyy/claudar/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/kingsyy/claudar/compare/v0.4.6...v0.4.8
 [0.4.6]: https://github.com/kingsyy/claudar/compare/v0.4.4...v0.4.6
 [0.4.4]: https://github.com/kingsyy/claudar/compare/v0.4.2...v0.4.4

@@ -138,7 +138,7 @@ steps:
    missing — `scripts/changelog-extract.sh` exits non-zero rather than shipping empty
    notes, and the same text becomes the in-app "What's new" panel.
 2. Bump `version` in `Cargo.toml`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`.
-3. Tag and push: `git tag v0.4.8 && git push origin v0.4.8`.
+3. Tag and push: `git tag v0.4.9 && git push origin v0.4.9`.
 
 ### Updater signing key (one-time setup)
 
