@@ -6,7 +6,6 @@ import {
   contrastRatio,
   defaultZones,
   derivedZoneHex,
-  hasLowContrastOverride,
   hexToHsl,
   hslToHex,
   matchZone,
@@ -16,6 +15,7 @@ import {
   setZoneLabel,
   setZoneOverride,
   splitZoneAt,
+  zoneStyle,
   type PaceZone,
 } from "./paceZones.svelte";
 
@@ -135,17 +135,23 @@ describe("hexToHsl / hslToHex", () => {
 });
 
 describe("setZoneOverride / clearOverrides", () => {
+  it("ignores legacy text overrides while retaining bar colors", () => {
+    const zone = { ...defaultZones()[0], overrides: { bg: "#112233", border: "#445566", text: "#ffffff" } };
+    expect(zoneStyle(zone)).toContain("--zone-bg-override: #112233");
+    expect(zoneStyle(zone)).toContain("--zone-border-override: #445566");
+    expect(zoneStyle(zone)).not.toContain("--zone-text-override");
+  });
   it("sets one channel without disturbing others already set", () => {
     const zones = defaultZones();
     const withBg = setZoneOverride(zones, zones[0].id, "bg", "#112233");
-    const withText = setZoneOverride(withBg, zones[0].id, "text", "#ffffff");
-    expect(withText[0].overrides).toEqual({ bg: "#112233", text: "#ffffff" });
-    expect(withText[1]).toEqual(zones[1]); // other zones untouched
+    const withBorder = setZoneOverride(withBg, zones[0].id, "border", "#445566");
+    expect(withBorder[0].overrides).toEqual({ bg: "#112233", border: "#445566" });
+    expect(withBorder[1]).toEqual(zones[1]); // other zones untouched
   });
 
   it("clearOverrides drops the whole overrides bag", () => {
     const zones = defaultZones();
-    const withOverride = setZoneOverride(zones, zones[0].id, "text", "#ffffff");
+    const withOverride = setZoneOverride(zones, zones[0].id, "bg", "#ffffff");
     const cleared = clearOverrides(withOverride, zones[0].id);
     expect(cleared[0].overrides).toBeUndefined();
   });
@@ -156,27 +162,13 @@ describe("derivedZoneHex", () => {
     const zone: PaceZone = { id: "a", upTo: 100, hue: 142, saturation: 70, label: "Under pace" };
     expect(derivedZoneHex(zone, "bg")).toBe(hslToHex(142, 70, 95));
     expect(derivedZoneHex(zone, "border")).toBe(hslToHex(142, 70, 65));
-    expect(derivedZoneHex(zone, "text")).toBe(hslToHex(142, 70, 28));
   });
 });
 
-describe("contrastRatio / hasLowContrastOverride", () => {
+describe("contrastRatio", () => {
   it("matches the known WCAG extremes", () => {
     expect(contrastRatio("#000000", "#ffffff")).toBeCloseTo(21, 0);
     expect(contrastRatio("#808080", "#808080")).toBeCloseTo(1, 5);
   });
 
-  it("flags a zone only when both text and bg are overridden and too close", () => {
-    const zone: PaceZone = { id: "a", upTo: 100, hue: 0, saturation: 0, label: "Z" };
-    expect(hasLowContrastOverride(zone)).toBe(false); // no overrides at all
-
-    const textOnly = { ...zone, overrides: { text: "#ffffff" } };
-    expect(hasLowContrastOverride(textOnly)).toBe(false); // no bg to compare against
-
-    const lowContrast = { ...zone, overrides: { text: "#eeeeee", bg: "#ffffff" } };
-    expect(hasLowContrastOverride(lowContrast)).toBe(true);
-
-    const goodContrast = { ...zone, overrides: { text: "#000000", bg: "#ffffff" } };
-    expect(hasLowContrastOverride(goodContrast)).toBe(false);
-  });
 });

@@ -298,23 +298,20 @@
 
   /* ── User-defined pace zones ──────────────────────────────────────
      Dashboard.svelte sets --zone-h/--zone-s per matched zone from the
-     colour the user picked in Settings; these rules supply the four
-     semantic lightnesses (fill bg/border, ghost/nub base, text) the same
-     way the fixed status palettes above do, so contrast holds regardless
-     of the hue/saturation the user chose.
+     colour the user picked in Settings; these rules supply the bar's
+     theme-aware fill, border, and decorative accents.
 
-     Fill and text additionally accept a literal --zone-*-override custom
+     Fill and border additionally accept a literal --zone-*-override custom
      property (Settings' per-zone "Advanced" panel) that wins over the
      derived shade in every theme — Dashboard.svelte only sets it when the
      zone actually has that override, so var()'s fallback covers every
-     other zone unchanged. Ghost/nub stay hue-derived only; they're
-     decorative accents, not one of the three overridable channels. */
+     other zone unchanged. Ghost/nub stay hue-derived only. */
   .zone-fill {
     background: var(--zone-bg-override, hsl(var(--zone-h) var(--zone-s) 95%));
     border: 1px solid var(--zone-border-override, hsl(var(--zone-h) var(--zone-s) 65%));
   }
 
-  .zone-text { color: var(--zone-text-override, hsl(var(--zone-h) var(--zone-s) 28%)); }
+  .zone-text { color: hsl(var(--foreground)); }
 
   .zone-ghost-stripe {
     background-image: repeating-linear-gradient(
@@ -331,9 +328,6 @@
     border-color: var(--zone-border-override, hsl(var(--zone-h) var(--zone-s) 32%));
   }
 
-  :root.dark .zone-text, :root.super-dark .zone-text {
-    color: var(--zone-text-override, hsl(var(--zone-h) var(--zone-s) 65%));
-  }
 
   :root.dark .zone-ghost-stripe, :root.super-dark .zone-ghost-stripe {
     background-image: repeating-linear-gradient(
@@ -347,10 +341,6 @@
     border-left-color: hsl(var(--zone-h) var(--zone-s) 55%);
   }
 
-  :root.high-contrast .zone-text { color: var(--zone-text-override, hsl(var(--zone-h) var(--zone-s) 18%)); }
-  :root.dark.high-contrast .zone-text, :root.super-dark.high-contrast .zone-text {
-    color: var(--zone-text-override, hsl(var(--zone-h) var(--zone-s) 75%));
-  }
 
   :root.reduce-motion *,
   :root.reduce-motion *::before,

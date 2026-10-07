@@ -9,7 +9,7 @@ const MIN_PROJECTION_TIME_PCT = 5;
 export type PaceZoneOverrides = {
   bg?: string;
   border?: string;
-  text?: string;
+  text?: string; // Legacy saved preference, ignored by the dashboard.
 };
 
 /**
@@ -64,6 +64,28 @@ export function formatResetTimestamp(
     timeStyle: "long",
     timeZone,
   }).format(date);
+}
+
+/** Compact local reset timestamp for the dashboard's single-line detail row. */
+export function formatCompactResetTimestamp(
+  iso: string | null | undefined,
+  timeZone?: string,
+): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone,
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value;
+  return `${part("weekday")} ${part("day")} ${part("month")} at ${part("hour")}:${part("minute")}`;
 }
 
 /**

@@ -3,6 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import {
+    formatCompactResetTimestamp,
     formatResetTimestamp,
     hasShortWindow,
     matchZone,
@@ -260,17 +261,16 @@
   {@const showNow = !capped && (!over || peakPos - nowPos >= 13)}
   {@const delta = Math.round(pct - timePct)}
   {@const showDelta = showPaceDelta && !(pct <= 0 && timePct <= 0)}
-  {@const deltaZone = delta > 0 ? zone : zones[0]}
   {@const timePos = clampPct(timePct)}
   {@const showTimeTick = timePct > 0.5 && timePct < 99.5}
   <!-- The bar encodes usage, elapsed time, and predicted peak purely visually, and
-       the detail tooltip is hover-only. Spell the same figures out for assistive
+       the detail tooltip is visual. Spell the same figures out for assistive
        tech so the numbers aren't lost with the marks that happen to be visible. -->
   {@const barDescription = [
-    `${pct.toFixed(0)}% of tokens used`,
-    `${timePct.toFixed(0)}% of the window elapsed`,
-    showPeak ? `predicted peak ${Math.round(peak)}%, ${zone.label.toLowerCase()}` : null,
-    resetsAt ? `resets in ${formatCountdown(resetsAt)}` : null,
+    `${pct.toFixed(1)}% of usage limit used`,
+    `${timePct.toFixed(0)}% of window time elapsed`,
+    `projected usage at reset ${Math.round(peak)}%`,
+    resetsAt ? `resets ${formatCompactResetTimestamp(resetsAt)}` : null,
   ]
     .filter(Boolean)
     .join(", ")}
@@ -334,9 +334,18 @@
           <div class="sweep" aria-hidden="true"></div>
         {/key}
       </div>
+      <button class="bar-focus" type="button" aria-label={`${label} usage details: ${barDescription}`}></button>
+      <div class="bar-tooltip" role="tooltip">
+        <div><span>Limit used</span><strong>{pct.toFixed(1)}%</strong></div>
+        <div><span>Time elapsed</span><strong>{timePct.toFixed(0)}%</strong></div>
+        <div><span>Projected at reset</span><strong>{Math.round(peak)}%</strong></div>
+        {#if resetsAt}
+          <div><span>Resets</span><time datetime={resetsAt}>{formatCompactResetTimestamp(resetsAt)}</time></div>
+        {/if}
+      </div>
     </div>
     {#if showDelta}
-      <p class="pace-delta zone-text" style={zoneStyle(deltaZone, "")}>
+      <p class="pace-delta zone-text">
         {delta > 0 ? `+${delta}%` : delta < 0 ? `−${Math.abs(delta)}%` : "0%"}
       </p>
     {/if}
@@ -735,8 +744,7 @@
 
   .mark-now { color: hsl(var(--foreground)); }
 
-  /* Colour comes solely from the global .zone-text rule (app.css) — this mark
-     is always zone-coloured, so no competing colour is declared here. */
+  /* Metric labels use the theme foreground across both windows. */
   .mark-peak { font-weight: 600; }
 
   /* ── The bar is the hero: tall, rounded, colour = health ── */
@@ -746,6 +754,65 @@
     background: hsl(var(--muted));
     border-radius: 99px;
     box-shadow: inset 0 1px 2px hsl(0 0% 0% / 0.10);
+  }
+
+  .bar-focus {
+    position: absolute;
+    inset: auto 0 0;
+    height: 16px;
+    padding: 0;
+    border: 0;
+    border-radius: 99px;
+    background: transparent;
+    cursor: help;
+  }
+
+  .bar-focus:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 3px;
+  }
+
+  .bar-tooltip {
+    position: absolute;
+    z-index: 20;
+    bottom: calc(100% + 0.45rem);
+    left: 50%;
+    width: min(19rem, calc(100vw - 2rem));
+    box-sizing: border-box;
+    padding: 0.55rem 0.65rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: 6px;
+    background: hsl(var(--popover, var(--card, var(--background))));
+    color: hsl(var(--foreground));
+    box-shadow: 0 8px 24px hsl(0 0% 0% / 0.18);
+    opacity: 0;
+    visibility: hidden;
+    transform: translate(-50%, 3px);
+    pointer-events: none;
+    transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
+  }
+
+  .bar-wrap:hover .bar-tooltip,
+  .bar-wrap:focus-within .bar-tooltip {
+    opacity: 1;
+    visibility: visible;
+    transform: translate(-50%, 0);
+  }
+
+  .bar-tooltip div {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    gap: 0.75rem;
+    font-size: 0.72rem;
+    line-height: 1.5;
+  }
+
+  .bar-tooltip span { color: hsl(var(--muted-foreground)); }
+  .bar-tooltip strong, .bar-tooltip time {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    text-align: right;
   }
 
   .bar-fill {
@@ -762,9 +829,7 @@
      badges elsewhere (error-banner, etc), just parameterised by the user's
      chosen zone colour instead of a fixed success/warning/danger hue. */
 
-  /* ── Pace delta (usage% − time-elapsed%): plain text below the bar, so the
-     sign and number are read at normal size instead of squinted out of the
-     fill. Colour is the global .zone-text rule. ── */
+  /* ── Pace delta (usage% − time-elapsed%): plain text below the bar. ── */
   .pace-delta {
     margin: 0;
     font-size: 0.8rem;

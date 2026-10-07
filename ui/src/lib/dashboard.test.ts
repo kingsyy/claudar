@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatCompactResetTimestamp,
   formatResetTimestamp,
   hasShortWindow,
   matchZone,
@@ -63,6 +64,17 @@ describe("formatResetTimestamp", () => {
 
   it("returns an em dash without a reset timestamp", () => {
     expect(formatResetTimestamp(null)).toBe("—");
+  });
+});
+
+describe("formatCompactResetTimestamp", () => {
+  it("keeps the reset date and time on one compact line", () => {
+    expect(formatCompactResetTimestamp("2026-10-07T13:42:00Z", "Europe/Amsterdam"))
+      .toBe("Wed 7 Oct at 15:42");
+  });
+
+  it("handles an unavailable reset", () => {
+    expect(formatCompactResetTimestamp(null)).toBe("—");
   });
 });
 

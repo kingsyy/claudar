@@ -2,19 +2,16 @@ import { matchZone, type PaceZone, type PaceZoneOverrides } from "./dashboard";
 
 export type PaceWindow = "five_hour" | "seven_day";
 export type PaceZoneMap = Record<PaceWindow, PaceZone[]>;
-export type OverrideChannel = keyof PaceZoneOverrides;
+export type OverrideChannel = "bg" | "border";
 
 const STORAGE_KEY = "claudar-pace-zones";
 const MAX_ZONES = 8;
 const MIN_ZONE_GAP_PCT = 1;
 const UNDO_SECONDS = 10;
-/** WCAG AA's minimum for UI components/graphics (not the stricter 4.5:1 for
- *  body text) — advisory threshold for the low-contrast warning below. */
-const MIN_CONTRAST_RATIO = 3;
 /** Representative lightness for each channel, matching the ladder in
- *  app.css's light-theme `.zone-fill`/`.zone-text` rules — used only to seed
+ *  app.css's light-theme `.zone-fill` rules — used only to seed
  *  the "Advanced" color pickers with the zone's current derived look. */
-const DERIVED_LIGHTNESS: Record<OverrideChannel, number> = { bg: 95, border: 65, text: 28 };
+const DERIVED_LIGHTNESS: Record<OverrideChannel, number> = { bg: 95, border: 65 };
 
 function zoneId(): string {
   return typeof crypto !== "undefined" && crypto.randomUUID
@@ -158,7 +155,6 @@ export function zoneStyle(zone: PaceZone, extra = ""): string {
   const parts = [extra, `--zone-h: ${zone.hue}`, `--zone-s: ${zone.saturation}%`];
   if (zone.overrides?.bg) parts.push(`--zone-bg-override: ${zone.overrides.bg}`);
   if (zone.overrides?.border) parts.push(`--zone-border-override: ${zone.overrides.border}`);
-  if (zone.overrides?.text) parts.push(`--zone-text-override: ${zone.overrides.text}`);
   return parts.filter(Boolean).join("; ");
 }
 
@@ -211,15 +207,6 @@ export function contrastRatio(hexA: string, hexB: string): number {
   const lighter = Math.max(a, b);
   const darker = Math.min(a, b);
   return (lighter + 0.05) / (darker + 0.05);
-}
-
-/** Whether a zone's own text/bg override pair reads as low-contrast — `false`
- *  when either channel isn't overridden, since there's nothing user-chosen to
- *  warn about (the derived pair is always readable by construction). */
-export function hasLowContrastOverride(zone: PaceZone): boolean {
-  const { text, bg } = zone.overrides ?? {};
-  if (!text || !bg) return false;
-  return contrastRatio(text, bg) < MIN_CONTRAST_RATIO;
 }
 
 export { matchZone };

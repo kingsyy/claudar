@@ -18,7 +18,6 @@
   import {
     derivedZoneHex,
     dismissUndo as dismissZoneUndo,
-    hasLowContrastOverride,
     hexToHsl,
     hslToHex,
     moveZoneBoundary,
@@ -990,24 +989,12 @@
                         onchange={(e) => overrideZoneColor(zoneWindow, zone.id, "border", e.currentTarget.value)}
                       />
                     </label>
-                    <label class="zone-advanced-field">
-                      Text
-                      <input
-                        type="color"
-                        value={zone.overrides?.text ?? derivedZoneHex(zone, "text")}
-                        aria-label={`${zone.label} text override`}
-                        onchange={(e) => overrideZoneColor(zoneWindow, zone.id, "text", e.currentTarget.value)}
-                      />
-                    </label>
                     {#if zone.overrides}
                       <button
                         type="button"
                         class="zone-advanced-reset"
                         onclick={() => resetZoneOverrides(zoneWindow, zone.id)}
                       >Use automatic colours</button>
-                    {/if}
-                    {#if hasLowContrastOverride(zone)}
-                      <p class="zone-contrast-warning" role="alert">Low contrast — may be hard to read.</p>
                     {/if}
                     <p class="hint zone-advanced-hint">
                       These are literal colours, not a hue — they won't adjust between light, dark, and high-contrast mode the way the swatch above does.
@@ -2033,13 +2020,6 @@
 
   .zone-advanced-reset:hover {
     background: hsl(var(--muted));
-  }
-
-  .zone-contrast-warning {
-    margin: 0;
-    color: hsl(var(--warning-strong));
-    font-weight: 600;
-    flex-basis: 100%;
   }
 
   .zone-advanced-hint {
